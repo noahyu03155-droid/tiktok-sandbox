@@ -7,10 +7,13 @@ export const dynamic = "force-dynamic";
 
 const MIME: Record<string, string> = {
   ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
   ".webp": "image/webp",
+  ".gif": "image/gif",
   ".mp3": "audio/mpeg",
   // yt-dlp sometimes can't tell the image type from the CDN response and
   // just writes a generic ".image" file — it's a JPEG/WebP-ish still frame

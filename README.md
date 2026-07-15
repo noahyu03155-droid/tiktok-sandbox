@@ -45,6 +45,7 @@ cp .env.example .env
 - `FASTMOSS_API_KEY`：可选，用于 Trend Analysis 页面的"更新"按钮直连 FastMoss 官方 API 拉取数据（不再需要人工在 Chrome 里登录 FastMoss 抓取）。去 https://developers.fastmoss.com 注册账号，登录后在控制台（Profile → API Keys）生成一个 key；按额度付费，可以先申请免费试用额度。不填的话"更新"按钮会报错提示去配置。
 - `FASTMOSS_PET_CATEGORY_ID`：可选。设置后会用 FastMoss 的商品分类过滤，更精准也更省额度；不设置的话会退化成关键词兜底搜索（dog/cat/pet/puppy/kitten），零配置能跑但更耗额度。配好 `FASTMOSS_API_KEY` 后访问 `/api/trends/fastmoss-categories` 能看到完整分类树，找到"Pet"相关分类的 `c_code` 填进来。
 - `FASTMOSS_REGION`：可选，默认 `US`。
+- Script Generator 里的 "Generate video" storyboard 画布，AI 参考图功能复用的就是上面同一个 `OPENAI_API_KEY`（需要这个账号有图片生成权限），不用额外配置。
 
 ### 3. 启动
 
@@ -72,6 +73,7 @@ docker compose up -d --build
 - **速率限制**：短时间内大量抓取同一 IP 容易被限流，建议控制并发、必要时配置代理。
 - **合规**：仅建议用于团队内部的竞品/达人内容研究分析，请遵守 TikTok 的服务条款以及所在地区的相关法规，不要用于批量搬运或侵权用途。
 - **成本**：每条视频会产生 1 次 Whisper 转写调用 + 1 次 Claude 调用，费用与视频时长、逐字稿长度相关，建议先小范围试用评估单条成本。
+- **Storyboard 画布是第一阶段，只做规划**：Script Generator 里的 "Generate video" 按钮打开的是一个可拖拽拼线的 storyboard 画布（把生成的分镜脚本变成一张卡片一张卡片，每张卡片可以上传/从素材库选/AI 生成参考图，卡片之间可以拖线表达剪辑顺序，底部有整体剪辑方向备注），保存的只是规划数据，**不会自动生成/渲染出真正的成片**。真正调用 Creatomate（或 FFmpeg）自动拼接渲染是计划中的第二阶段，等团队申请到 Creatomate 账号和 API Key 后再接入，目前代码还没写这部分。
 
 ## 目录结构
 

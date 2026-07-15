@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatTime } from "@/lib/format";
 import { useLocale } from "@/lib/i18n";
 import ProductPicker from "./ProductPicker";
+import StoryboardCanvas from "./StoryboardCanvas";
 import type { GeneratedScriptStage, VideoRecord } from "@/lib/types";
 
 type TabKey = "transcript" | "hook" | "structure" | "selling" | "script";
@@ -71,6 +72,7 @@ export default function AnalysisTabs({
   }
 
   const [showProductPicker, setShowProductPicker] = useState(false);
+  const [showStoryboard, setShowStoryboard] = useState(false);
   const [generatingScript, setGeneratingScript] = useState(false);
   const [scriptError, setScriptError] = useState<string | null>(null);
   const [activeScriptIdx, setActiveScriptIdx] = useState(video.generated_scripts.length - 1);
@@ -298,6 +300,12 @@ export default function AnalysisTabs({
                           onUpdated={(newStage) => handleStageUpdated(activeScriptIdx, i, newStage)}
                         />
                       ))}
+                      <button
+                        onClick={() => setShowStoryboard(true)}
+                        className="w-full py-2.5 rounded-lg border border-dashed border-edge2 text-zinc-300 hover:text-white hover:border-brand-500 text-sm font-medium"
+                      >
+                        🎬 Generate video — plan the storyboard
+                      </button>
                     </div>
                   )}
                 </>
@@ -309,6 +317,14 @@ export default function AnalysisTabs({
 
       {showProductPicker && (
         <ProductPicker onSelect={handleProductSelected} onClose={() => setShowProductPicker(false)} />
+      )}
+
+      {showStoryboard && video.generated_scripts[activeScriptIdx] && (
+        <StoryboardCanvas
+          videoId={video.id}
+          script={video.generated_scripts[activeScriptIdx]}
+          onClose={() => setShowStoryboard(false)}
+        />
       )}
     </div>
   );

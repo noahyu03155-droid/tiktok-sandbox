@@ -200,6 +200,53 @@ export interface GeneratedScript {
   shopify_product_title: string;
   stages: GeneratedScriptStage[];
   created_at: string;
+  // "Generate Video" storyboard canvas — planning only (see StoryboardState),
+  // not an actual rendered video. Optional/absent until the user opens the
+  // canvas for the first time.
+  storyboard?: StoryboardState | null;
+}
+
+// ---- Storyboard canvas ("Generate Video") — a draggable planning board that
+// turns a generated script's beats into nodes with an attached video/image
+// clip each, connected point-to-point, plus one overall editing-direction
+// note. Phase 1 is planning only: no Creatomate/FFmpeg render happens yet,
+// this just organizes what a human editor (or a later render step) needs.
+
+export type StoryboardClipSource = "upload" | "library" | "ai";
+
+export interface StoryboardClip {
+  source: StoryboardClipSource;
+  // Playable/previewable URL. For "upload"/"ai" this is a /api/media/... path
+  // this app now owns; for "library" it's the referenced video's own
+  // thumbnail/video path (not copied).
+  url: string;
+  // "video" vs "image" — an uploaded clip or a picked library video is a
+  // video; an AI-generated placeholder or an uploaded photo is a still.
+  kind: "video" | "image";
+  // Set when source === "library" — links back to the VideoRecord this clip
+  // references, purely so the canvas can deep-link to it.
+  libraryVideoId?: string | null;
+}
+
+export interface StoryboardNode {
+  id: string;
+  // Index into the parent script's stages[] array this node was seeded
+  // from, so the canvas always reflects the current script/direction text
+  // rather than freezing a stale copy.
+  stageIndex: number;
+  x: number;
+  y: number;
+  clip: StoryboardClip | null;
+}
+
+export interface StoryboardState {
+  nodes: StoryboardNode[];
+  connections: CanvasConnection[];
+  // Overall cut/editing direction, entered in the fixed textbox docked at
+  // the bottom of the canvas.
+  direction: string;
+  zoom: number;
+  pan: { x: number; y: number };
 }
 
 // ---- Trend analysis (e.g. FastMoss top pet-food/treat videos, rolling 7-day window) ----
