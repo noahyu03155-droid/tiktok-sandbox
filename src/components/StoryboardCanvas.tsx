@@ -25,6 +25,15 @@ const DUB_ROW_H = 28;
 const NODE_H = 430 + DUB_ROW_H;
 const CLIP_H = 150;
 const GAP_X = 70;
+// Layout for a freshly-pasted, not-yet-broken-down TikTok import card (see
+// the `isPendingTiktokBreakdown` check below) — shows the video at its
+// natural 9:16 portrait ratio instead of squished into the normal card's
+// 150px-tall landscape-ish clip box, since there's nothing to write yet
+// until the user runs Breakdown.
+const TIKTOK_HEADER_H = 34;
+const TIKTOK_BUTTON_ROW_H = 52;
+const TIKTOK_PREVIEW_VIDEO_H = Math.round(NODE_W * (16 / 9));
+const TIKTOK_PREVIEW_H = TIKTOK_HEADER_H + TIKTOK_PREVIEW_VIDEO_H + TIKTOK_BUTTON_ROW_H;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2;
 
@@ -35,6 +44,17 @@ const ACCENTS = ["#5cc4ee", "#f472b6", "#facc15", "#4ade80", "#a78bfa", "#fb923c
 function isTikTokUrl(text: string): string | null {
   const match = text.match(/https?:\/\/\S*tiktok\.com\S*/i);
   return match ? match[0] : null;
+}
+
+// A raw TikTok import that hasn't been broken down (or manually tagged)
+// yet gets a taller card so its 9:16 video shows at natural size — see
+// TIKTOK_PREVIEW_H above. Every other card (including the 6 cards Breakdown
+// produces, which always have a stageTag set) uses the normal NODE_H.
+function isPendingTiktokBreakdown(node: StoryboardNode): boolean {
+  return node.clip?.source === "tiktok" && !node.stageTag;
+}
+function cardHeight(node: StoryboardNode): number {
+  return isPendingTiktokBreakdown(node) ? TIKTOK_PREVIEW_H : NODE_H;
 }
 
 function seedInstruction(script: string, direction: string) {
@@ -600,9 +620,9 @@ export default function StoryboardCanvas({
     const fromKey = `${c.fromId}:${forward ? "r" : "l"}`;
     const toKey = `${c.toId}:${forward ? "l" : "r"}`;
     const x1 = from.x + (forward ? NODE_W : 0);
-    const y1 = from.y + NODE_H / 2 + fanOffset(fromKey);
+    const y1 = from.y + cardHeight(from) / 2 + fanOffset(fromKey);
     const x2 = to.x + (forward ? 0 : NODE_W);
-    const y2 = to.y + NODE_H / 2 + fanOffset(toKey);
+    const y2 = to.y + cardHeight(to) / 2 + fanOffset(toKey);
     const dx = x2 - x1;
     const bend = Math.max(50, Math.min(220, Math.abs(dx) * 0.5));
     const c1x = x1 + (forward ? bend : -bend);
@@ -796,7 +816,7 @@ export default function StoryboardCanvas({
                 if (!from) return null;
                 const forward = connDraft.x >= from.x + NODE_W / 2;
                 const x1 = from.x + (forward ? NODE_W : 0);
-                const y1 = from.y + NODE_H / 2;
+                const y1 = from.y + cardHeight(from) / 2;
                 const dx = connDraft.x - x1;
                 const bend = Math.max(50, Math.min(220, Math.abs(dx) * 0.5));
                 const c1x = x1 + (forward ? bend : -bend);
@@ -836,8 +856,55 @@ export default function StoryboardCanvas({
               <div
                 key={node.id}
                 className="absolute bg-panel border border-edge rounded-xl shadow-xl flex flex-col overflow-hidden"
-                style={{ left: node.x, top: node.y, width: NODE_W, height: NODE_H }}
+                style={{ left: node.x, top: node.y, width: NODE_W, height: cardHeight(node) }}
               >
+                {isPendingTiktokBreakdown(node) ? (
+                  <>
+                    <div
+                      onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                      className="px-3 py-1.5 border-b border-edge cursor-move flex items-center gap-2 shrink-0"
+                      style={{ borderLeft: `3px solid ${accent}` }}
+                    >
+                      <span
+                        className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold text-ink shrink-0"
+                        style={{ background: accent }}
+                      >
+                        {orderNumber.get(node.id) ?? "?"}
+                      </span>
+                      <span className="flex-1 min-w-0 text-xs font-semibold text-white truncate">TikTok clip</span>
+                      <button
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={() => deleteNode(node.id)}
+                        title="Delete shot"
+                        className="text-zinc-500 hover:text-red-400 text-xs shrink-0"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="relative bg-black shrink-0" style={{ height: TIKTOK_PREVIEW_VIDEO_H }}>
+                      {busy && (
+                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
+                          <span className="text-[11px] text-white animate-pulse">Working...</span>
+                        </div>
+                      )}
+                      {node.clip && (
+                        // eslint-disable-next-line jsx-a11y/media-has-caption
+                        <video src={node.clip.url} controls className="w-full h-full object-contain bg-black" />
+                      )}
+                    </div>
+                    <div className="p-2 flex-1 flex flex-col justify-center">
+                      <button
+                        onClick={() => startBreakdown(node)}
+                        disabled={busy}
+                        className="w-full py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium"
+                      >
+                        🔍 Breakdown into 6 stages
+                      </button>
+                      {err && <p className="mt-1.5 text-[10px] text-red-400">{err}</p>}
+                    </div>
+                  </>
+                ) : (
+                  <>
                 <div
                   onMouseDown={(e) => handleNodeMouseDown(e, node)}
                   className="px-3 py-2 border-b border-edge cursor-move flex items-center gap-2 shrink-0"
@@ -963,7 +1030,8 @@ export default function StoryboardCanvas({
                     {node.clip?.source === "tiktok" && (
                       <button
                         onClick={() => startBreakdown(node)}
-                        className="px-2 py-1 rounded bg-panel2 border border-edge text-zinc-300 hover:text-white hover:border-brand-500"
+                        disabled={busy}
+                        className="px-2 py-1 rounded bg-panel2 border border-edge text-zinc-300 hover:text-white hover:border-brand-500 disabled:opacity-40"
                       >
                         🔍 Breakdown into 6 stages
                       </button>
@@ -995,6 +1063,8 @@ export default function StoryboardCanvas({
                   </div>
                 )}
                 {err && <p className="px-2 py-1 text-[10px] text-red-400 bg-panel border-t border-edge">{err}</p>}
+                  </>
+                )}
 
                 <button
                   onMouseDown={(e) => e.stopPropagation()}
@@ -1003,7 +1073,7 @@ export default function StoryboardCanvas({
                   className={`absolute w-6 h-6 rounded-full border-[3px] cursor-pointer transition-transform hover:scale-125 ${
                     connStart === node.id ? "border-white animate-pulse" : "border-ink"
                   }`}
-                  style={{ left: NODE_W, top: NODE_H / 2, transform: "translate(-50%,-50%)", background: accent }}
+                  style={{ left: NODE_W, top: cardHeight(node) / 2, transform: "translate(-50%,-50%)", background: accent }}
                 />
                 <button
                   onMouseDown={(e) => e.stopPropagation()}
@@ -1012,7 +1082,7 @@ export default function StoryboardCanvas({
                   className={`absolute w-6 h-6 rounded-full border-[3px] cursor-pointer transition-transform hover:scale-125 ${
                     connStart === node.id ? "border-white animate-pulse" : "border-ink"
                   }`}
-                  style={{ left: 0, top: NODE_H / 2, transform: "translate(-50%,-50%)", background: accent }}
+                  style={{ left: 0, top: cardHeight(node) / 2, transform: "translate(-50%,-50%)", background: accent }}
                 />
               </div>
             );
