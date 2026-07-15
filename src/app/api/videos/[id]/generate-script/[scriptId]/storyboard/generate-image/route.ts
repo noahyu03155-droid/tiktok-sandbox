@@ -28,19 +28,24 @@ export async function POST(
 
   const body = await req.json().catch(() => ({}));
   const nodeId = body?.nodeId;
-  const stageIndex = body?.stageIndex;
-  if (typeof nodeId !== "string" || !nodeId || typeof stageIndex !== "number") {
-    return NextResponse.json({ error: "nodeId and stageIndex are required" }, { status: 400 });
+  const label = typeof body?.label === "string" ? body.label : "";
+  const instruction = typeof body?.instruction === "string" ? body.instruction : "";
+  if (typeof nodeId !== "string" || !nodeId) {
+    return NextResponse.json({ error: "nodeId is required" }, { status: 400 });
+  }
+  if (!label && !instruction) {
+    return NextResponse.json({ error: "Write something in the shot's text box first — that's what the AI reference image is generated from." }, { status: 400 });
   }
 
-  const script = video.generated_scripts.find((s) => s.id === params.scriptId);
-  const stage = script?.stages?.[stageIndex];
-  if (!stage) return NextResponse.json({ error: "stage not found" }, { status: 404 });
-
+  // Nodes are freeform now (not locked to script.stages), so the prompt is
+  // built straight from whatever the user currently has typed in this
+  // node's label/instruction fields, sent by the client — not looked up
+  // server-side, since the node may not even exist in the last-saved
+  // storyboard yet (autosave is debounced).
   const prompt =
-    `A realistic reference photo for one beat of a TikTok product video. ` +
-    `Beat: "${stage.label}". Shot direction: ${stage.direction || "no specific direction given"}. ` +
-    `What's being said on camera: "${stage.script}". ` +
+    `A realistic reference photo for one shot of a TikTok product video. ` +
+    `Shot: "${label || "untitled"}". ` +
+    `What's happening / being said: "${instruction || "no direction given"}". ` +
     `Style: natural iPhone-shot UGC photo, not overly polished, no on-image text or captions.`;
 
   try {

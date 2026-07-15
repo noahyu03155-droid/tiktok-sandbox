@@ -230,10 +230,12 @@ export interface StoryboardClip {
 
 export interface StoryboardNode {
   id: string;
-  // Index into the parent script's stages[] array this node was seeded
-  // from, so the canvas always reflects the current script/direction text
-  // rather than freezing a stale copy.
-  stageIndex: number;
+  // Freeform — nodes are no longer locked 1:1 to the script's stages[].
+  // Seeded from a stage's label/script/direction the first time the canvas
+  // opens, but editable and independently split/duplicated/deleted from
+  // then on, so it owns its own copy of the text.
+  label: string;
+  instruction: string;
   x: number;
   y: number;
   clip: StoryboardClip | null;

@@ -2,32 +2,39 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { GeneratedScript, StoryboardClip, StoryboardNode, StoryboardState } from "@/lib/types";
+import { resolveStoryboardOrder } from "@/lib/storyboard";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
 
-// Phase 1: a planning-only storyboard canvas. Turns a generated script's
-// beats into draggable nodes, each with an attached video/image clip box,
-// connected point-to-point, plus one overall editing-direction note. No
-// Creatomate/FFmpeg render happens here — that's an explicitly deferred
-// phase 2 once the team has a Creatomate account. This intentionally does
-// NOT reuse SingleVideoCanvas.tsx (that component is tightly coupled to
-// transcript segments / a single reference video); the pan/zoom/drag/
-// connector mechanics are reimplemented here at a much smaller scale (a
-// fixed ~6 nodes, fixed card size) so line-anchor math doesn't need DOM
-// measurement.
+// Phase 1 (revised): a freeform storyboard canvas. Nodes are NOT locked 1:1
+// to the script's stages — they're seeded from the 6 beats on first open,
+// but from then on the user can add/split/delete/rewrite them and rewire
+// connections into any shape. Each node owns its own editable label +
+// instruction text (the prompt a human editor, or the AI reference-image
+// generator, works from) plus one attached clip. A "Render video" pass
+// walks the connection graph to resolve a single shot order, then stitches
+// whatever real clips/reference stills are attached into one downloadable
+// MP4 via ffmpeg — hard cuts only, no AI-generated video content (that
+// would need a dedicated identity-preserving video-gen API the team hasn't
+// picked/paid for yet; explicitly out of scope for this pass).
 
-const NODE_W = 280;
-const NODE_H = 396; // fixed total card height (header + script/direction text + clip box)
+const NODE_W = 300;
+const NODE_H = 430;
 const CLIP_H = 150;
-const GAP_X = 60;
+const GAP_X = 70;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2;
 
 const ACCENTS = ["#5cc4ee", "#f472b6", "#facc15", "#4ade80", "#a78bfa", "#fb923c"];
 
-function defaultStoryboard(stageCount: number): StoryboardState {
-  const nodes: StoryboardNode[] = Array.from({ length: stageCount }, (_, i) => ({
+function seedInstruction(script: string, direction: string) {
+  return [script, direction ? `🎬 ${direction}` : ""].filter(Boolean).join("\n\n");
+}
+
+function defaultStoryboard(script: GeneratedScript): StoryboardState {
+  const nodes: StoryboardNode[] = script.stages.map((stage, i) => ({
     id: crypto.randomUUID(),
-    stageIndex: i,
+    label: stage.label,
+    instruction: seedInstruction(stage.script, stage.direction),
     x: 60 + i * (NODE_W + GAP_X),
     y: 120,
     clip: null,
@@ -49,16 +56,15 @@ export default function StoryboardCanvas({
   script: GeneratedScript;
   onClose: () => void;
 }) {
-  const [board, setBoard] = useState<StoryboardState>(() => {
-    const saved = script.storyboard;
-    if (saved && Array.isArray(saved.nodes) && saved.nodes.length === script.stages.length) return saved;
-    return defaultStoryboard(script.stages.length);
-  });
+  const [board, setBoard] = useState<StoryboardState>(() => script.storyboard || defaultStoryboard(script));
   const [pickerForNode, setPickerForNode] = useState<string | null>(null);
   const [busyNodeId, setBusyNodeId] = useState<string | null>(null);
   const [nodeErrors, setNodeErrors] = useState<Record<string, string>>({});
   const [connDraft, setConnDraft] = useState<{ fromId: string; x: number; y: number } | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [rendering, setRendering] = useState(false);
+  const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[] } | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -190,6 +196,32 @@ export default function StoryboardCanvas({
     setBoard((b) => ({ ...b, connections: b.connections.filter((c) => c.id !== id) }));
   }
 
+  // ---- node CRUD ----
+  function addNode() {
+    const rightmost = board.nodes.reduce((max, n) => Math.max(max, n.x), 0);
+    const node: StoryboardNode = {
+      id: crypto.randomUUID(),
+      label: `Shot ${board.nodes.length + 1}`,
+      instruction: "",
+      x: board.nodes.length === 0 ? 60 : rightmost + NODE_W + GAP_X,
+      y: 120,
+      clip: null,
+    };
+    setBoard((b) => ({ ...b, nodes: [...b.nodes, node] }));
+  }
+
+  function deleteNode(nodeId: string) {
+    setBoard((b) => ({
+      ...b,
+      nodes: b.nodes.filter((n) => n.id !== nodeId),
+      connections: b.connections.filter((c) => c.fromId !== nodeId && c.toId !== nodeId),
+    }));
+  }
+
+  function updateNodeText(nodeId: string, patch: Partial<Pick<StoryboardNode, "label" | "instruction">>) {
+    setBoard((b) => ({ ...b, nodes: b.nodes.map((n) => (n.id === nodeId ? { ...n, ...patch } : n)) }));
+  }
+
   // ---- clip attach flows ----
   function setNodeClip(nodeId: string, clip: StoryboardClip | null) {
     setBoard((b) => ({ ...b, nodes: b.nodes.map((n) => (n.id === nodeId ? { ...n, clip } : n)) }));
@@ -234,20 +266,20 @@ export default function StoryboardCanvas({
     }
   }
 
-  async function generateAiImage(nodeId: string, stageIndex: number) {
-    setBusyNodeId(nodeId);
-    clearNodeError(nodeId);
+  async function generateAiImage(node: StoryboardNode) {
+    setBusyNodeId(node.id);
+    clearNodeError(node.id);
     try {
       const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/generate-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodeId, stageIndex }),
+        body: JSON.stringify({ nodeId: node.id, label: node.label, instruction: node.instruction }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed");
-      setNodeClip(nodeId, { source: "ai", url: data.url, kind: data.kind });
+      setNodeClip(node.id, { source: "ai", url: data.url, kind: data.kind });
     } catch (err: any) {
-      setNodeErrors((prev) => ({ ...prev, [nodeId]: err.message || "Generation failed" }));
+      setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Generation failed" }));
     } finally {
       setBusyNodeId(null);
     }
@@ -264,17 +296,37 @@ export default function StoryboardCanvas({
     }
   }
 
+  async function renderVideo() {
+    setRendering(true);
+    setRenderError(null);
+    setRenderResult(null);
+    try {
+      const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/render`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Render failed");
+      setRenderResult({ url: data.url, skipped: data.skipped || [] });
+    } catch (err: any) {
+      setRenderError(err.message || "Render failed");
+    } finally {
+      setRendering(false);
+    }
+  }
+
   const nodeById = new Map(board.nodes.map((n) => [n.id, n] as const));
+  const order = resolveStoryboardOrder(board.nodes, board.connections);
+  const orderNumber = new Map(order.map((n, i) => [n.id, i + 1] as const));
 
   return (
     <div className="fixed inset-0 bg-black/85 z-50 flex flex-col">
       <input ref={fileInputRef} type="file" accept="video/*,image/*" className="hidden" onChange={handleFileChosen} />
 
-      <div className="flex items-center justify-between px-5 py-3 border-b border-edge bg-panel shrink-0">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-edge bg-panel shrink-0 flex-wrap gap-2">
         <div>
           <h3 className="text-white font-semibold text-sm">Generate Video — Storyboard</h3>
           <p className="text-xs text-zinc-500">
-            Drag cards to arrange · drag the dot on a card's edge to connect beats · this plans the edit, it doesn't render one yet.
+            Drag cards to arrange · edit any card's text · drag the dot to connect shots · numbers show render order.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -294,6 +346,9 @@ export default function StoryboardCanvas({
             {saveStatus === "saved" && "Saved"}
             {saveStatus === "error" && "Save failed"}
           </span>
+          <button onClick={addNode} className="px-2.5 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-xs">
+            + Add shot
+          </button>
           <button onClick={() => zoomBy(1.2)} className="w-7 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-sm">
             +
           </button>
@@ -306,11 +361,48 @@ export default function StoryboardCanvas({
           >
             Reset view
           </button>
+          <button
+            onClick={renderVideo}
+            disabled={rendering || board.nodes.length === 0}
+            className="px-3 h-7 rounded bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium"
+          >
+            {rendering ? "Rendering..." : "🎬 Render video"}
+          </button>
           <button onClick={onClose} className="ml-2 text-zinc-400 hover:text-white text-sm">
             ✕ Close
           </button>
         </div>
       </div>
+
+      {(renderError || renderResult) && (
+        <div className="px-5 py-2.5 border-b border-edge bg-panel2 shrink-0 flex items-center justify-between gap-3 flex-wrap">
+          {renderError && <p className="text-sm text-red-400">{renderError}</p>}
+          {renderResult && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <p className="text-sm text-green-400">
+                Render done{renderResult.skipped.length > 0 ? ` — skipped (no clip attached): ${renderResult.skipped.join(", ")}` : ""}
+              </p>
+              <a
+                href={renderResult.url}
+                download
+                className="px-3 py-1 rounded bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium"
+              >
+                ⬇ Download MP4
+              </a>
+              <video src={renderResult.url} controls className="h-16 rounded border border-edge" />
+            </div>
+          )}
+          <button
+            onClick={() => {
+              setRenderError(null);
+              setRenderResult(null);
+            }}
+            className="text-zinc-500 hover:text-white text-xs"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       <div
         ref={viewportRef}
@@ -385,8 +477,6 @@ export default function StoryboardCanvas({
           })}
 
           {board.nodes.map((node, i) => {
-            const stage = script.stages[node.stageIndex];
-            if (!stage) return null;
             const accent = ACCENTS[i % ACCENTS.length];
             const busy = busyNodeId === node.id;
             const err = nodeErrors[node.id];
@@ -401,14 +491,36 @@ export default function StoryboardCanvas({
                   className="px-3 py-2 border-b border-edge cursor-move flex items-center gap-2 shrink-0"
                   style={{ borderLeft: `3px solid ${accent}` }}
                 >
-                  <span className="text-xs font-semibold text-white truncate">{stage.label}</span>
+                  <span
+                    className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold text-ink shrink-0"
+                    style={{ background: accent }}
+                  >
+                    {orderNumber.get(node.id) ?? "?"}
+                  </span>
+                  <input
+                    value={node.label}
+                    onChange={(e) => updateNodeText(node.id, { label: e.target.value })}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="flex-1 min-w-0 bg-transparent text-xs font-semibold text-white outline-none"
+                  />
+                  <button
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => deleteNode(node.id)}
+                    title="Delete shot"
+                    className="text-zinc-500 hover:text-red-400 text-xs shrink-0"
+                  >
+                    ✕
+                  </button>
                 </div>
 
-                <div className="px-3 py-2 space-y-1.5 overflow-y-auto" style={{ height: NODE_H - CLIP_H - 40 }}>
-                  <p className="text-xs text-zinc-200 leading-relaxed">{stage.script}</p>
-                  {stage.direction && (
-                    <p className="text-[11px] text-zinc-500 italic leading-relaxed">🎬 {stage.direction}</p>
-                  )}
+                <div className="px-3 py-2 overflow-y-auto" style={{ height: NODE_H - CLIP_H - 40 }}>
+                  <textarea
+                    value={node.instruction}
+                    onChange={(e) => updateNodeText(node.id, { instruction: e.target.value })}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    placeholder="What happens in this shot? Dialogue, action, camera direction..."
+                    className="w-full h-full bg-transparent text-xs text-zinc-200 leading-relaxed outline-none resize-none placeholder:text-zinc-600"
+                  />
                 </div>
 
                 <div
@@ -456,7 +568,7 @@ export default function StoryboardCanvas({
                         📚 Library
                       </button>
                       <button
-                        onClick={() => generateAiImage(node.id, node.stageIndex)}
+                        onClick={() => generateAiImage(node)}
                         className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-300 hover:text-white hover:border-edge2"
                       >
                         ✨ AI
