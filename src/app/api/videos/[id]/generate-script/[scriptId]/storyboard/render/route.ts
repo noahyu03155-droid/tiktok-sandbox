@@ -26,9 +26,25 @@ function runFfmpeg(args: string[]): Promise<void> {
     const ff = spawn("ffmpeg", args);
     let stderr = "";
     ff.stderr.on("data", (d) => (stderr += d.toString()));
-    ff.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg failed (code ${code}): ${stderr.slice(-800)}`));
+    ff.on("close", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      // code === null + a signal (usually SIGKILL) means something outside
+      // ffmpeg itself killed the process — almost always the container
+      // running out of memory mid-encode, not a bad input file. Surface
+      // that plainly instead of dumping the raw ffprobe/stderr dump, which
+      // is just informational stream metadata, not the actual failure.
+      if (code === null && signal) {
+        reject(
+          new Error(
+            `The video render was killed mid-encode (signal ${signal}) — almost always the server running out of memory while encoding. Try again now that the plan has more RAM, or render fewer/shorter shots at once.`
+          )
+        );
+        return;
+      }
+      reject(new Error(`ffmpeg failed (code ${code}): ${stderr.slice(-500)}`));
     });
   });
 }
@@ -88,13 +104,16 @@ export async function POST(
         continue;
       }
       const segPath = path.join(tmpDir, `seg${i}.mp4`);
+      // -preset veryfast + -threads 2 keep libx264's internal lookahead
+      // buffering (its biggest memory cost) low — worth the small quality/
+      // speed tradeoff on a container that doesn't have RAM to spare.
       if (clip.kind === "video") {
         await runFfmpeg([
           "-y", "-i", srcPath,
           "-t", String(MAX_CLIP_SEC),
           "-vf", scalePad,
           "-an",
-          "-c:v", "libx264", "-pix_fmt", "yuv420p",
+          "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p",
           segPath,
         ]);
       } else {
@@ -103,7 +122,7 @@ export async function POST(
           "-t", String(IMAGE_SEC),
           "-vf", scalePad,
           "-an",
-          "-c:v", "libx264", "-pix_fmt", "yuv420p",
+          "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p",
           segPath,
         ]);
       }
