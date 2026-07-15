@@ -1,0 +1,100 @@
+# TikTok Sandbox — 视频话术拆解工作台
+
+粘贴一条 TikTok 视频链接，自动完成：抓取视频与数据 → 转写逐字稿（带时间轴）→ AI 拆解开头钩子 / 结构 / 卖点话术，并生成一个可浏览的视频板块（类似 Dailyviral 的 sandbox）。
+
+## 功能
+
+- 粘贴链接即抓取：视频文件、封面、标题、作者、播放/点赞/评论/分享数、标签
+- 自动转写完整逐字稿 + 时间轴
+- AI 话术拆解：
+  - 黄金 3 秒 / 开头钩子分析（原话 + 用到的技巧 + 为什么有效）
+  - 结构拆解（按阶段切分，附时间戳）
+  - 卖点与话术技巧（产品卖点、情绪触发点、话术技巧、可复用金句、CTA）
+- 视频板块：网格浏览团队已拆解过的所有视频，点开看详情
+- 实时状态轮询（抓取中 / 转写中 / AI 拆解中 / 完成 / 出错）
+
+## 技术架构
+
+- **前端 + 后端**：Next.js 14（App Router + API Routes），TypeScript，Tailwind CSS
+- **视频抓取**：yt-dlp（Python），下载视频与封面、解析元数据
+- **转写**：可选 OpenAI Whisper API（推荐，快且准）或本地 faster-whisper（免费但慢，需要额外装依赖）
+- **AI 拆解**：Anthropic Claude API，结构化 JSON 输出
+- **存储**：SQLite（better-sqlite3），视频文件存本地磁盘 `data/media/`
+
+数据流：`粘贴链接 → POST /api/analyze 建记录并后台跑 pipeline → yt-dlp 抓取 → ffmpeg 提取音频 → Whisper 转写 → Claude 拆解 → 写入 SQLite → 前端轮询展示`
+
+## 本地运行
+
+### 1. 安装依赖
+
+```bash
+npm install
+pip3 install -r scripts/requirements.txt --break-system-packages
+# 系统需要已安装 ffmpeg（Mac: brew install ffmpeg / Ubuntu: apt install ffmpeg）
+```
+
+### 2. 配置 API Key
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env`：
+- `ANTHROPIC_API_KEY`：必填，用于话术拆解。在 https://console.anthropic.com/ 获取
+- `TRANSCRIBE_PROVIDER`：`openai`（默认，需要 `OPENAI_API_KEY`）或 `local`（免费，需额外 `pip3 install faster-whisper --break-system-packages`，首次运行会自动下载模型）
+
+### 3. 启动
+
+```bash
+npm run dev
+```
+
+打开 http://localhost:3000，粘贴一个 TikTok 视频链接即可。
+
+## 团队部署（Docker，推荐）
+
+```bash
+cp .env.example .env   # 填好 API key
+docker compose up -d --build
+```
+
+访问 `http://<服务器IP>:3000`。视频文件与数据库会持久化在宿主机的 `./data` 目录。
+
+如果没有自己的服务器，可以用 Railway / Render 这类支持 Dockerfile 部署的平台，把这个仓库直接部署上去（注意：Vercel 等纯 Serverless 平台不适合，因为需要 ffmpeg / python 常驻进程且单次处理耗时较长）。
+
+## 关于稳定性与合规的重要说明
+
+- **抓取稳定性**：TikTok 会不定期调整反爬策略，yt-dlp 可能间歇性失效或需要升级（`pip3 install -U yt-dlp`）。如果团队用量较大、抓取经常失败，可以考虑接入付费的第三方 TikTok 数据 API（如 Kalodata、EchoTik 等）替换 `src/lib/tiktok.ts` 里的抓取逻辑，其余流程不用改。
+- **速率限制**：短时间内大量抓取同一 IP 容易被限流，建议控制并发、必要时配置代理。
+- **合规**：仅建议用于团队内部的竞品/达人内容研究分析，请遵守 TikTok 的服务条款以及所在地区的相关法规，不要用于批量搬运或侵权用途。
+- **成本**：每条视频会产生 1 次 Whisper 转写调用 + 1 次 Claude 调用，费用与视频时长、逐字稿长度相关，建议先小范围试用评估单条成本。
+
+## 目录结构
+
+```
+tiktok-sandbox/
+  scripts/
+    fetch_tiktok.py       # yt-dlp 抓取视频+元数据
+    transcribe_local.py   # 本地 whisper 转写（可选）
+  src/
+    app/
+      page.tsx                    # 首页：粘贴链接 + 视频板块
+      video/[id]/page.tsx         # 视频详情页
+      api/analyze/route.ts        # 提交链接，触发后台 pipeline
+      api/videos/route.ts         # 视频列表
+      api/videos/[id]/route.ts    # 单条视频详情（前端轮询用）
+      api/media/[...path]/route.ts# 提供本地视频/封面文件
+    components/                   # UI 组件
+    lib/
+      tiktok.ts        # 调用 yt-dlp
+      transcribe.ts    # 调用 Whisper（OpenAI 或本地）
+      analyze.ts       # 调用 Claude 做话术拆解
+      db.ts            # SQLite 读写
+```
+
+## 后续可以扩展的方向
+
+- 团队账号登录与协作评论（当前是无认证的内部工具，默认所有人共享同一个视频板块）
+- 批量导入多个链接、按达人/标签打标签筛选
+- 导出拆解结果为 PDF / 飞书文档，方便团队分享复盘
+- 把 `src/lib/tiktok.ts` 换成付费数据源，提升抓取稳定性和达人主页数据（粉丝数、历史爆款等）

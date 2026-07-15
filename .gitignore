@@ -1,0 +1,9 @@
+node_modules
+.next
+# Runtime data (SQLite/JSON db + downloaded media + anything else in here,
+# e.g. Shopify access tokens live inside the db file) — never belongs in
+# git. Whole folder excluded rather than a narrow *.db pattern, which
+# missed the actual db.json filename and let a real secret slip into a
+# commit once already (caught by GitHub's push protection).
+data/
+.env
