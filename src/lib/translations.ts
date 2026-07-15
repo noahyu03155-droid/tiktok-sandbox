@@ -113,10 +113,7 @@ export const translations = {
     trendDeleteBatch: "Delete this update",
     trendDeleteConfirm: "Remove this trend update? The linked videos stay in your data, just this list goes away.",
     trendUpdateButton: "Update",
-    trendUpdateModalTitle: "Updating trend data needs a live session",
-    trendUpdateModalBody:
-      "This can't run automatically in the background — FastMoss requires an actual logged-in browser. Go to your Claude chat and say \"update this week's pet food trends\", and Claude will pull the latest data live (make sure Chrome is open and you're logged into FastMoss).",
-    trendUpdateModalClose: "Got it",
+    trendUpdating: "Updating...",
 
     scriptFeedbackLabel: "Feedback on this beat",
     scriptFeedbackPlaceholder: "e.g. make this punchier, mention the 30-day guarantee instead...",
@@ -323,10 +320,7 @@ export const translations = {
     trendDeleteBatch: "删除这次更新",
     trendDeleteConfirm: "删除这次趋势更新记录？关联的视频数据不会被删除，只是这份榜单列表会消失。",
     trendUpdateButton: "更新",
-    trendUpdateModalTitle: "更新趋势数据需要一次实时会话",
-    trendUpdateModalBody:
-      "这个没法在后台自动跑——FastMoss 需要真实登录的浏览器。请回到 Claude 对话里说「更新这周的宠物食品趋势」，我会现场帮你抓最新数据（记得先打开 Chrome 并登录好 FastMoss）。",
-    trendUpdateModalClose: "知道了",
+    trendUpdating: "更新中...",
 
     scriptFeedbackLabel: "对这一段的反馈",
     scriptFeedbackPlaceholder: "例如：语气更有冲击力一点、改成提保修期而不是这个卖点...",

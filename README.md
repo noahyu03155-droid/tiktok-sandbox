@@ -42,6 +42,9 @@ cp .env.example .env
 编辑 `.env`：
 - `ANTHROPIC_API_KEY`：必填，用于话术拆解。在 https://console.anthropic.com/ 获取
 - `TRANSCRIBE_PROVIDER`：`openai`（默认，需要 `OPENAI_API_KEY`）或 `local`（免费，需额外 `pip3 install faster-whisper --break-system-packages`，首次运行会自动下载模型）
+- `FASTMOSS_API_KEY`：可选，用于 Trend Analysis 页面的"更新"按钮直连 FastMoss 官方 API 拉取数据（不再需要人工在 Chrome 里登录 FastMoss 抓取）。去 https://developers.fastmoss.com 注册账号，登录后在控制台（Profile → API Keys）生成一个 key；按额度付费，可以先申请免费试用额度。不填的话"更新"按钮会报错提示去配置。
+- `FASTMOSS_PET_CATEGORY_ID`：可选。设置后会用 FastMoss 的商品分类过滤，更精准也更省额度；不设置的话会退化成关键词兜底搜索（dog/cat/pet/puppy/kitten），零配置能跑但更耗额度。配好 `FASTMOSS_API_KEY` 后访问 `/api/trends/fastmoss-categories` 能看到完整分类树，找到"Pet"相关分类的 `c_code` 填进来。
+- `FASTMOSS_REGION`：可选，默认 `US`。
 
 ### 3. 启动
 
@@ -65,6 +68,7 @@ docker compose up -d --build
 ## 关于稳定性与合规的重要说明
 
 - **抓取稳定性**：TikTok 会不定期调整反爬策略，yt-dlp 可能间歇性失效或需要升级（`pip3 install -U yt-dlp`）。如果团队用量较大、抓取经常失败，可以考虑接入付费的第三方 TikTok 数据 API（如 Kalodata、EchoTik 等）替换 `src/lib/tiktok.ts` 里的抓取逻辑，其余流程不用改。
+- **FastMoss 数据来源**：Trend Analysis 的"更新"按钮走的是 FastMoss 官方付费 API（`src/lib/fastmoss.ts`），服务端直接调用，稳定、不依赖真人登录浏览器。Creator Tracker 的达人扫描和 TikTok Shop Affiliate 数据这两块目前还是走 Claude 在 Chrome 里现场登录抓取的老方式（FastMoss 没有对应的达人历史视频扫描 / TikTok Shop 卖家后台的开放 API），还需要在 Claude 对话里触发。
 - **速率限制**：短时间内大量抓取同一 IP 容易被限流，建议控制并发、必要时配置代理。
 - **合规**：仅建议用于团队内部的竞品/达人内容研究分析，请遵守 TikTok 的服务条款以及所在地区的相关法规，不要用于批量搬运或侵权用途。
 - **成本**：每条视频会产生 1 次 Whisper 转写调用 + 1 次 Claude 调用，费用与视频时长、逐字稿长度相关，建议先小范围试用评估单条成本。

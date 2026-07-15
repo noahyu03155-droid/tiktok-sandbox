@@ -251,7 +251,8 @@ function TrendSection({
 export default function TrendsPageContent() {
   const { t } = useLocale();
   const [batches, setBatches] = useState<EnrichedBatch[] | null>(null);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -280,6 +281,23 @@ export default function TrendsPageContent() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batches]);
+
+  // Directly calls FastMoss's own API server-side (see /api/trends/update) —
+  // no more "go ask Claude to live-scrape in a logged-in Chrome tab".
+  async function handleUpdate() {
+    setUpdating(true);
+    setUpdateError(null);
+    try {
+      const res = await fetch("/api/trends/update", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Update failed");
+      await load();
+    } catch (e: any) {
+      setUpdateError(e.message || "Update failed");
+    } finally {
+      setUpdating(false);
+    }
+  }
 
   async function handleDelete(batchId: string) {
     if (!confirm(t("trendDeleteConfirm"))) return;
@@ -363,13 +381,23 @@ export default function TrendsPageContent() {
             </button>
           )}
           <button
-            onClick={() => setShowUpdateModal(true)}
-            className="px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium whitespace-nowrap"
+            onClick={handleUpdate}
+            disabled={updating}
+            className="px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-sm font-medium whitespace-nowrap"
           >
-            {t("trendUpdateButton")}
+            {updating ? t("trendUpdating") : t("trendUpdateButton")}
           </button>
         </div>
       </div>
+
+      {updateError && (
+        <div className="flex items-start justify-between gap-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">
+          <p className="text-sm text-red-300 leading-relaxed">{updateError}</p>
+          <button onClick={() => setUpdateError(null)} className="text-red-400 hover:text-red-200 text-sm shrink-0">
+            ✕
+          </button>
+        </div>
+      )}
 
       {batches && batches.length === 0 && (
         <div className="text-center py-24 text-zinc-500 text-sm">{t("trendEmptyState")}</div>
@@ -415,21 +443,6 @@ export default function TrendsPageContent() {
           />
         </div>
       ))}
-
-      {showUpdateModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
-          <div className="bg-panel rounded-xl border border-edge max-w-md w-full p-6">
-            <h3 className="text-white font-semibold mb-2">{t("trendUpdateModalTitle")}</h3>
-            <p className="text-sm text-zinc-400 leading-relaxed">{t("trendUpdateModalBody")}</p>
-            <button
-              onClick={() => setShowUpdateModal(false)}
-              className="mt-5 w-full py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"
-            >
-              {t("trendUpdateModalClose")}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
