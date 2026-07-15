@@ -60,7 +60,33 @@ export default function StoryboardCanvas({
   const [pickerForNode, setPickerForNode] = useState<string | null>(null);
   const [busyNodeId, setBusyNodeId] = useState<string | null>(null);
   const [nodeErrors, setNodeErrors] = useState<Record<string, string>>({});
-  const [connDraft, setConnDraft] = useState<{ fromId: string; x: number; y: number } | null>(null);
+  // Click-to-connect (not drag-to-connect — the dots are small and dragging
+  // precisely onto another one was fiddly). Click a dot to arm a connection
+  // from that node; a dashed line then follows the cursor; click any dot on
+  // a different node to complete it (solid line), click the same dot again
+  // or press Escape to cancel.
+  const [connStart, setConnStart] = useState<string | null>(null);
+  const [connDraft, setConnDraft] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!connStart) return;
+    function onMove(ev: MouseEvent) {
+      setConnDraft(toWorld(ev.clientX, ev.clientY));
+    }
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape") {
+        setConnStart(null);
+        setConnDraft(null);
+      }
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("keydown", onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connStart]);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [rendering, setRendering] = useState(false);
   const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[] } | null>(null);
@@ -108,6 +134,11 @@ export default function StoryboardCanvas({
   // ---- panning the background ----
   function handleBackgroundMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return;
+    if (connStart) {
+      setConnStart(null);
+      setConnDraft(null);
+      return;
+    }
     const startX = e.clientX;
     const startY = e.clientY;
     const originPan = board.pan;
@@ -163,33 +194,29 @@ export default function StoryboardCanvas({
     window.addEventListener("mouseup", onUp);
   }
 
-  // ---- dragging a connector ----
-  function handleConnectorMouseDown(e: React.MouseEvent, fromId: string) {
+  // ---- click-to-connect ----
+  function handleDotClick(e: React.MouseEvent, nodeId: string) {
     e.stopPropagation();
-    if (e.button !== 0) return;
-    function onMove(ev: MouseEvent) {
-      const p = toWorld(ev.clientX, ev.clientY);
-      setConnDraft({ fromId, x: p.x, y: p.y });
+    if (!connStart) {
+      setConnStart(nodeId);
+      setConnDraft(toWorld(e.clientX, e.clientY));
+      return;
     }
-    function onUp(ev: MouseEvent) {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      const p = toWorld(ev.clientX, ev.clientY);
-      setBoard((b) => {
-        const target = b.nodes.find(
-          (n) => n.id !== fromId && p.x >= n.x && p.x <= n.x + NODE_W && p.y >= n.y && p.y <= n.y + NODE_H
-        );
-        if (!target) return b;
-        const exists = b.connections.some(
-          (c) => (c.fromId === fromId && c.toId === target.id) || (c.fromId === target.id && c.toId === fromId)
-        );
-        if (exists) return b;
-        return { ...b, connections: [...b.connections, { id: crypto.randomUUID(), fromId, toId: target.id }] };
-      });
+    if (connStart === nodeId) {
+      // clicked the node's own dot again — cancel
+      setConnStart(null);
       setConnDraft(null);
+      return;
     }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    setBoard((b) => {
+      const exists = b.connections.some(
+        (c) => (c.fromId === connStart && c.toId === nodeId) || (c.fromId === nodeId && c.toId === connStart)
+      );
+      if (exists) return b;
+      return { ...b, connections: [...b.connections, { id: crypto.randomUUID(), fromId: connStart, toId: nodeId }] };
+    });
+    setConnStart(null);
+    setConnDraft(null);
   }
 
   function removeConnection(id: string) {
@@ -326,7 +353,7 @@ export default function StoryboardCanvas({
         <div>
           <h3 className="text-white font-semibold text-sm">Generate Video — Storyboard</h3>
           <p className="text-xs text-zinc-500">
-            Drag cards to arrange · edit any card's text · drag the dot to connect shots · numbers show render order.
+            Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -439,19 +466,20 @@ export default function StoryboardCanvas({
                 />
               );
             })}
-            {connDraft &&
+            {connStart &&
+              connDraft &&
               (() => {
-                const from = nodeById.get(connDraft.fromId);
+                const from = nodeById.get(connStart);
                 if (!from) return null;
                 return (
                   <line
-                    x1={from.x + NODE_W}
+                    x1={from.x + NODE_W / 2}
                     y1={from.y + NODE_H / 2}
                     x2={connDraft.x}
                     y2={connDraft.y}
                     stroke="#5cc4ee"
-                    strokeDasharray="4 4"
-                    strokeWidth={2}
+                    strokeDasharray="6 5"
+                    strokeWidth={3}
                   />
                 );
               })()}
@@ -578,14 +606,22 @@ export default function StoryboardCanvas({
                 </div>
                 {err && <p className="px-2 py-1 text-[10px] text-red-400 bg-panel border-t border-edge">{err}</p>}
 
-                <div
-                  onMouseDown={(e) => handleConnectorMouseDown(e, node.id)}
-                  title="Drag to connect"
-                  className="absolute w-3.5 h-3.5 rounded-full border-2 border-ink cursor-crosshair"
+                <button
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => handleDotClick(e, node.id)}
+                  title={connStart === node.id ? "Click to cancel" : connStart ? "Click to connect here" : "Click to start a connection"}
+                  className={`absolute w-6 h-6 rounded-full border-[3px] cursor-pointer transition-transform hover:scale-125 ${
+                    connStart === node.id ? "border-white animate-pulse" : "border-ink"
+                  }`}
                   style={{ left: NODE_W, top: NODE_H / 2, transform: "translate(-50%,-50%)", background: accent }}
                 />
-                <div
-                  className="absolute w-3.5 h-3.5 rounded-full border-2 border-ink pointer-events-none"
+                <button
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => handleDotClick(e, node.id)}
+                  title={connStart === node.id ? "Click to cancel" : connStart ? "Click to connect here" : "Click to start a connection"}
+                  className={`absolute w-6 h-6 rounded-full border-[3px] cursor-pointer transition-transform hover:scale-125 ${
+                    connStart === node.id ? "border-white animate-pulse" : "border-ink"
+                  }`}
                   style={{ left: 0, top: NODE_H / 2, transform: "translate(-50%,-50%)", background: accent }}
                 />
               </div>
