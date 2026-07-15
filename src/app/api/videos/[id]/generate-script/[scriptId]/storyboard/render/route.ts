@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { getMediaDir, getVideo } from "@/lib/db";
 import { resolveStoryboardOrder } from "@/lib/storyboard";
+import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/storyboardTrim";
 
 export const dynamic = "force-dynamic";
 
@@ -18,10 +19,17 @@ export const dynamic = "force-dynamic";
 // generative video model. That's an explicitly deferred, separately-scoped
 // feature (needs picking + paying for a dedicated identity-preserving
 // video-gen API).
+//
+// "Smart trim": uploaded clips are often much longer (~20s) than a shot
+// needs. Each non-dubbed clip gets trimmed to roughly how long its script
+// text takes to read aloud (src/lib/storyboardTrim.ts), and — when
+// OPENAI_API_KEY is set — a vision model picks which part of the clip to
+// keep instead of always assuming 0:00 is the right moment. AI-dubbed clips
+// skip this: Sync.so's "cut_off" sync mode already trimmed them to match
+// the new voiceover, so re-trimming would just risk cutting audio short.
 const W = 720;
 const H = 1280;
-const MAX_CLIP_SEC = 8;
-const IMAGE_SEC = 2.5;
+const DUB_SAFETY_CAP_SEC = 30;
 
 function runFfmpeg(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -113,11 +121,13 @@ export async function POST(
   fs.mkdirSync(tmpDir, { recursive: true });
 
   const scalePad = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=30`;
+  const openaiApiKey = process.env.OPENAI_API_KEY;
 
   try {
     const segmentPaths: string[] = [];
     for (let i = 0; i < usable.length; i++) {
       const node = usable[i];
+      const text = (node.instruction || node.label || "").trim();
       // Prefer the AI-dubbed clip (new voiceover, lip-synced) over the
       // original upload once Sync.so has finished it — it's always a real
       // video with real matching audio, so it takes the same "video with
@@ -136,35 +146,55 @@ export async function POST(
       // speed tradeoff on a container that doesn't have RAM to spare.
       const videoOut = ["-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p"];
       if (clip.kind === "video") {
-        const hasAudio = useDub ? true : await probeHasAudio(srcPath);
-        if (hasAudio) {
+        if (useDub) {
+          // Already trimmed to match the new voiceover by Sync.so — just a
+          // generous safety cap, not a real trim.
           await runFfmpeg([
             "-y", "-i", srcPath,
             "-vf", scalePad,
             ...videoOut,
             ...AAC_OUT,
-            "-t", String(MAX_CLIP_SEC),
+            "-t", String(DUB_SAFETY_CAP_SEC),
             segPath,
           ]);
         } else {
-          await runFfmpeg([
-            "-y", "-i", srcPath, ...SILENT_AUDIO,
-            "-vf", scalePad,
-            "-map", "0:v:0", "-map", "1:a:0",
-            ...videoOut,
-            ...AAC_OUT,
-            "-t", String(MAX_CLIP_SEC), "-shortest",
-            segPath,
-          ]);
+          const targetSec = estimateSpeechSeconds(text);
+          const clipDurationSec = await probeDurationSec(srcPath);
+          const startSec =
+            clipDurationSec > targetSec
+              ? await pickBestSegment({ srcPath, text, targetSec, clipDurationSec, tmpDir, apiKey: openaiApiKey })
+              : 0;
+          const hasAudio = await probeHasAudio(srcPath);
+          if (hasAudio) {
+            await runFfmpeg([
+              "-y", "-i", srcPath,
+              "-vf", scalePad,
+              ...videoOut,
+              ...AAC_OUT,
+              "-ss", String(startSec), "-t", String(targetSec),
+              segPath,
+            ]);
+          } else {
+            await runFfmpeg([
+              "-y", "-i", srcPath, ...SILENT_AUDIO,
+              "-vf", scalePad,
+              "-map", "0:v:0", "-map", "1:a:0",
+              ...videoOut,
+              ...AAC_OUT,
+              "-ss", String(startSec), "-t", String(targetSec), "-shortest",
+              segPath,
+            ]);
+          }
         }
       } else {
+        const targetSec = estimateSpeechSeconds(text);
         await runFfmpeg([
           "-y", "-loop", "1", "-i", srcPath, ...SILENT_AUDIO,
           "-vf", scalePad,
           "-map", "0:v:0", "-map", "1:a:0",
           ...videoOut,
           ...AAC_OUT,
-          "-t", String(IMAGE_SEC), "-shortest",
+          "-t", String(targetSec), "-shortest",
           segPath,
         ]);
       }
