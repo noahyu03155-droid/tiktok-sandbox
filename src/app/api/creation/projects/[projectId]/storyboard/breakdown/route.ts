@@ -1,0 +1,203 @@
+import { NextRequest, NextResponse } from "next/server";
+import { spawn } from "child_process";
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { requireProjectAccess } from "@/lib/creationAuth";
+import { getMediaDir, updateCreationProject } from "@/lib/db";
+import { extractAudio, transcribeAudio } from "@/lib/transcribe";
+import { analyzeVideo } from "@/lib/analyze";
+import type { StoryboardNode, VideoStats } from "@/lib/types";
+
+export const dynamic = "force-dynamic";
+
+// "Breakdown into 6 stages" — same flow as the Video Analysis storyboard's
+// breakdown route, keyed by projectId: for a card whose clip came from
+// pasting a TikTok link, runs Whisper transcription + Claude's 6-stage
+// funnel analysis, then splits the single clip into 6 new stage-tagged
+// cards (each trimmed to its stage's time range, pre-filled with the AI's
+// summary + quote as a starting instruction). The original card is removed.
+// Returns just the delta ({newNodes, newConnections}) for the client to
+// apply onto its local board state.
+
+// Matches the canvas's card layout constants (NODE_W / GAP_X in
+// src/components/StoryboardCanvas.tsx) so the 6 new cards land in a row
+// with the same spacing addNode uses. Plain literals here — the canvas is
+// a client component and this is a server route.
+const NODE_W = 300;
+const GAP_X = 70;
+
+// A stage the AI marked as effectively absent (e.g. "no standalone
+// reaction beat" comes back as start=end=0) still gets its card — just
+// with no clip, since there's nothing meaningful to trim.
+const MIN_STAGE_SEC = 0.3;
+
+function mediaPathFromUrl(url: string): string | null {
+  if (!url.startsWith("/api/media/")) return null;
+  const rel = url.slice("/api/media/".length).split("/").filter(Boolean);
+  const p = path.join(getMediaDir(), ...rel);
+  if (!p.startsWith(getMediaDir())) return null; // path traversal guard
+  return p;
+}
+
+function runFfmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ff = spawn("ffmpeg", args);
+    let stderr = "";
+    ff.stderr.on("data", (d) => (stderr += d.toString()));
+    ff.on("close", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      if (code === null && signal) {
+        reject(new Error(`ffmpeg was killed mid-encode (signal ${signal}) — likely the server running out of memory.`));
+        return;
+      }
+      reject(new Error(`ffmpeg failed (code ${code}): ${stderr.slice(-500)}`));
+    });
+  });
+}
+
+export async function POST(req: NextRequest, { params }: { params: { projectId: string } }) {
+  const access = requireProjectAccess(params.projectId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
+
+  if (!process.env.OPENAI_API_KEY) {
+    return NextResponse.json(
+      { error: "OPENAI_API_KEY isn't set — required for the Whisper transcription step of the breakdown (same key used elsewhere in the app)." },
+      { status: 400 }
+    );
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return NextResponse.json(
+      { error: "ANTHROPIC_API_KEY isn't set — required for the Claude 6-stage analysis step of the breakdown (same key used for video analysis)." },
+      { status: 400 }
+    );
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const nodeId = body?.nodeId;
+  if (typeof nodeId !== "string" || !nodeId) {
+    return NextResponse.json({ error: "nodeId is required" }, { status: 400 });
+  }
+
+  const board = access.project.storyboard;
+  const nodeIdx = board?.nodes.findIndex((n) => n.id === nodeId) ?? -1;
+  if (!board || nodeIdx === -1) {
+    return NextResponse.json(
+      { error: "This shot hasn't been saved to the storyboard yet — wait a moment for autosave and try again." },
+      { status: 400 }
+    );
+  }
+  const node = board.nodes[nodeIdx];
+
+  if (node.clip?.source !== "tiktok") {
+    return NextResponse.json({ error: "Breakdown is only available for a clip imported from a TikTok link." }, { status: 400 });
+  }
+
+  const videoPath = mediaPathFromUrl(node.clip.url);
+  if (!videoPath || !fs.existsSync(videoPath)) {
+    return NextResponse.json(
+      { error: "The imported TikTok video file couldn't be found on disk — try re-importing the link." },
+      { status: 400 }
+    );
+  }
+
+  const dir = path.dirname(videoPath);
+
+  // Sidecar metadata written by import-tiktok at download time. Older
+  // imports (from before the sidecar existed) won't have one — fall back
+  // to empty metadata; the transcript alone still carries the analysis.
+  let meta: {
+    title: string;
+    description: string;
+    author: string;
+    hashtags: string[];
+    stats: VideoStats;
+    duration_sec: number | null;
+  } = {
+    title: "",
+    description: "",
+    author: "",
+    hashtags: [],
+    stats: { play_count: null, digg_count: null, comment_count: null, share_count: null },
+    duration_sec: null,
+  };
+  const metaPath = path.join(dir, `${nodeId}-tiktok.meta.json`);
+  try {
+    if (fs.existsSync(metaPath)) {
+      meta = { ...meta, ...JSON.parse(fs.readFileSync(metaPath, "utf-8")) };
+    }
+  } catch {
+    // unreadable/corrupt sidecar — proceed with the empty fallback
+  }
+
+  const tmpDir = path.join(dir, `_breakdown_${Date.now()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  try {
+    const audioPath = path.join(tmpDir, `${nodeId}.mp3`);
+    await extractAudio(videoPath, audioPath);
+    const transcript = await transcribeAudio(audioPath);
+
+    const analysis = await analyzeVideo({
+      title: meta.title,
+      description: meta.description,
+      author: meta.author,
+      hashtags: meta.hashtags,
+      stats: meta.stats,
+      duration_sec: meta.duration_sec,
+      transcript_segments: transcript.segments,
+    });
+
+    const newNodes: StoryboardNode[] = [];
+    for (let i = 0; i < analysis.structure.length; i++) {
+      const stage = analysis.structure[i];
+      const stageSec = stage.end_time - stage.start_time;
+      let clip: StoryboardNode["clip"] = null;
+      if (stageSec >= MIN_STAGE_SEC) {
+        const filename = `${nodeId}-${stage.key}.mp4`;
+        // -ss/-t as OUTPUT options (after -i) + re-encode instead of
+        // stream-copy = accurate cut points, same convention as the render
+        // route's trims.
+        await runFfmpeg([
+          "-y", "-i", videoPath,
+          "-ss", String(stage.start_time), "-t", String(stageSec),
+          "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p",
+          "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k",
+          path.join(dir, filename),
+        ]);
+        clip = { source: "tiktok", url: `/api/media/storyboard/${params.projectId}/${filename}`, kind: "video" };
+      }
+      newNodes.push({
+        id: crypto.randomUUID(),
+        label: stage.label,
+        instruction: [stage.summary, stage.quote ? `"${stage.quote}"` : ""].filter(Boolean).join("\n\n"),
+        x: node.x + i * (NODE_W + GAP_X),
+        y: node.y,
+        clip,
+        stageTag: stage.key,
+      });
+    }
+
+    const newConnections = newNodes.slice(0, -1).map((n, i) => ({
+      id: crypto.randomUUID(),
+      fromId: n.id,
+      toId: newNodes[i + 1].id,
+    }));
+
+    const newBoard = {
+      ...board,
+      nodes: board.nodes.filter((n) => n.id !== nodeId).concat(newNodes),
+      connections: board.connections.filter((c) => c.fromId !== nodeId && c.toId !== nodeId).concat(newConnections),
+    };
+    updateCreationProject(params.projectId, { storyboard: newBoard });
+
+    return NextResponse.json({ newNodes, newConnections });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || "Breakdown failed" }, { status: 500 });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}

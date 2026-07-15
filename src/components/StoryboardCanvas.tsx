@@ -465,6 +465,35 @@ export default function StoryboardCanvas({
     }
   }
 
+  // "Breakdown into 6 stages" — for a TikTok-imported clip, asks the server
+  // to transcribe + run the same 6-stage funnel analysis used by Video
+  // Analysis, then swaps this single card out for 6 new stage-tagged cards
+  // (one per funnel stage, each trimmed to that stage's time range and
+  // pre-filled with the AI's summary/quote as a starting instruction).
+  async function startBreakdown(node: StoryboardNode) {
+    if (!window.confirm("Break this TikTok clip down into 6 tagged stage cards? The original card will be replaced.")) return;
+    setBusyNodeId(node.id);
+    clearNodeError(node.id);
+    try {
+      const res = await fetch(`${apiBase}/breakdown`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodeId: node.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Breakdown failed");
+      setBoard((b) => ({
+        ...b,
+        nodes: [...b.nodes.filter((n) => n.id !== node.id), ...data.newNodes],
+        connections: [...b.connections.filter((c) => c.fromId !== node.id && c.toId !== node.id), ...data.newConnections],
+      }));
+    } catch (err: any) {
+      setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Breakdown failed" }));
+    } finally {
+      setBusyNodeId(null);
+    }
+  }
+
   function handleLibraryPick(choice: LibraryClipChoice) {
     const nodeId = pickerForNode;
     setPickerForNode(null);
@@ -597,45 +626,57 @@ export default function StoryboardCanvas({
       <input ref={fileInputRef} type="file" accept="video/*,image/*" className="hidden" onChange={handleFileChosen} />
       <input ref={styleFileInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" onChange={handleStyleFileChosen} />
 
-      <div className="flex items-center justify-between px-5 py-3 border-b border-edge bg-panel shrink-0 flex-wrap gap-2">
-        <div>
-          <h3 className="text-white font-semibold text-sm">Generate Video — Storyboard</h3>
-          <p className="text-xs text-zinc-500">
-            Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok link anywhere to add it as a new video card.
-          </p>
+      {/* Two rows: the button row never wraps its controls away from the
+          Close button (shrink-0 all round), and the stage-gate status text
+          — which can get long ("Generate needs: Reaction, Hook, ...") —
+          lives on its own full-width line below where it can wrap freely
+          without crowding Close out of reach. */}
+      <div className="border-b border-edge bg-panel shrink-0">
+        <div className="flex items-center justify-between px-5 py-3 flex-wrap gap-2">
+          <div>
+            <h3 className="text-white font-semibold text-sm">Generate Video — Storyboard</h3>
+            <p className="text-xs text-zinc-500">
+              Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok link anywhere to add it as a new video card.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs flex items-center gap-1.5 text-zinc-500 mr-1">
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  saveStatus === "saving"
+                    ? "bg-yellow-400 animate-pulse"
+                    : saveStatus === "error"
+                    ? "bg-red-400"
+                    : saveStatus === "saved"
+                    ? "bg-green-400"
+                    : "bg-transparent"
+                }`}
+              />
+              {saveStatus === "saving" && "Saving..."}
+              {saveStatus === "saved" && "Saved"}
+              {saveStatus === "error" && "Save failed"}
+            </span>
+            <button onClick={addNode} className="px-2.5 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-xs">
+              + Add shot
+            </button>
+            <button onClick={() => zoomBy(1.2)} className="w-7 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-sm">
+              +
+            </button>
+            <button onClick={() => zoomBy(1 / 1.2)} className="w-7 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-sm">
+              −
+            </button>
+            <button
+              onClick={() => setBoard((b) => ({ ...b, zoom: 1, pan: { x: 40, y: 40 } }))}
+              className="px-2 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-xs"
+            >
+              Reset view
+            </button>
+            <button onClick={onClose} className="ml-2 text-zinc-400 hover:text-white text-sm shrink-0">
+              ✕ Close
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs flex items-center gap-1.5 text-zinc-500 mr-1">
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                saveStatus === "saving"
-                  ? "bg-yellow-400 animate-pulse"
-                  : saveStatus === "error"
-                  ? "bg-red-400"
-                  : saveStatus === "saved"
-                  ? "bg-green-400"
-                  : "bg-transparent"
-              }`}
-            />
-            {saveStatus === "saving" && "Saving..."}
-            {saveStatus === "saved" && "Saved"}
-            {saveStatus === "error" && "Save failed"}
-          </span>
-          <button onClick={addNode} className="px-2.5 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-xs">
-            + Add shot
-          </button>
-          <button onClick={() => zoomBy(1.2)} className="w-7 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-sm">
-            +
-          </button>
-          <button onClick={() => zoomBy(1 / 1.2)} className="w-7 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-sm">
-            −
-          </button>
-          <button
-            onClick={() => setBoard((b) => ({ ...b, zoom: 1, pan: { x: 40, y: 40 } }))}
-            className="px-2 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-xs"
-          >
-            Reset view
-          </button>
+        <div className="px-5 pb-2.5">
           {stageGate.ok ? (
             <span className="text-xs text-green-400">✓ Ready — see Generate button under your CTA card</span>
           ) : (
@@ -647,9 +688,6 @@ export default function StoryboardCanvas({
               — button appears under your CTA card
             </span>
           )}
-          <button onClick={onClose} className="ml-2 text-zinc-400 hover:text-white text-sm">
-            ✕ Close
-          </button>
         </div>
       </div>
 
@@ -922,6 +960,14 @@ export default function StoryboardCanvas({
                     onMouseDown={(e) => e.stopPropagation()}
                     className="px-2 py-1.5 border-t border-edge bg-panel flex items-center gap-2 text-[10px] shrink-0"
                   >
+                    {node.clip?.source === "tiktok" && (
+                      <button
+                        onClick={() => startBreakdown(node)}
+                        className="px-2 py-1 rounded bg-panel2 border border-edge text-zinc-300 hover:text-white hover:border-brand-500"
+                      >
+                        🔍 Breakdown into 6 stages
+                      </button>
+                    )}
                     {!node.dub || node.dub.status === "error" ? (
                       <>
                         <button
