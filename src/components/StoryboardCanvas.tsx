@@ -345,6 +345,63 @@ export default function StoryboardCanvas({
   const order = resolveStoryboardOrder(board.nodes, board.connections);
   const orderNumber = new Map(order.map((n, i) => [n.id, i + 1] as const));
 
+  // One card can have any number of connections in and out — anchor side
+  // (left vs right dot) is picked automatically from which way the other
+  // node currently sits, so dragging a card to the opposite side re-routes
+  // the line instead of drawing it backwards through the card. Multiple
+  // lines leaving/entering the same side of the same card are fanned out
+  // vertically a little so they don't sit exactly on top of each other.
+  const endpointIndex = new Map<string, number>();
+  const endpointCount = new Map<string, number>();
+  for (const c of board.connections) {
+    const from = nodeById.get(c.fromId);
+    const to = nodeById.get(c.toId);
+    if (!from || !to) continue;
+    const fromKey = `${c.fromId}:${to.x >= from.x ? "r" : "l"}`;
+    const toKey = `${c.toId}:${to.x >= from.x ? "l" : "r"}`;
+    endpointCount.set(fromKey, (endpointCount.get(fromKey) || 0) + 1);
+    endpointCount.set(toKey, (endpointCount.get(toKey) || 0) + 1);
+  }
+  function nextIndex(key: string) {
+    const i = endpointIndex.get(key) || 0;
+    endpointIndex.set(key, i + 1);
+    return i;
+  }
+  function fanOffset(key: string) {
+    const count = endpointCount.get(key) || 1;
+    const i = nextIndex(key);
+    return (i - (count - 1) / 2) * 16;
+  }
+
+  function connectionGeometry(c: { id: string; fromId: string; toId: string }) {
+    const from = nodeById.get(c.fromId);
+    const to = nodeById.get(c.toId);
+    if (!from || !to) return null;
+    const forward = to.x >= from.x;
+    const fromKey = `${c.fromId}:${forward ? "r" : "l"}`;
+    const toKey = `${c.toId}:${forward ? "l" : "r"}`;
+    const x1 = from.x + (forward ? NODE_W : 0);
+    const y1 = from.y + NODE_H / 2 + fanOffset(fromKey);
+    const x2 = to.x + (forward ? 0 : NODE_W);
+    const y2 = to.y + NODE_H / 2 + fanOffset(toKey);
+    const dx = x2 - x1;
+    const bend = Math.max(50, Math.min(220, Math.abs(dx) * 0.5));
+    const c1x = x1 + (forward ? bend : -bend);
+    const c1y = y1;
+    const c2x = x2 + (forward ? -bend : bend);
+    const c2y = y2;
+    // Cubic bezier point at t=0.5, for placing the remove button on the
+    // actual curve instead of the straight-line midpoint between endpoints.
+    const midX = 0.125 * x1 + 0.375 * c1x + 0.375 * c2x + 0.125 * x2;
+    const midY = 0.125 * y1 + 0.375 * c1y + 0.375 * c2y + 0.125 * y2;
+    return { x1, y1, x2, y2, c1x, c1y, c2x, c2y, midX, midY };
+  }
+
+  // Computed once per render (fanOffset mutates counters as it goes, so
+  // this must be reused for both the SVG paths and the remove buttons
+  // below rather than calling connectionGeometry twice per connection).
+  const connectionGeoms = board.connections.map((c) => ({ c, g: connectionGeometry(c) }));
+
   return (
     <div className="fixed inset-0 bg-black/85 z-50 flex flex-col">
       <input ref={fileInputRef} type="file" accept="video/*,image/*" className="hidden" onChange={handleFileChosen} />
@@ -447,21 +504,14 @@ export default function StoryboardCanvas({
           style={{ transform: `translate(${board.pan.x}px, ${board.pan.y}px) scale(${board.zoom})`, transformOrigin: "0 0" }}
         >
           <svg className="absolute top-0 left-0 overflow-visible pointer-events-none" width={1} height={1}>
-            {board.connections.map((c) => {
-              const from = nodeById.get(c.fromId);
-              const to = nodeById.get(c.toId);
-              if (!from || !to) return null;
-              const x1 = from.x + NODE_W;
-              const y1 = from.y + NODE_H / 2;
-              const x2 = to.x;
-              const y2 = to.y + NODE_H / 2;
-              const midX = (x1 + x2) / 2;
+            {connectionGeoms.map(({ c, g }) => {
+              if (!g) return null;
               return (
                 <path
                   key={c.id}
-                  d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
+                  d={`M ${g.x1} ${g.y1} C ${g.c1x} ${g.c1y}, ${g.c2x} ${g.c2y}, ${g.x2} ${g.y2}`}
                   stroke="#5cc4ee"
-                  strokeWidth={2}
+                  strokeWidth={2.5}
                   fill="none"
                 />
               );
@@ -471,33 +521,34 @@ export default function StoryboardCanvas({
               (() => {
                 const from = nodeById.get(connStart);
                 if (!from) return null;
+                const forward = connDraft.x >= from.x + NODE_W / 2;
+                const x1 = from.x + (forward ? NODE_W : 0);
+                const y1 = from.y + NODE_H / 2;
+                const dx = connDraft.x - x1;
+                const bend = Math.max(50, Math.min(220, Math.abs(dx) * 0.5));
+                const c1x = x1 + (forward ? bend : -bend);
+                const c2x = connDraft.x + (forward ? -bend : bend);
                 return (
-                  <line
-                    x1={from.x + NODE_W / 2}
-                    y1={from.y + NODE_H / 2}
-                    x2={connDraft.x}
-                    y2={connDraft.y}
+                  <path
+                    d={`M ${x1} ${y1} C ${c1x} ${y1}, ${c2x} ${connDraft.y}, ${connDraft.x} ${connDraft.y}`}
                     stroke="#5cc4ee"
                     strokeDasharray="6 5"
                     strokeWidth={3}
+                    fill="none"
                   />
                 );
               })()}
           </svg>
 
-          {board.connections.map((c) => {
-            const from = nodeById.get(c.fromId);
-            const to = nodeById.get(c.toId);
-            if (!from || !to) return null;
-            const midX = (from.x + NODE_W + to.x) / 2;
-            const midY = (from.y + NODE_H / 2 + to.y + NODE_H / 2) / 2;
+          {connectionGeoms.map(({ c, g }) => {
+            if (!g) return null;
             return (
               <button
                 key={c.id}
                 onClick={() => removeConnection(c.id)}
                 title="Remove connection"
                 className="absolute w-4 h-4 rounded-full bg-ink border border-edge2 text-zinc-400 hover:text-red-400 hover:border-red-400 text-[10px] leading-none flex items-center justify-center"
-                style={{ left: midX, top: midY, transform: "translate(-50%,-50%)" }}
+                style={{ left: g.midX, top: g.midY, transform: "translate(-50%,-50%)" }}
               >
                 ✕
               </button>
