@@ -716,6 +716,7 @@ export default function SingleVideoCanvas({ video }: { video: VideoRecord }) {
   const [videoPos, setVideoPos] = useState(video.canvas?.videoPosition || { x: CARD_WIDTH + 60, y: 16 });
   const [zoom, setZoom] = useState(video.canvas?.zoom ?? 1);
   const [pan, setPan] = useState(video.canvas?.pan || { x: 0, y: 0 });
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
   const [connectingPos, setConnectingPos] = useState<{ x: number; y: number } | null>(null);
@@ -767,6 +768,7 @@ export default function SingleVideoCanvas({ video }: { video: VideoRecord }) {
       isFirstRender.current = false;
       return;
     }
+    setSaveStatus("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       fetch(`/api/videos/${video.id}/canvas`, {
@@ -783,7 +785,9 @@ export default function SingleVideoCanvas({ video }: { video: VideoRecord }) {
           zoom,
           pan,
         }),
-      }).catch(() => {});
+      })
+        .then((res) => setSaveStatus(res.ok ? "saved" : "error"))
+        .catch(() => setSaveStatus("error"));
     }, 600);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -1060,6 +1064,22 @@ export default function SingleVideoCanvas({ video }: { video: VideoRecord }) {
       <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
         <p className="text-xs text-zinc-500 hidden lg:block">{t("canvasHint")}</p>
         <div className="flex gap-2 ml-auto items-center">
+          <span className="text-xs flex items-center gap-1.5 text-zinc-500">
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                saveStatus === "saving"
+                  ? "bg-yellow-400 animate-pulse"
+                  : saveStatus === "error"
+                  ? "bg-red-400"
+                  : saveStatus === "saved"
+                  ? "bg-green-400"
+                  : "bg-transparent"
+              }`}
+            />
+            {saveStatus === "saving" && t("canvasSaving")}
+            {saveStatus === "saved" && t("canvasSaved")}
+            {saveStatus === "error" && t("canvasSaveFailed")}
+          </span>
           <button
             onClick={() => setIsFullscreen((f) => !f)}
             className={`text-xs rounded-lg px-3 py-1.5 border ${

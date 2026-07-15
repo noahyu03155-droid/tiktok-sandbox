@@ -58,6 +58,7 @@ export default function StoryboardCanvas({
   const [busyNodeId, setBusyNodeId] = useState<string | null>(null);
   const [nodeErrors, setNodeErrors] = useState<Record<string, string>>({});
   const [connDraft, setConnDraft] = useState<{ fromId: string; x: number; y: number } | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -71,13 +72,16 @@ export default function StoryboardCanvas({
       firstRun.current = false;
       return;
     }
+    setSaveStatus("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(board),
-      }).catch(() => {});
+      })
+        .then((res) => setSaveStatus(res.ok ? "saved" : "error"))
+        .catch(() => setSaveStatus("error"));
     }, 600);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -274,6 +278,22 @@ export default function StoryboardCanvas({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <span className="text-xs flex items-center gap-1.5 text-zinc-500 mr-1">
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                saveStatus === "saving"
+                  ? "bg-yellow-400 animate-pulse"
+                  : saveStatus === "error"
+                  ? "bg-red-400"
+                  : saveStatus === "saved"
+                  ? "bg-green-400"
+                  : "bg-transparent"
+              }`}
+            />
+            {saveStatus === "saving" && "Saving..."}
+            {saveStatus === "saved" && "Saved"}
+            {saveStatus === "error" && "Save failed"}
+          </span>
           <button onClick={() => zoomBy(1.2)} className="w-7 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-sm">
             +
           </button>
