@@ -17,7 +17,14 @@ export async function GET(req: NextRequest) {
   }
 
   const state = crypto.randomBytes(16).toString("hex");
-  const redirectUri = `${req.nextUrl.origin}/api/shopify/oauth/callback`;
+  // Prefer an explicit APP_URL over req.nextUrl.origin — behind Railway's
+  // (and most PaaS) reverse proxy, the Host header Next.js sees can resolve
+  // to an internal address like localhost:8080 instead of the public
+  // domain, which silently sends Shopify the wrong redirect_uri and bounces
+  // the OAuth callback to a dead localhost URL. Set APP_URL in the
+  // Variables tab to your real https://<domain> to make this deterministic.
+  const appUrl = (process.env.APP_URL || req.nextUrl.origin).replace(/\/$/, "");
+  const redirectUri = `${appUrl}/api/shopify/oauth/callback`;
   const scope = "read_products";
 
   const authorizeUrl =
