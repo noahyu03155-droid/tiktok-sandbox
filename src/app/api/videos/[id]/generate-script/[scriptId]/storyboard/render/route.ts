@@ -5,7 +5,7 @@ import path from "path";
 import { getMediaDir, getVideo } from "@/lib/db";
 import { resolveStoryboardOrder } from "@/lib/storyboard";
 import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/storyboardTrim";
-import { wrapCaption, CAPTION_FONT_FILE } from "@/lib/storyboardCaptions";
+import { wrapCaption, CAPTION_FONT_FILE, type CaptionStylePreset } from "@/lib/storyboardCaptions";
 
 export const dynamic = "force-dynamic";
 
@@ -98,8 +98,8 @@ function mediaPathFromUrl(url: string): string | null {
 // `textfile=`, not an inline `text=` value, so caption content (quotes,
 // colons, apostrophes — all common in real ad copy) never needs escaping
 // for the filtergraph parser.
-function captionFilter(tmpDir: string, index: number, text: string): string | null {
-  const wrapped = wrapCaption(text);
+function captionFilter(tmpDir: string, index: number, text: string, style: CaptionStylePreset): string | null {
+  const wrapped = wrapCaption(text, style);
   if (!wrapped) return null;
   const capPath = path.join(tmpDir, `cap${index}.txt`);
   fs.writeFileSync(capPath, wrapped);
@@ -146,6 +146,14 @@ export async function POST(
 
   const scalePad = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=${FPS}`;
   const openaiApiKey = process.env.OPENAI_API_KEY;
+  // "Learn from a reference video" — if the user analyzed one for this
+  // script (storyboard/style/analyze), use its pacing/transition/caption
+  // read instead of the fixed defaults.
+  const styleProfile = board.styleProfile || null;
+  const captionStyle: CaptionStylePreset = styleProfile?.captionStyle || "descriptive";
+  const durationMultiplier = styleProfile?.durationMultiplier ?? 1;
+  const effectiveTransition = styleProfile && styleProfile.transition !== "hard_cut" ? styleProfile.transition : "fade";
+  const effectiveTransitionSec = styleProfile?.transition === "hard_cut" ? 0.05 : styleProfile?.transitionSec ?? TRANSITION_SEC;
 
   try {
     const segmentPaths: string[] = [];
@@ -159,7 +167,7 @@ export async function POST(
     for (let i = 0; i < usable.length; i++) {
       const node = usable[i];
       const text = (node.instruction || node.label || "").trim();
-      const caption = captionFilter(tmpDir, i, text);
+      const caption = captionFilter(tmpDir, i, text, captionStyle);
       // Prefer the AI-dubbed clip (new voiceover, lip-synced) over the
       // original upload once Sync.so has finished it — it's always a real
       // video with real matching audio, so it takes the same "video with
@@ -193,7 +201,7 @@ export async function POST(
             segPath,
           ]);
         } else {
-          const targetSec = estimateSpeechSeconds(text);
+          const targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));
           intendedSec = targetSec;
           const clipDurationSec = await probeDurationSec(srcPath);
           const startSec =
@@ -223,7 +231,7 @@ export async function POST(
           }
         }
       } else {
-        const targetSec = estimateSpeechSeconds(text);
+        const targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));
         intendedSec = targetSec;
         // Ken Burns: scale up past the target canvas first so the slow zoom
         // has room to crop into without ever showing an edge, then zoompan
@@ -269,11 +277,11 @@ export async function POST(
       let aLabel = "0:a";
       let running = segDurations[0];
       for (let i = 1; i < segmentPaths.length; i++) {
-        const t = Math.max(0.05, Math.min(TRANSITION_SEC, running / 2, segDurations[i] / 2));
+        const t = Math.max(0.05, Math.min(effectiveTransitionSec, running / 2, segDurations[i] / 2));
         const offset = Math.max(0, running - t);
         const vOut = `v${i}`;
         const aOut = `a${i}`;
-        filterParts.push(`[${vLabel}][${i}:v]xfade=transition=fade:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[${vOut}]`);
+        filterParts.push(`[${vLabel}][${i}:v]xfade=transition=${effectiveTransition}:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[${vOut}]`);
         filterParts.push(`[${aLabel}][${i}:a]acrossfade=d=${t.toFixed(3)}[${aOut}]`);
         vLabel = vOut;
         aLabel = aOut;
@@ -291,7 +299,11 @@ export async function POST(
       ]);
     }
 
-    return NextResponse.json({ url: `/api/media/storyboard/${params.scriptId}/render.mp4`, skipped });
+    return NextResponse.json({
+      url: `/api/media/storyboard/${params.scriptId}/render.mp4`,
+      skipped,
+      styleApplied: styleProfile ? { pacing: styleProfile.pacing, transition: styleProfile.transition, notes: styleProfile.notes } : null,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Render failed" }, { status: 500 });
   } finally {

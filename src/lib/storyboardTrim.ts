@@ -43,7 +43,7 @@ export function probeDurationSec(srcPath: string): Promise<number> {
   });
 }
 
-function extractFrame(srcPath: string, atSec: number, outPath: string): Promise<boolean> {
+export function extractFrame(srcPath: string, atSec: number, outPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     const p = spawn("ffmpeg", [
       "-y", "-ss", String(atSec), "-i", srcPath,

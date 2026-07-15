@@ -268,6 +268,51 @@ export interface StoryboardState {
   direction: string;
   zoom: number;
   pan: { x: number; y: number };
+  // "Learn from a reference video" — an editing-style profile extracted
+  // from a reference clip the user uploads (empirical cut pacing via ffmpeg
+  // scene detection + a vision model's read on transition/caption style).
+  // When present, the render route uses it to pick transition preset/
+  // duration and scale shot lengths instead of the fixed defaults. Not a
+  // real video-generation model imitating the reference — it reads the
+  // reference's *editing rhythm*, then applies that rhythm to the user's
+  // own footage.
+  styleProfile?: StoryboardStyleProfile | null;
+}
+
+export type StoryboardPacing = "fast" | "medium" | "slow";
+
+// Kept to ffmpeg's original xfade transition set (added in ffmpeg 4.3),
+// verified working in a real ffmpeg build before shipping — newer presets
+// like "zoomin" aren't reliably available across ffmpeg versions.
+export type StoryboardTransitionPreset =
+  | "hard_cut"
+  | "fade"
+  | "dissolve"
+  | "wipeleft"
+  | "wiperight"
+  | "slideleft"
+  | "slideright"
+  | "slideup"
+  | "slidedown"
+  | "circleopen"
+  | "circleclose";
+
+export type StoryboardCaptionStyle = "punchy" | "descriptive" | "minimal";
+
+export interface StoryboardStyleProfile {
+  sourceLabel: string;
+  shotCount: number;
+  avgShotSec: number;
+  pacing: StoryboardPacing;
+  transition: StoryboardTransitionPreset;
+  transitionSec: number;
+  // Multiplies the estimated speech-duration target for non-dubbed clips —
+  // <1 tightens cuts to match a faster reference, >1 loosens them.
+  durationMultiplier: number;
+  captionStyle: StoryboardCaptionStyle;
+  // Short human-readable description from the vision model, shown in the
+  // UI so the user can sanity-check what was actually detected.
+  notes: string;
 }
 
 // ---- Trend analysis (e.g. FastMoss top pet-food/treat videos, rolling 7-day window) ----

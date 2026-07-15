@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { GeneratedScript, StoryboardClip, StoryboardNode, StoryboardState } from "@/lib/types";
+import type { GeneratedScript, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
 import { resolveStoryboardOrder } from "@/lib/storyboard";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
 
@@ -93,12 +93,21 @@ export default function StoryboardCanvas({
   }, [connStart]);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [rendering, setRendering] = useState(false);
-  const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[] } | null>(null);
+  const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null } | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
+
+  // ---- "Learn from a reference video" — analyzes an example clip's cut
+  // pacing/transition/caption style and applies it to this storyboard's
+  // render instead of the fixed defaults. Profile itself lives on
+  // board.styleProfile (part of the normal autosaved state); these two are
+  // just local UI status for the upload/analyze call.
+  const [analyzingStyle, setAnalyzingStyle] = useState(false);
+  const [styleError, setStyleError] = useState<string | null>(null);
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadNodeIdRef = useRef<string | null>(null);
+  const styleFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // ---- AI dub (lip-sync): new voiceover from the shot's text, resynced to
   // the clip's mouth via Sync.so. A generation takes a few minutes, so the
@@ -403,12 +412,44 @@ export default function StoryboardCanvas({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Render failed");
-      setRenderResult({ url: data.url, skipped: data.skipped || [] });
+      setRenderResult({ url: data.url, skipped: data.skipped || [], styleApplied: data.styleApplied || null });
     } catch (err: any) {
       setRenderError(err.message || "Render failed");
     } finally {
       setRendering(false);
     }
+  }
+
+  function startStyleUpload() {
+    styleFileInputRef.current?.click();
+  }
+
+  async function handleStyleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setAnalyzingStyle(true);
+    setStyleError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/style/analyze`, {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Style analysis failed");
+      setBoard((b) => ({ ...b, styleProfile: data.profile as StoryboardStyleProfile }));
+    } catch (err: any) {
+      setStyleError(err.message || "Style analysis failed");
+    } finally {
+      setAnalyzingStyle(false);
+    }
+  }
+
+  function clearStyleProfile() {
+    setBoard((b) => ({ ...b, styleProfile: null }));
+    setStyleError(null);
   }
 
   const nodeById = new Map(board.nodes.map((n) => [n.id, n] as const));
@@ -475,6 +516,7 @@ export default function StoryboardCanvas({
   return (
     <div className="fixed inset-0 bg-black/85 z-50 flex flex-col">
       <input ref={fileInputRef} type="file" accept="video/*,image/*" className="hidden" onChange={handleFileChosen} />
+      <input ref={styleFileInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" onChange={handleStyleFileChosen} />
 
       <div className="flex items-center justify-between px-5 py-3 border-b border-edge bg-panel shrink-0 flex-wrap gap-2">
         <div>
@@ -528,13 +570,53 @@ export default function StoryboardCanvas({
         </div>
       </div>
 
+      <div className="px-5 py-2.5 border-b border-edge bg-panel2 shrink-0 flex items-center gap-3 flex-wrap">
+        <span className="text-xs font-medium text-zinc-400 shrink-0">🎨 Reference video style</span>
+        {analyzingStyle ? (
+          <span className="text-xs text-yellow-400 animate-pulse">Analyzing cut pacing/transitions...</span>
+        ) : board.styleProfile ? (
+          <>
+            <span className="text-xs text-zinc-300">
+              <span className="text-green-400 font-medium">{board.styleProfile.pacing} pacing</span>
+              {" · "}
+              {board.styleProfile.transition === "hard_cut" ? "hard cuts" : `${board.styleProfile.transition} transitions`}
+              {" · "}
+              {board.styleProfile.captionStyle} captions
+              {" · ~"}
+              {board.styleProfile.avgShotSec.toFixed(1)}s/shot from "{board.styleProfile.sourceLabel}"
+            </span>
+            <span className="text-xs text-zinc-500 italic truncate max-w-md" title={board.styleProfile.notes}>
+              {board.styleProfile.notes}
+            </span>
+            <button onClick={startStyleUpload} className="ml-auto text-xs text-zinc-400 hover:text-white shrink-0">
+              ↺ Replace
+            </button>
+            <button onClick={clearStyleProfile} className="text-xs text-zinc-500 hover:text-red-400 shrink-0">
+              ✕ Clear
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="text-xs text-zinc-500">Not set — render uses default pacing/transitions</span>
+            <button
+              onClick={startStyleUpload}
+              className="ml-auto px-2.5 py-1 rounded border border-dashed border-edge2 text-xs text-zinc-300 hover:text-white hover:border-brand-500 shrink-0"
+            >
+              📎 Upload a reference video to learn its editing style
+            </button>
+          </>
+        )}
+        {styleError && <span className="text-xs text-red-400 w-full">{styleError}</span>}
+      </div>
+
       {(renderError || renderResult) && (
         <div className="px-5 py-2.5 border-b border-edge bg-panel2 shrink-0 flex items-center justify-between gap-3 flex-wrap">
           {renderError && <p className="text-sm text-red-400">{renderError}</p>}
           {renderResult && (
             <div className="flex items-center gap-3 flex-wrap">
               <p className="text-sm text-green-400">
-                Render done{renderResult.skipped.length > 0 ? ` — skipped (no clip attached): ${renderResult.skipped.join(", ")}` : ""}
+                Render done{renderResult.styleApplied ? ` — applied ${renderResult.styleApplied.pacing} reference style` : ""}
+                {renderResult.skipped.length > 0 ? ` — skipped (no clip attached): ${renderResult.skipped.join(", ")}` : ""}
               </p>
               <a
                 href={renderResult.url}

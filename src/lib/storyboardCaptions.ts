@@ -10,16 +10,26 @@
 // instruction can be edited into either.
 export const CAPTION_FONT_FILE = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
 
-const MAX_CHARS_PER_LINE = 26;
-const MAX_LINES = 3;
+// Defaults match the original always-on behavior when no reference-video
+// style profile is in play. A style profile's captionStyle picks one of
+// these presets instead — "punchy" for fast-cut references (short bursts,
+// like a viral-style caption), "minimal" for a single short line, or
+// "descriptive" (the original default) for a fuller caption.
+const CAPTION_PRESETS = {
+  descriptive: { maxCharsPerLine: 26, maxLines: 3 },
+  punchy: { maxCharsPerLine: 16, maxLines: 2 },
+  minimal: { maxCharsPerLine: 20, maxLines: 1 },
+} as const;
 
-function wrapWords(text: string): string[] {
+export type CaptionStylePreset = keyof typeof CAPTION_PRESETS;
+
+function wrapWords(text: string, maxCharsPerLine: number): string[] {
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = "";
   for (const word of words) {
     const candidate = current ? `${current} ${word}` : word;
-    if (candidate.length > MAX_CHARS_PER_LINE && current) {
+    if (candidate.length > maxCharsPerLine && current) {
       lines.push(current);
       current = word;
     } else {
@@ -30,12 +40,13 @@ function wrapWords(text: string): string[] {
   return lines;
 }
 
-export function wrapCaption(text: string): string {
+export function wrapCaption(text: string, style: CaptionStylePreset = "descriptive"): string {
+  const { maxCharsPerLine, maxLines } = CAPTION_PRESETS[style];
   const clean = text.replace(/\s+/g, " ").trim();
   if (!clean) return "";
-  const lines = wrapWords(clean);
-  if (lines.length <= MAX_LINES) return lines.join("\n");
-  const truncated = lines.slice(0, MAX_LINES);
-  truncated[MAX_LINES - 1] = truncated[MAX_LINES - 1].replace(/.{0,3}$/, "") + "…";
+  const lines = wrapWords(clean, maxCharsPerLine);
+  if (lines.length <= maxLines) return lines.join("\n");
+  const truncated = lines.slice(0, maxLines);
+  truncated[maxLines - 1] = truncated[maxLines - 1].replace(/.{0,3}$/, "") + "…";
   return truncated.join("\n");
 }
