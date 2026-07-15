@@ -1,6 +1,8 @@
 import path from "path";
 import fs from "fs";
-import type { VideoRecord, TrendBatch, CreatorInfo, TrackedCreator } from "./types";
+import crypto from "crypto";
+import type { VideoRecord, TrendBatch, CreatorInfo, TrackedCreator, User, UserRole, CreationProject } from "./types";
+import { hashPassword } from "./password";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const MEDIA_DIR = path.join(DATA_DIR, "media");
@@ -12,6 +14,8 @@ interface Store {
   videos: Record<string, VideoRecord>;
   trendBatches: Record<string, TrendBatch>;
   creators: Record<string, TrackedCreator>;
+  users: Record<string, User>;
+  creationProjects: Record<string, CreationProject>;
   shopifyAccessToken?: string | null;
 }
 
@@ -28,13 +32,42 @@ function load(): Store {
       cache = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
       if (!cache!.trendBatches) cache!.trendBatches = {};
       if (!cache!.creators) cache!.creators = {};
+      if (!cache!.users) cache!.users = {};
+      if (!cache!.creationProjects) cache!.creationProjects = {};
     } catch {
-      cache = { videos: {}, trendBatches: {}, creators: {} };
+      cache = { videos: {}, trendBatches: {}, creators: {}, users: {}, creationProjects: {} };
     }
   } else {
-    cache = { videos: {}, trendBatches: {}, creators: {} };
+    cache = { videos: {}, trendBatches: {}, creators: {}, users: {}, creationProjects: {} };
   }
+  seedAdminUser(cache as Store);
   return cache as Store;
+}
+
+// The app originally had exactly one account, authenticated straight
+// against ADMIN_USERNAME/ADMIN_PASSWORD env vars (no user table at all).
+// Multi-user login replaces that with a real users store, but shouldn't
+// break anyone's existing login — the first time this runs against a store
+// with no users yet, it creates an "admin" role user from those same env
+// vars so the existing credentials keep working with zero config changes.
+// Safe to call on every load(): it only acts when store.users is empty.
+// Called from inside load() itself, after `cache` has already been
+// assigned, so the shared persist() below (same OneDrive-lock retry logic
+// as every other write in this file) already has something to write.
+function seedAdminUser(store: Store) {
+  if (Object.keys(store.users).length > 0) return;
+  const username = process.env.ADMIN_USERNAME;
+  const password = process.env.ADMIN_PASSWORD;
+  if (!username || !password) return;
+  const id = crypto.randomUUID();
+  store.users[id] = {
+    id,
+    username,
+    passwordHash: hashPassword(password),
+    role: "admin",
+    createdAt: new Date().toISOString(),
+  };
+  persist();
 }
 
 // Synchronous sleep, used only for the retry backoff below. Fine to block
@@ -269,4 +302,111 @@ export function setShopifyToken(token: string) {
 export function getShopifyToken(): string | null {
   const store = load();
   return store.shopifyAccessToken || null;
+}
+
+// ---- Users (multi-user login) ----
+
+export function createUser(username: string, password: string, role: UserRole = "member"): User {
+  const store = load();
+  const id = crypto.randomUUID();
+  const user: User = {
+    id,
+    username,
+    passwordHash: hashPassword(password),
+    role,
+    createdAt: new Date().toISOString(),
+  };
+  store.users[id] = user;
+  persist();
+  return user;
+}
+
+export function getUserByUsername(username: string): User | null {
+  const store = load();
+  const lower = username.toLowerCase();
+  return Object.values(store.users).find((u) => u.username.toLowerCase() === lower) || null;
+}
+
+export function getUserById(id: string): User | null {
+  const store = load();
+  return store.users[id] || null;
+}
+
+export function listUsers(): User[] {
+  const store = load();
+  return Object.values(store.users).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+export function updateUser(id: string, patch: Partial<User>) {
+  const store = load();
+  const existing = store.users[id];
+  if (!existing) return;
+  store.users[id] = { ...existing, ...patch };
+  persist();
+}
+
+// ---- Creation projects ----
+
+export function createCreationProject(ownerId: string, title: string): CreationProject {
+  const store = load();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const project: CreationProject = {
+    id,
+    ownerId,
+    title,
+    shopifyProductId: null,
+    shopifyProductTitle: null,
+    storyboard: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  store.creationProjects[id] = project;
+  persist();
+  return project;
+}
+
+export function getCreationProject(id: string): CreationProject | null {
+  const store = load();
+  return store.creationProjects[id] || null;
+}
+
+export function listCreationProjectsByOwner(ownerId: string): CreationProject[] {
+  const store = load();
+  return Object.values(store.creationProjects)
+    .filter((p) => p.ownerId === ownerId)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+// For the admin overview grid — every member who owns at least one project,
+// plus their project count, without needing the admin to open each one.
+export function listCreationOwnersSummary(): { ownerId: string; projectCount: number; lastUpdatedAt: string }[] {
+  const store = load();
+  const byOwner = new Map<string, { count: number; lastUpdatedAt: string }>();
+  for (const p of Object.values(store.creationProjects)) {
+    const existing = byOwner.get(p.ownerId);
+    if (!existing) {
+      byOwner.set(p.ownerId, { count: 1, lastUpdatedAt: p.updatedAt });
+    } else {
+      existing.count += 1;
+      if (new Date(p.updatedAt).getTime() > new Date(existing.lastUpdatedAt).getTime()) existing.lastUpdatedAt = p.updatedAt;
+    }
+  }
+  return Array.from(byOwner.entries())
+    .map(([ownerId, v]) => ({ ownerId, projectCount: v.count, lastUpdatedAt: v.lastUpdatedAt }))
+    .sort((a, b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime());
+}
+
+export function updateCreationProject(id: string, patch: Partial<CreationProject>) {
+  const store = load();
+  const existing = store.creationProjects[id];
+  if (!existing) return;
+  store.creationProjects[id] = { ...existing, ...patch, updatedAt: new Date().toISOString() };
+  persist();
+}
+
+export function deleteCreationProject(id: string) {
+  const store = load();
+  delete store.creationProjects[id];
+  persist();
 }

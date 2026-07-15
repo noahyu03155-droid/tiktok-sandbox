@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { GeneratedScript, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
-import { resolveStoryboardOrder } from "@/lib/storyboard";
+import type { FunnelStageKey, GeneratedScriptStage, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
+import { checkStageGate, resolveStoryboardOrder, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
 
 // Phase 1 (revised): a freeform storyboard canvas. Nodes are NOT locked 1:1
@@ -30,12 +30,19 @@ const MAX_ZOOM = 2;
 
 const ACCENTS = ["#5cc4ee", "#f472b6", "#facc15", "#4ade80", "#a78bfa", "#fb923c"];
 
+// Pulls a TikTok URL out of arbitrary pasted text (share links usually come
+// with surrounding caption text), or null if there isn't one.
+function isTikTokUrl(text: string): string | null {
+  const match = text.match(/https?:\/\/\S*tiktok\.com\S*/i);
+  return match ? match[0] : null;
+}
+
 function seedInstruction(script: string, direction: string) {
   return [script, direction ? `🎬 ${direction}` : ""].filter(Boolean).join("\n\n");
 }
 
-function defaultStoryboard(script: GeneratedScript): StoryboardState {
-  const nodes: StoryboardNode[] = script.stages.map((stage, i) => ({
+function defaultStoryboard(stages: GeneratedScriptStage[]): StoryboardState {
+  const nodes: StoryboardNode[] = stages.map((stage, i) => ({
     id: crypto.randomUUID(),
     label: stage.label,
     instruction: seedInstruction(stage.script, stage.direction),
@@ -52,15 +59,23 @@ function defaultStoryboard(script: GeneratedScript): StoryboardState {
 }
 
 export default function StoryboardCanvas({
-  videoId,
-  script,
+  apiBase,
+  initialStoryboard,
+  seedStages,
   onClose,
 }: {
-  videoId: string;
-  script: GeneratedScript;
+  // Base path for every storyboard API call this component makes, e.g.
+  // `/api/videos/${videoId}/generate-script/${scriptId}/storyboard` for the
+  // original Video Analysis flow, or `/api/creation/projects/${projectId}/storyboard`
+  // for a standalone Creation project. All 7 sub-routes (save, upload,
+  // generate-image, dub/start, dub/status, render, style/analyze) are
+  // resolved as `${apiBase}/...` off of this.
+  apiBase: string;
+  initialStoryboard: StoryboardState | null;
+  seedStages: GeneratedScriptStage[];
   onClose: () => void;
 }) {
-  const [board, setBoard] = useState<StoryboardState>(() => script.storyboard || defaultStoryboard(script));
+  const [board, setBoard] = useState<StoryboardState>(() => initialStoryboard || defaultStoryboard(seedStages));
   const [pickerForNode, setPickerForNode] = useState<string | null>(null);
   const [busyNodeId, setBusyNodeId] = useState<string | null>(null);
   const [nodeErrors, setNodeErrors] = useState<Record<string, string>>({});
@@ -141,7 +156,7 @@ export default function StoryboardCanvas({
     setSaveStatus("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard`, {
+      fetch(`${apiBase}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(board),
@@ -283,6 +298,10 @@ export default function StoryboardCanvas({
     setBoard((b) => ({ ...b, nodes: b.nodes.map((n) => (n.id === nodeId ? { ...n, ...patch } : n)) }));
   }
 
+  function updateNodeStageTag(nodeId: string, stageTag: FunnelStageKey | null) {
+    setBoard((b) => ({ ...b, nodes: b.nodes.map((n) => (n.id === nodeId ? { ...n, stageTag } : n)) }));
+  }
+
   // ---- clip attach flows ----
   function setNodeClip(nodeId: string, clip: StoryboardClip | null) {
     setBoard((b) => ({ ...b, nodes: b.nodes.map((n) => (n.id === nodeId ? { ...n, clip } : n)) }));
@@ -313,7 +332,7 @@ export default function StoryboardCanvas({
       const form = new FormData();
       form.append("file", file);
       form.append("nodeId", nodeId);
-      const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/upload`, {
+      const res = await fetch(`${apiBase}/upload`, {
         method: "POST",
         body: form,
       });
@@ -327,11 +346,66 @@ export default function StoryboardCanvas({
     }
   }
 
+  // "Paste a TikTok link anywhere" — creates a fresh card (placed the same
+  // way addNode places one) and asks the server to yt-dlp the video into
+  // this storyboard's media folder, then attaches it as a playable clip.
+  async function importTikTokClip(url: string) {
+    const rightmost = board.nodes.reduce((max, n) => Math.max(max, n.x), 0);
+    const node: StoryboardNode = {
+      id: crypto.randomUUID(),
+      label: "TikTok clip",
+      instruction: "",
+      x: board.nodes.length === 0 ? 60 : rightmost + NODE_W + GAP_X,
+      y: 120,
+      clip: null,
+    };
+    setBoard((b) => ({ ...b, nodes: [...b.nodes, node] }));
+    setBusyNodeId(node.id);
+    try {
+      const res = await fetch(`${apiBase}/import-tiktok`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, nodeId: node.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Import failed");
+      setNodeClip(node.id, { source: "tiktok", url: data.url, kind: "video" });
+    } catch (err: any) {
+      setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Import failed" }));
+    } finally {
+      setBusyNodeId(null);
+    }
+  }
+
+  // Window-level paste listener for the TikTok import above — active as long
+  // as the canvas is mounted, but stands down whenever the user is focused in
+  // a text field so normal pasting into a card's label/instruction still
+  // works untouched.
+  useEffect(() => {
+    function onWindowPaste(e: ClipboardEvent) {
+      const active = document.activeElement;
+      const isEditingText =
+        active &&
+        (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || (active as HTMLElement).isContentEditable);
+      if (isEditingText) return; // let normal paste into a card's text fields happen untouched
+      const text = e.clipboardData?.getData("text") || "";
+      const url = isTikTokUrl(text);
+      if (!url) return;
+      e.preventDefault();
+      importTikTokClip(url);
+    }
+    window.addEventListener("paste", onWindowPaste);
+    return () => window.removeEventListener("paste", onWindowPaste);
+    // re-bind so addNode-style positioning sees the latest nodes;
+    // importTikTokClip mutates via setBoard's updater form so this is safe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board.nodes]);
+
   async function generateAiImage(node: StoryboardNode) {
     setBusyNodeId(node.id);
     clearNodeError(node.id);
     try {
-      const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/generate-image`, {
+      const res = await fetch(`${apiBase}/generate-image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nodeId: node.id, label: node.label, instruction: node.instruction }),
@@ -352,7 +426,7 @@ export default function StoryboardCanvas({
 
   async function pollDubStatus(nodeId: string) {
     try {
-      const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/dub/status`, {
+      const res = await fetch(`${apiBase}/dub/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nodeId }),
@@ -377,7 +451,7 @@ export default function StoryboardCanvas({
     clearNodeError(node.id);
     updateNodeDub(node.id, { status: "generating" });
     try {
-      const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/dub/start`, {
+      const res = await fetch(`${apiBase}/dub/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nodeId: node.id }),
@@ -407,7 +481,7 @@ export default function StoryboardCanvas({
     setRenderError(null);
     setRenderResult(null);
     try {
-      const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/render`, {
+      const res = await fetch(`${apiBase}/render`, {
         method: "POST",
       });
       const data = await res.json();
@@ -433,7 +507,7 @@ export default function StoryboardCanvas({
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/style/analyze`, {
+      const res = await fetch(`${apiBase}/style/analyze`, {
         method: "POST",
         body: form,
       });
@@ -455,6 +529,11 @@ export default function StoryboardCanvas({
   const nodeById = new Map(board.nodes.map((n) => [n.id, n] as const));
   const order = resolveStoryboardOrder(board.nodes, board.connections);
   const orderNumber = new Map(order.map((n, i) => [n.id, i + 1] as const));
+  // Gates the anchored "Generate video" button under CTA cards: all 6 funnel
+  // stages must be tagged somewhere and appear in funnel order along the
+  // resolved shot order (untagged cards are ignored, so extras can be mixed
+  // in freely).
+  const stageGate = checkStageGate(board.nodes, board.connections);
 
   // One card can have any number of connections in and out — anchor side
   // (left vs right dot) is picked automatically from which way the other
@@ -522,7 +601,7 @@ export default function StoryboardCanvas({
         <div>
           <h3 className="text-white font-semibold text-sm">Generate Video — Storyboard</h3>
           <p className="text-xs text-zinc-500">
-            Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order.
+            Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok link anywhere to add it as a new video card.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -557,13 +636,17 @@ export default function StoryboardCanvas({
           >
             Reset view
           </button>
-          <button
-            onClick={renderVideo}
-            disabled={rendering || board.nodes.length === 0}
-            className="px-3 h-7 rounded bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium"
-          >
-            {rendering ? "Rendering..." : "🎬 Render video"}
-          </button>
+          {stageGate.ok ? (
+            <span className="text-xs text-green-400">✓ Ready — see Generate button under your CTA card</span>
+          ) : (
+            <span className="text-xs text-zinc-500">
+              Generate needs:{" "}
+              {stageGate.missing.length > 0
+                ? `${stageGate.missing.map((k) => STAGE_TAG_LABELS[k]).join(", ")} tagged`
+                : "stages connected in order"}{" "}
+              — button appears under your CTA card
+            </span>
+          )}
           <button onClick={onClose} className="ml-2 text-zinc-400 hover:text-white text-sm">
             ✕ Close
           </button>
@@ -734,6 +817,20 @@ export default function StoryboardCanvas({
                     onMouseDown={(e) => e.stopPropagation()}
                     className="flex-1 min-w-0 bg-transparent text-xs font-semibold text-white outline-none"
                   />
+                  <select
+                    value={node.stageTag || ""}
+                    onChange={(e) => updateNodeStageTag(node.id, (e.target.value || null) as FunnelStageKey | null)}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    title="Funnel stage this card covers (all 6 must be tagged, in order, to unlock Generate)"
+                    className="shrink-0 bg-transparent border border-edge rounded text-[9px] text-zinc-400 outline-none px-1 py-0.5"
+                  >
+                    <option value="">—</option>
+                    {REQUIRED_STAGE_SEQUENCE.map((key) => (
+                      <option key={key} value={key}>
+                        {STAGE_TAG_LABELS[key]}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={() => deleteNode(node.id)}
@@ -791,6 +888,8 @@ export default function StoryboardCanvas({
                           ? "Uploaded"
                           : node.clip.source === "ai"
                           ? "AI reference"
+                          : node.clip.source === "tiktok"
+                          ? "Imported from TikTok"
                           : "Library"}
                       </span>
                     </div>
@@ -872,6 +971,24 @@ export default function StoryboardCanvas({
               </div>
             );
           })}
+
+          {/* "Generate video" now lives anchored under the CTA-tagged card(s)
+              (moved out of the top toolbar) — inside the same pan/zoom
+              transform so it travels with the cards. Disabled until the
+              stage gate passes: all 6 funnel stages tagged and in order. */}
+          {board.nodes
+            .filter((n) => n.stageTag === "cta")
+            .map((n) => (
+              <button
+                key={`generate-${n.id}`}
+                onClick={renderVideo}
+                disabled={rendering || !stageGate.ok}
+                className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
+                style={{ left: n.x, top: n.y + NODE_H + 16, width: NODE_W }}
+              >
+                {rendering ? "Rendering..." : "🎬 Generate video"}
+              </button>
+            ))}
         </div>
       </div>
 

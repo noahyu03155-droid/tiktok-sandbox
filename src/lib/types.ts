@@ -1,3 +1,17 @@
+// ---- Accounts (multi-user login, Phase 1 of the "Creation" workspace) ----
+
+export type UserRole = "admin" | "member";
+
+export interface User {
+  id: string;
+  username: string;
+  // scrypt hash, formatted "<salt-hex>:<hash-hex>" — see src/lib/password.ts.
+  // Never sent to the client.
+  passwordHash: string;
+  role: UserRole;
+  createdAt: string;
+}
+
 export interface VideoStats {
   play_count: number | null;
   digg_count: number | null;
@@ -212,7 +226,7 @@ export interface GeneratedScript {
 // note. Phase 1 is planning only: no Creatomate/FFmpeg render happens yet,
 // this just organizes what a human editor (or a later render step) needs.
 
-export type StoryboardClipSource = "upload" | "library" | "ai";
+export type StoryboardClipSource = "upload" | "library" | "ai" | "tiktok";
 
 export interface StoryboardClip {
   source: StoryboardClipSource;
@@ -239,6 +253,13 @@ export interface StoryboardNode {
   x: number;
   y: number;
   clip: StoryboardClip | null;
+  // Which of the fixed 6 funnel stages this card claims to cover (same
+  // FunnelStageKey funnel used by video analysis). undefined/null = an
+  // untagged freeform card — always allowed, and freely interspersable; the
+  // stage gate (checkStageGate) only cares that each of the 6 required tags
+  // exists somewhere and appears in funnel order along the resolved shot
+  // order.
+  stageTag?: FunnelStageKey | null;
   // AI dub (lip-sync): replaces this node's clip audio with a new
   // voiceover generated from label/instruction, then resyncs the mouth to
   // match via Sync.so. Separate from `clip` so the original upload is never
@@ -313,6 +334,26 @@ export interface StoryboardStyleProfile {
   // Short human-readable description from the vision model, shown in the
   // UI so the user can sanity-check what was actually detected.
   notes: string;
+}
+
+// ---- Creation workspace — every account gets their own space to run
+// multiple independent storyboard projects at once. Deliberately NOT
+// nested under a VideoRecord/GeneratedScript like the original storyboard
+// canvas was — a creation project owns its own StoryboardState outright, so
+// a member isn't required to first break down someone else's video in
+// Video Analysis before they can start creating. Reuses the exact same
+// StoryboardState/StoryboardNode/etc. shape, and the same StoryboardCanvas
+// component (see src/components/StoryboardCanvas.tsx's apiBase prop).
+
+export interface CreationProject {
+  id: string;
+  ownerId: string; // User.id
+  title: string;
+  shopifyProductId?: string | null;
+  shopifyProductTitle?: string | null;
+  storyboard: StoryboardState | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ---- Trend analysis (e.g. FastMoss top pet-food/treat videos, rolling 7-day window) ----

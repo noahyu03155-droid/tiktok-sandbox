@@ -1,23 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSessionToken, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SEC } from "@/lib/auth";
+import { getUserByUsername } from "@/lib/db";
+import { verifyPassword } from "@/lib/password";
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const username = (body.username || "").trim();
   const password = (body.password || "").trim();
 
-  const validUser = process.env.ADMIN_USERNAME;
-  const validPass = process.env.ADMIN_PASSWORD;
-
-  if (!validUser || !validPass) {
-    return NextResponse.json({ error: "Server is missing ADMIN_USERNAME / ADMIN_PASSWORD config" }, { status: 500 });
-  }
-
-  if (username !== validUser || password !== validPass) {
+  // Checks the real users store now, not a raw env var comparison — the
+  // original ADMIN_USERNAME/ADMIN_PASSWORD account still works because
+  // db.ts seeds it into the store as an "admin" role user the first time
+  // the app runs with no users yet (see seedAdminUser in db.ts).
+  const user = username ? getUserByUsername(username) : null;
+  if (!user || !verifyPassword(password, user.passwordHash)) {
     return NextResponse.json({ error: "Incorrect username or password" }, { status: 401 });
   }
 
-  const token = await createSessionToken(username);
+  const token = await createSessionToken({ userId: user.id, username: user.username, role: user.role });
   const res = NextResponse.json({ ok: true });
   res.cookies.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,

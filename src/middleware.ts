@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifySessionToken, SESSION_COOKIE_NAME } from "@/lib/auth";
 
 // Paths that don't require login.
-const PUBLIC_PATHS = ["/login", "/api/login"];
+const PUBLIC_PATHS = ["/login", "/api/login", "/register", "/api/register"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -21,9 +21,9 @@ export async function middleware(req: NextRequest) {
   if (isPublic) return NextResponse.next();
 
   const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const username = await verifySessionToken(token);
+  const user = await verifySessionToken(token);
 
-  if (!username) {
+  if (!user) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "未登录" }, { status: 401 });
     }
@@ -32,7 +32,17 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  return NextResponse.next();
+  // Forward the decoded session onto the request as headers — route
+  // handlers and server components can read these (via next/headers) to
+  // know who's asking without re-verifying the cookie themselves. Only
+  // middleware can set request headers this way; API routes can't trust a
+  // client-supplied x-user-* header directly, but they can trust one that
+  // arrived via this middleware since it's not part of the public surface.
+  const forwarded = new Headers(req.headers);
+  forwarded.set("x-user-id", user.userId);
+  forwarded.set("x-user-role", user.role);
+  forwarded.set("x-username", user.username);
+  return NextResponse.next({ request: { headers: forwarded } });
 }
 
 export const config = {

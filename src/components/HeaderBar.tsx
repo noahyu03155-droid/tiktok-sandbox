@@ -11,12 +11,13 @@ export default function HeaderBar() {
   const { t } = useLocale();
   const pathname = usePathname();
 
-  if (pathname === "/login") return null;
+  if (pathname === "/login" || pathname === "/register") return null;
 
   const navItems = [
     { href: "/", label: t("navVideoAnalysis") },
     { href: "/trends", label: t("navTrendAnalysis") },
     { href: "/creators", label: t("navCreatorTracker") },
+    { href: "/creation", label: t("navCreation") },
   ];
 
   return (

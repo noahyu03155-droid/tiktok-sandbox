@@ -321,8 +321,9 @@ export default function AnalysisTabs({
 
       {showStoryboard && video.generated_scripts[activeScriptIdx] && (
         <StoryboardCanvas
-          videoId={video.id}
-          script={video.generated_scripts[activeScriptIdx]}
+          apiBase={`/api/videos/${video.id}/generate-script/${video.generated_scripts[activeScriptIdx].id}/storyboard`}
+          initialStoryboard={video.generated_scripts[activeScriptIdx].storyboard || null}
+          seedStages={video.generated_scripts[activeScriptIdx].stages}
           onClose={() => setShowStoryboard(false)}
         />
       )}

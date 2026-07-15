@@ -23,23 +23,37 @@ async function hmac(message: string): Promise<string> {
   return Buffer.from(sig).toString("base64url");
 }
 
-export async function createSessionToken(username: string): Promise<string> {
+// Multi-user login: the session now carries the account's id and role, not
+// just its username (needed so the Creation workspace can tell an admin
+// apart from a member, and load the right account's data). Usernames are
+// restricted to [a-zA-Z0-9_-] at registration (see /api/register) — this
+// format is a plain dot-joined string, not JSON, so a "." inside a
+// username would break the split() below.
+export interface SessionUser {
+  userId: string;
+  username: string;
+  role: "admin" | "member";
+}
+
+export async function createSessionToken(user: SessionUser): Promise<string> {
   const expires = Date.now() + MAX_AGE_SEC * 1000;
-  const payload = `${username}.${expires}`;
+  const payload = `${user.userId}.${user.username}.${user.role}.${expires}`;
   const sig = await hmac(payload);
   return `${payload}.${sig}`;
 }
 
-export async function verifySessionToken(token: string | undefined | null): Promise<string | null> {
+export async function verifySessionToken(token: string | undefined | null): Promise<SessionUser | null> {
   if (!token) return null;
   const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [username, expiresStr, sig] = parts;
-  const expected = await hmac(`${username}.${expiresStr}`);
+  if (parts.length !== 5) return null;
+  const [userId, username, role, expiresStr, sig] = parts;
+  const payload = `${userId}.${username}.${role}.${expiresStr}`;
+  const expected = await hmac(payload);
   if (expected !== sig) return null;
   const expires = Number(expiresStr);
   if (!expires || Date.now() > expires) return null;
-  return username;
+  if (role !== "admin" && role !== "member") return null;
+  return { userId, username, role };
 }
 
 export const SESSION_COOKIE_NAME = COOKIE_NAME;
