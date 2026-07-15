@@ -8,14 +8,16 @@ import { resolveStoryboardOrder } from "@/lib/storyboard";
 export const dynamic = "force-dynamic";
 
 // Stitches whatever clips/reference stills are attached to a storyboard's
-// nodes into one downloadable MP4 — hard cuts only, video track only (no
-// audio track at all, to sidestep codec-mismatch headaches between real
-// clips and AI-still-derived segments), normalized to a 720x1280 (9:16)
-// canvas. This is NOT AI video generation — a node with no clip attached
-// just gets skipped (reported back so the team knows what's missing), and
-// nothing here calls a generative video model. That's an explicitly
-// deferred, separately-scoped feature (needs picking + paying for a
-// dedicated identity-preserving video-gen API).
+// nodes into one downloadable MP4 — hard cuts only, normalized to a
+// 720x1280 (9:16) canvas. Keeps each real clip's own audio; image-derived
+// (or silent-source) segments get a matching silent AAC track bolted on so
+// every segment shares the same audio codec/params and the final concat
+// (stream copy) doesn't choke on a mismatch. This is NOT AI video
+// generation — a node with no clip attached just gets skipped (reported
+// back so the team knows what's missing), and nothing here calls a
+// generative video model. That's an explicitly deferred, separately-scoped
+// feature (needs picking + paying for a dedicated identity-preserving
+// video-gen API).
 const W = 720;
 const H = 1280;
 const MAX_CLIP_SEC = 8;
@@ -48,6 +50,25 @@ function runFfmpeg(args: string[]): Promise<void> {
     });
   });
 }
+
+function probeHasAudio(srcPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const p = spawn("ffprobe", [
+      "-v", "error",
+      "-select_streams", "a",
+      "-show_entries", "stream=index",
+      "-of", "csv=p=0",
+      srcPath,
+    ]);
+    let out = "";
+    p.stdout.on("data", (d) => (out += d.toString()));
+    p.on("close", () => resolve(out.trim().length > 0));
+    p.on("error", () => resolve(false));
+  });
+}
+
+const SILENT_AUDIO = ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"];
+const AAC_OUT = ["-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k"];
 
 function mediaPathFromUrl(url: string): string | null {
   if (!url.startsWith("/api/media/")) return null;
@@ -107,22 +128,37 @@ export async function POST(
       // -preset veryfast + -threads 2 keep libx264's internal lookahead
       // buffering (its biggest memory cost) low — worth the small quality/
       // speed tradeoff on a container that doesn't have RAM to spare.
+      const videoOut = ["-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p"];
       if (clip.kind === "video") {
-        await runFfmpeg([
-          "-y", "-i", srcPath,
-          "-t", String(MAX_CLIP_SEC),
-          "-vf", scalePad,
-          "-an",
-          "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p",
-          segPath,
-        ]);
+        const hasAudio = await probeHasAudio(srcPath);
+        if (hasAudio) {
+          await runFfmpeg([
+            "-y", "-i", srcPath,
+            "-vf", scalePad,
+            ...videoOut,
+            ...AAC_OUT,
+            "-t", String(MAX_CLIP_SEC),
+            segPath,
+          ]);
+        } else {
+          await runFfmpeg([
+            "-y", "-i", srcPath, ...SILENT_AUDIO,
+            "-vf", scalePad,
+            "-map", "0:v:0", "-map", "1:a:0",
+            ...videoOut,
+            ...AAC_OUT,
+            "-t", String(MAX_CLIP_SEC), "-shortest",
+            segPath,
+          ]);
+        }
       } else {
         await runFfmpeg([
-          "-y", "-loop", "1", "-i", srcPath,
-          "-t", String(IMAGE_SEC),
+          "-y", "-loop", "1", "-i", srcPath, ...SILENT_AUDIO,
           "-vf", scalePad,
-          "-an",
-          "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p",
+          "-map", "0:v:0", "-map", "1:a:0",
+          ...videoOut,
+          ...AAC_OUT,
+          "-t", String(IMAGE_SEC), "-shortest",
           segPath,
         ]);
       }
