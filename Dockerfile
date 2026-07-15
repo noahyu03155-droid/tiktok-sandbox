@@ -1,8 +1,10 @@
 FROM node:20-bookworm
 
-# ffmpeg for audio extraction, python3+pip for yt-dlp
+# ffmpeg for audio extraction, python3+pip for yt-dlp, fonts-noto-cjk so the
+# storyboard render's burned-in captions can draw both Latin and Chinese text
+# (drawtext needs a real font file on disk — see src/lib/storyboardCaptions.ts)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg python3 python3-pip python3-venv \
+    ffmpeg python3 python3-pip python3-venv fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

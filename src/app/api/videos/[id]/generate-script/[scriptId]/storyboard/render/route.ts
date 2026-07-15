@@ -5,20 +5,19 @@ import path from "path";
 import { getMediaDir, getVideo } from "@/lib/db";
 import { resolveStoryboardOrder } from "@/lib/storyboard";
 import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/storyboardTrim";
+import { wrapCaption, CAPTION_FONT_FILE } from "@/lib/storyboardCaptions";
 
 export const dynamic = "force-dynamic";
 
 // Stitches whatever clips/reference stills are attached to a storyboard's
-// nodes into one downloadable MP4 — hard cuts only, normalized to a
-// 720x1280 (9:16) canvas. Keeps each real clip's own audio; image-derived
-// (or silent-source) segments get a matching silent AAC track bolted on so
-// every segment shares the same audio codec/params and the final concat
-// (stream copy) doesn't choke on a mismatch. This is NOT AI video
-// generation — a node with no clip attached just gets skipped (reported
-// back so the team knows what's missing), and nothing here calls a
-// generative video model. That's an explicitly deferred, separately-scoped
-// feature (needs picking + paying for a dedicated identity-preserving
-// video-gen API).
+// nodes into one downloadable MP4, normalized to a 720x1280 (9:16) canvas.
+// Keeps each real clip's own audio; image-derived (or silent-source)
+// segments get a matching silent AAC track bolted on so every segment
+// shares the same audio codec/params. This is NOT AI video generation — a
+// node with no clip attached just gets skipped (reported back so the team
+// knows what's missing), and nothing here calls a generative video model.
+// That's an explicitly deferred, separately-scoped feature (needs picking +
+// paying for a dedicated identity-preserving video-gen API).
 //
 // "Smart trim": uploaded clips are often much longer (~20s) than a shot
 // needs. Each non-dubbed clip gets trimmed to roughly how long its script
@@ -27,9 +26,17 @@ export const dynamic = "force-dynamic";
 // keep instead of always assuming 0:00 is the right moment. AI-dubbed clips
 // skip this: Sync.so's "cut_off" sync mode already trimmed them to match
 // the new voiceover, so re-trimming would just risk cutting audio short.
+//
+// "Editing polish" (this pass): image shots get a slow Ken Burns zoom
+// instead of sitting static; every shot gets its script text burned in as a
+// bottom-of-frame caption; and shots are joined with a short crossfade
+// instead of a hard cut. All three are done per-segment / at final-assembly
+// time with plain ffmpeg filters — no external editing API involved.
 const W = 720;
 const H = 1280;
 const DUB_SAFETY_CAP_SEC = 30;
+const TRANSITION_SEC = 0.4;
+const FPS = 30;
 
 function runFfmpeg(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -86,6 +93,23 @@ function mediaPathFromUrl(url: string): string | null {
   return p;
 }
 
+// Writes the shot's caption (if any) to its own text file and returns a
+// drawtext filter fragment to append to a video filter chain — via
+// `textfile=`, not an inline `text=` value, so caption content (quotes,
+// colons, apostrophes — all common in real ad copy) never needs escaping
+// for the filtergraph parser.
+function captionFilter(tmpDir: string, index: number, text: string): string | null {
+  const wrapped = wrapCaption(text);
+  if (!wrapped) return null;
+  const capPath = path.join(tmpDir, `cap${index}.txt`);
+  fs.writeFileSync(capPath, wrapped);
+  return `drawtext=fontfile=${CAPTION_FONT_FILE}:textfile=${capPath}:reload=0:fontcolor=white:fontsize=32:line_spacing=8:box=1:boxcolor=black@0.5:boxborderw=14:x=(w-text_w)/2:y=h-th-90`;
+}
+
+function withCaption(baseFilter: string, caption: string | null): string {
+  return caption ? `${baseFilter},${caption}` : baseFilter;
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string; scriptId: string } }
@@ -120,14 +144,22 @@ export async function POST(
   const tmpDir = path.join(outDir, `_render_${Date.now()}`);
   fs.mkdirSync(tmpDir, { recursive: true });
 
-  const scalePad = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=30`;
+  const scalePad = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=${FPS}`;
   const openaiApiKey = process.env.OPENAI_API_KEY;
 
   try {
     const segmentPaths: string[] = [];
+    // Real, ffprobe-measured duration of each encoded segment — used for
+    // the crossfade offset math below. Deliberately not just the -t value
+    // we asked ffmpeg for: a source clip shorter than the requested target
+    // duration would make ffmpeg emit less than asked, and trusting the
+    // *actual* length keeps the transitions from drifting out of sync.
+    const segDurations: number[] = [];
+
     for (let i = 0; i < usable.length; i++) {
       const node = usable[i];
       const text = (node.instruction || node.label || "").trim();
+      const caption = captionFilter(tmpDir, i, text);
       // Prefer the AI-dubbed clip (new voiceover, lip-synced) over the
       // original upload once Sync.so has finished it — it's always a real
       // video with real matching audio, so it takes the same "video with
@@ -145,20 +177,24 @@ export async function POST(
       // buffering (its biggest memory cost) low — worth the small quality/
       // speed tradeoff on a container that doesn't have RAM to spare.
       const videoOut = ["-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p"];
+      let intendedSec = 0;
+
       if (clip.kind === "video") {
         if (useDub) {
           // Already trimmed to match the new voiceover by Sync.so — just a
           // generous safety cap, not a real trim.
+          intendedSec = DUB_SAFETY_CAP_SEC;
           await runFfmpeg([
             "-y", "-i", srcPath,
-            "-vf", scalePad,
+            "-vf", withCaption(scalePad, caption),
             ...videoOut,
             ...AAC_OUT,
-            "-t", String(DUB_SAFETY_CAP_SEC),
+            "-t", String(intendedSec),
             segPath,
           ]);
         } else {
           const targetSec = estimateSpeechSeconds(text);
+          intendedSec = targetSec;
           const clipDurationSec = await probeDurationSec(srcPath);
           const startSec =
             clipDurationSec > targetSec
@@ -168,7 +204,7 @@ export async function POST(
           if (hasAudio) {
             await runFfmpeg([
               "-y", "-i", srcPath,
-              "-vf", scalePad,
+              "-vf", withCaption(scalePad, caption),
               ...videoOut,
               ...AAC_OUT,
               "-ss", String(startSec), "-t", String(targetSec),
@@ -177,7 +213,7 @@ export async function POST(
           } else {
             await runFfmpeg([
               "-y", "-i", srcPath, ...SILENT_AUDIO,
-              "-vf", scalePad,
+              "-vf", withCaption(scalePad, caption),
               "-map", "0:v:0", "-map", "1:a:0",
               ...videoOut,
               ...AAC_OUT,
@@ -188,9 +224,20 @@ export async function POST(
         }
       } else {
         const targetSec = estimateSpeechSeconds(text);
+        intendedSec = targetSec;
+        // Ken Burns: scale up past the target canvas first so the slow zoom
+        // has room to crop into without ever showing an edge, then zoompan
+        // does the actual zoom+crop back down to WxH over the shot's
+        // duration.
+        const marginW = Math.round(W * 1.2);
+        const marginH = Math.round(H * 1.2);
+        const frames = Math.max(1, Math.round(FPS * targetSec));
+        const kenBurns =
+          `scale=${marginW}:${marginH}:force_original_aspect_ratio=increase,crop=${marginW}:${marginH},` +
+          `zoompan=z='min(zoom+0.0008,1.15)':d=${frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=${W}x${H}:fps=${FPS}`;
         await runFfmpeg([
           "-y", "-loop", "1", "-i", srcPath, ...SILENT_AUDIO,
-          "-vf", scalePad,
+          "-vf", withCaption(kenBurns, caption),
           "-map", "0:v:0", "-map", "1:a:0",
           ...videoOut,
           ...AAC_OUT,
@@ -199,17 +246,50 @@ export async function POST(
         ]);
       }
       segmentPaths.push(segPath);
+      const realDur = await probeDurationSec(segPath);
+      segDurations.push(realDur > 0 ? realDur : intendedSec);
     }
 
     if (segmentPaths.length === 0) {
       return NextResponse.json({ error: "None of the attached clips could be read from disk." }, { status: 500 });
     }
 
-    const listFile = path.join(tmpDir, "list.txt");
-    fs.writeFileSync(listFile, segmentPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n"));
-
     const finalPath = path.join(outDir, "render.mp4");
-    await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", finalPath]);
+
+    if (segmentPaths.length === 1) {
+      fs.copyFileSync(segmentPaths[0], finalPath);
+    } else {
+      // Crossfade every shot into the next instead of a hard cut. xfade
+      // needs an absolute offset into the running combined stream (not just
+      // "start of this segment"), so this walks the segments once, tracking
+      // that combined duration as it chains filters together. Clamped so a
+      // very short shot can't end up with a transition longer than itself.
+      const filterParts: string[] = [];
+      let vLabel = "0:v";
+      let aLabel = "0:a";
+      let running = segDurations[0];
+      for (let i = 1; i < segmentPaths.length; i++) {
+        const t = Math.max(0.05, Math.min(TRANSITION_SEC, running / 2, segDurations[i] / 2));
+        const offset = Math.max(0, running - t);
+        const vOut = `v${i}`;
+        const aOut = `a${i}`;
+        filterParts.push(`[${vLabel}][${i}:v]xfade=transition=fade:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[${vOut}]`);
+        filterParts.push(`[${aLabel}][${i}:a]acrossfade=d=${t.toFixed(3)}[${aOut}]`);
+        vLabel = vOut;
+        aLabel = aOut;
+        running = running + segDurations[i] - t;
+      }
+      const inputArgs = segmentPaths.flatMap((p) => ["-i", p]);
+      await runFfmpeg([
+        "-y",
+        ...inputArgs,
+        "-filter_complex", filterParts.join(";"),
+        "-map", `[${vLabel}]`, "-map", `[${aLabel}]`,
+        "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p",
+        ...AAC_OUT,
+        finalPath,
+      ]);
+    }
 
     return NextResponse.json({ url: `/api/media/storyboard/${params.scriptId}/render.mp4`, skipped });
   } catch (e: any) {
