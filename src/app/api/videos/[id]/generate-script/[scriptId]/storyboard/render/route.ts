@@ -118,7 +118,13 @@ export async function POST(
     const segmentPaths: string[] = [];
     for (let i = 0; i < usable.length; i++) {
       const node = usable[i];
-      const clip = node.clip!;
+      // Prefer the AI-dubbed clip (new voiceover, lip-synced) over the
+      // original upload once Sync.so has finished it — it's always a real
+      // video with real matching audio, so it takes the same "video with
+      // audio" path below. Falls back to the original clip untouched if no
+      // dub has been run for this shot.
+      const useDub = node.dub?.status === "done" && node.dub.url;
+      const clip = useDub ? { kind: "video" as const, url: node.dub!.url! } : node.clip!;
       const srcPath = mediaPathFromUrl(clip.url);
       if (!srcPath || !fs.existsSync(srcPath)) {
         skipped.push(`${node.label || "untitled shot"} (file missing)`);
@@ -130,7 +136,7 @@ export async function POST(
       // speed tradeoff on a container that doesn't have RAM to spare.
       const videoOut = ["-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p"];
       if (clip.kind === "video") {
-        const hasAudio = await probeHasAudio(srcPath);
+        const hasAudio = useDub ? true : await probeHasAudio(srcPath);
         if (hasAudio) {
           await runFfmpeg([
             "-y", "-i", srcPath,

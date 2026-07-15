@@ -18,7 +18,11 @@ import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLib
 // picked/paid for yet; explicitly out of scope for this pass).
 
 const NODE_W = 300;
-const NODE_H = 430;
+// +28 over the original 430 to make room for the "AI dub" row under the
+// clip box (reserved for every node, not just ones with a video clip
+// attached yet, so a card's height doesn't jump when a clip is added).
+const DUB_ROW_H = 28;
+const NODE_H = 430 + DUB_ROW_H;
 const CLIP_H = 150;
 const GAP_X = 70;
 const MIN_ZOOM = 0.4;
@@ -95,6 +99,27 @@ export default function StoryboardCanvas({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadNodeIdRef = useRef<string | null>(null);
+
+  // ---- AI dub (lip-sync): new voiceover from the shot's text, resynced to
+  // the clip's mouth via Sync.so. A generation takes a few minutes, so the
+  // start call just kicks off a job id and this polls a status route every
+  // 5s until it resolves — not held open as one long request.
+  const dubPollTimers = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({});
+  useEffect(
+    () => () => {
+      Object.values(dubPollTimers.current).forEach((t) => t && clearTimeout(t));
+    },
+    []
+  );
+  // Resume polling for any shot that still shows "generating" from a
+  // previous visit (job kept running server-side even if the canvas was
+  // closed).
+  useEffect(() => {
+    board.nodes.forEach((n) => {
+      if (n.dub?.status === "generating" && n.dub.jobId) pollDubStatus(n.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- autosave (debounced) ----
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -309,6 +334,51 @@ export default function StoryboardCanvas({
       setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Generation failed" }));
     } finally {
       setBusyNodeId(null);
+    }
+  }
+
+  function updateNodeDub(nodeId: string, dub: StoryboardNode["dub"]) {
+    setBoard((b) => ({ ...b, nodes: b.nodes.map((n) => (n.id === nodeId ? { ...n, dub } : n)) }));
+  }
+
+  async function pollDubStatus(nodeId: string) {
+    try {
+      const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/dub/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodeId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Status check failed");
+      if (data.status === "done") {
+        updateNodeDub(nodeId, { status: "done", url: data.url });
+        return;
+      }
+      if (data.status === "error") {
+        updateNodeDub(nodeId, { status: "error", error: data.error });
+        return;
+      }
+      dubPollTimers.current[nodeId] = setTimeout(() => pollDubStatus(nodeId), 5000);
+    } catch (err: any) {
+      updateNodeDub(nodeId, { status: "error", error: err.message || "Status check failed" });
+    }
+  }
+
+  async function startDub(node: StoryboardNode) {
+    clearNodeError(node.id);
+    updateNodeDub(node.id, { status: "generating" });
+    try {
+      const res = await fetch(`/api/videos/${videoId}/generate-script/${script.id}/storyboard/dub/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodeId: node.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to start AI dub");
+      updateNodeDub(node.id, { status: "generating", jobId: data.jobId });
+      pollDubStatus(node.id);
+    } catch (err: any) {
+      updateNodeDub(node.id, { status: "error", error: err.message || "Failed to start AI dub" });
     }
   }
 
@@ -592,7 +662,7 @@ export default function StoryboardCanvas({
                   </button>
                 </div>
 
-                <div className="px-3 py-2 overflow-y-auto" style={{ height: NODE_H - CLIP_H - 40 }}>
+                <div className="px-3 py-2 overflow-y-auto" style={{ height: NODE_H - CLIP_H - 40 - DUB_ROW_H }}>
                   <textarea
                     value={node.instruction}
                     onChange={(e) => updateNodeText(node.id, { instruction: e.target.value })}
@@ -616,7 +686,11 @@ export default function StoryboardCanvas({
                     <div className="relative w-full h-full group">
                       {node.clip.kind === "video" ? (
                         // eslint-disable-next-line jsx-a11y/media-has-caption
-                        <video src={node.clip.url} controls className="w-full h-full object-cover" />
+                        <video
+                          src={node.dub?.status === "done" && node.dub.url ? node.dub.url : node.clip.url}
+                          controls
+                          className="w-full h-full object-cover"
+                        />
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={node.clip.url} alt="" className="w-full h-full object-cover" />
@@ -629,7 +703,13 @@ export default function StoryboardCanvas({
                         ✕
                       </button>
                       <span className="absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded bg-black/70 text-zinc-300">
-                        {node.clip.source === "upload" ? "Uploaded" : node.clip.source === "ai" ? "AI reference" : "Library"}
+                        {node.dub?.status === "done"
+                          ? "AI dubbed"
+                          : node.clip.source === "upload"
+                          ? "Uploaded"
+                          : node.clip.source === "ai"
+                          ? "AI reference"
+                          : "Library"}
                       </span>
                     </div>
                   ) : (
@@ -655,6 +735,38 @@ export default function StoryboardCanvas({
                     </div>
                   )}
                 </div>
+
+                {node.clip?.kind === "video" && (
+                  <div
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="px-2 py-1.5 border-t border-edge bg-panel flex items-center gap-2 text-[10px] shrink-0"
+                  >
+                    {!node.dub || node.dub.status === "error" ? (
+                      <>
+                        <button
+                          onClick={() => startDub(node)}
+                          className="px-2 py-1 rounded bg-panel2 border border-edge text-zinc-300 hover:text-white hover:border-brand-500"
+                        >
+                          🗣️ AI dub (lip-sync)
+                        </button>
+                        {node.dub?.status === "error" && (
+                          <span className="text-red-400 truncate" title={node.dub.error}>
+                            failed: {node.dub.error}
+                          </span>
+                        )}
+                      </>
+                    ) : node.dub.status === "generating" ? (
+                      <span className="text-yellow-400 animate-pulse">⏳ Dubbing... (can take a few min)</span>
+                    ) : (
+                      <>
+                        <span className="text-green-400">✓ Dubbed — preview above now plays the dub</span>
+                        <button onClick={() => startDub(node)} className="ml-auto text-zinc-500 hover:text-white">
+                          ↺ Redo
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
                 {err && <p className="px-2 py-1 text-[10px] text-red-400 bg-panel border-t border-edge">{err}</p>}
 
                 <button

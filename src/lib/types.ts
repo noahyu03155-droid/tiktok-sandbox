@@ -239,6 +239,25 @@ export interface StoryboardNode {
   x: number;
   y: number;
   clip: StoryboardClip | null;
+  // AI dub (lip-sync): replaces this node's clip audio with a new
+  // voiceover generated from label/instruction, then resyncs the mouth to
+  // match via Sync.so. Separate from `clip` so the original upload is never
+  // overwritten — the render route prefers `dub.url` over `clip.url` once
+  // status is "done". Only applies to video clips (a still has no mouth to
+  // resync).
+  dub?: StoryboardDub | null;
+}
+
+export type StoryboardDubStatus = "generating" | "done" | "error";
+
+export interface StoryboardDub {
+  status: StoryboardDubStatus;
+  // Sync.so generation job id, used to poll for completion.
+  jobId?: string;
+  // Local /api/media/... path once the lip-synced result has been
+  // downloaded (status === "done").
+  url?: string;
+  error?: string;
 }
 
 export interface StoryboardState {
