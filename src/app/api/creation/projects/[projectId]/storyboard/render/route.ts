@@ -7,6 +7,8 @@ import { getMediaDir } from "@/lib/db";
 import { resolveStoryboardOrder } from "@/lib/storyboard";
 import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/storyboardTrim";
 import { wrapCaption, CAPTION_FONT_FILE, type CaptionStylePreset } from "@/lib/storyboardCaptions";
+import { interpretEditingFeedback } from "@/lib/storyboardFeedback";
+import type { StoryboardTransitionPreset } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -117,10 +119,33 @@ export async function POST(_req: NextRequest, { params }: { params: { projectId:
   const scalePad = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=${FPS}`;
   const openaiApiKey = process.env.OPENAI_API_KEY;
   const styleProfile = board.styleProfile || null;
-  const captionStyle: CaptionStylePreset = styleProfile?.captionStyle || "descriptive";
-  const durationMultiplier = styleProfile?.durationMultiplier ?? 1;
-  const effectiveTransition = styleProfile && styleProfile.transition !== "hard_cut" ? styleProfile.transition : "fade";
-  const effectiveTransitionSec = styleProfile?.transition === "hard_cut" ? 0.05 : styleProfile?.transitionSec ?? TRANSITION_SEC;
+  let captionStyle: CaptionStylePreset = styleProfile?.captionStyle || "descriptive";
+  let durationMultiplier = styleProfile?.durationMultiplier ?? 1;
+  let effectiveTransition: StoryboardTransitionPreset = styleProfile && styleProfile.transition !== "hard_cut" ? styleProfile.transition : "fade";
+  let effectiveTransitionSec = styleProfile?.transition === "hard_cut" ? 0.05 : styleProfile?.transitionSec ?? TRANSITION_SEC;
+
+  // "Regenerate with feedback" — board.direction is the docked "Overall
+  // editing direction" textarea's value. It used to be inert (saved but
+  // never read); now a non-empty note gets turned into adjustments to the
+  // same pacing/caption/transition dials the reference-style profile above
+  // also controls, so typing a note and clicking Regenerate actually
+  // changes the output.
+  const feedbackText = (board.direction || "").trim();
+  let appliedFeedback: { notes: string } | null = null;
+  if (feedbackText) {
+    const adjustment = await interpretEditingFeedback({
+      feedbackText,
+      current: { captionStyle, durationMultiplier, transition: effectiveTransition, transitionSec: effectiveTransitionSec },
+      apiKey: openaiApiKey,
+    });
+    if (adjustment) {
+      captionStyle = adjustment.captionStyle;
+      durationMultiplier = adjustment.durationMultiplier;
+      effectiveTransition = adjustment.transition;
+      effectiveTransitionSec = adjustment.transitionSec;
+      appliedFeedback = { notes: adjustment.notes };
+    }
+  }
 
   try {
     const segmentPaths: string[] = [];
@@ -158,7 +183,14 @@ export async function POST(_req: NextRequest, { params }: { params: { projectId:
           const clipDurationSec = await probeDurationSec(srcPath);
           const startSec =
             clipDurationSec > targetSec
-              ? await pickBestSegment({ srcPath, text, targetSec, clipDurationSec, tmpDir, apiKey: openaiApiKey })
+              ? await pickBestSegment({
+                  srcPath,
+                  text: feedbackText ? `${text}\n\n(Overall note from the creator about this edit: ${feedbackText})` : text,
+                  targetSec,
+                  clipDurationSec,
+                  tmpDir,
+                  apiKey: openaiApiKey,
+                })
               : 0;
           const hasAudio = await probeHasAudio(srcPath);
           if (hasAudio) {
@@ -246,6 +278,7 @@ export async function POST(_req: NextRequest, { params }: { params: { projectId:
       url: `/api/media/storyboard/${params.projectId}/render.mp4`,
       skipped,
       styleApplied: styleProfile ? { pacing: styleProfile.pacing, transition: styleProfile.transition, notes: styleProfile.notes } : null,
+      appliedFeedback,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Render failed" }, { status: 500 });

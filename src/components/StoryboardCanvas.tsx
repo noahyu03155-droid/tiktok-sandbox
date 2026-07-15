@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { FunnelStageKey, GeneratedScriptStage, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
-import { checkStageGate, resolveStoryboardOrder, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
+import { resolveStoryboardOrder, resolveChainTails, MIN_CHAIN_LENGTH_FOR_GENERATE, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
 import ProductPicker from "./ProductPicker";
 
@@ -135,7 +135,7 @@ export default function StoryboardCanvas({
   }, [connStart]);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [rendering, setRendering] = useState(false);
-  const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null } | null>(null);
+  const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
 
   // ---- "Learn from a reference video" — analyzes an example clip's cut
@@ -575,7 +575,7 @@ export default function StoryboardCanvas({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Render failed");
-      setRenderResult({ url: data.url, skipped: data.skipped || [], styleApplied: data.styleApplied || null });
+      setRenderResult({ url: data.url, skipped: data.skipped || [], styleApplied: data.styleApplied || null, appliedFeedback: data.appliedFeedback || null });
     } catch (err: any) {
       setRenderError(err.message || "Render failed");
     } finally {
@@ -618,11 +618,13 @@ export default function StoryboardCanvas({
   const nodeById = new Map(board.nodes.map((n) => [n.id, n] as const));
   const order = resolveStoryboardOrder(board.nodes, board.connections);
   const orderNumber = new Map(order.map((n, i) => [n.id, i + 1] as const));
-  // Gates the anchored "Generate video" button under CTA cards: all 6 funnel
-  // stages must be tagged somewhere and appear in funnel order along the
-  // resolved shot order (untagged cards are ignored, so extras can be mixed
-  // in freely).
-  const stageGate = checkStageGate(board.nodes, board.connections);
+  // Where the "Generate video" button(s) appear: at the end of any
+  // connected sequence of 3+ cards, regardless of stage tags — connection
+  // topology alone decides this now (previously required all 6 funnel
+  // stages tagged in CTA order, which was too rigid for freeform boards).
+  const chainTails = resolveChainTails(board.nodes, board.connections).filter(
+    (t) => t.chainLength >= MIN_CHAIN_LENGTH_FOR_GENERATE
+  );
 
   // One card can have any number of connections in and out — anchor side
   // (left vs right dot) is picked automatically from which way the other
@@ -687,10 +689,9 @@ export default function StoryboardCanvas({
       <input ref={styleFileInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" onChange={handleStyleFileChosen} />
 
       {/* Two rows: the button row never wraps its controls away from the
-          Close button (shrink-0 all round), and the stage-gate status text
-          — which can get long ("Generate needs: Reaction, Hook, ...") —
-          lives on its own full-width line below where it can wrap freely
-          without crowding Close out of reach. */}
+          Close button (shrink-0 all round), and the Generate-readiness
+          status text lives on its own full-width line below where it can
+          wrap freely without crowding Close out of reach. */}
       <div className="border-b border-edge bg-panel shrink-0">
         <div className="flex items-center justify-between px-5 py-3 flex-wrap gap-2">
           <div>
@@ -737,15 +738,13 @@ export default function StoryboardCanvas({
           </div>
         </div>
         <div className="px-5 pb-2.5">
-          {stageGate.ok ? (
-            <span className="text-xs text-green-400">✓ Ready — see Generate button under your CTA card</span>
+          {chainTails.length > 0 ? (
+            <span className="text-xs text-green-400">
+              ✓ Ready — see the Generate button under the end of your connected card{chainTails.length > 1 ? "s (one per chain)" : ""}
+            </span>
           ) : (
             <span className="text-xs text-zinc-500">
-              Generate needs:{" "}
-              {stageGate.missing.length > 0
-                ? `${stageGate.missing.map((k) => STAGE_TAG_LABELS[k]).join(", ")} tagged`
-                : "stages connected in order"}{" "}
-              — button appears under your CTA card
+              Connect at least {MIN_CHAIN_LENGTH_FOR_GENERATE} cards in a row to unlock Generate — the button appears under the last card in the chain
             </span>
           )}
         </div>
@@ -791,33 +790,64 @@ export default function StoryboardCanvas({
       </div>
 
       {(renderError || renderResult) && (
-        <div className="px-5 py-2.5 border-b border-edge bg-panel2 shrink-0 flex items-center justify-between gap-3 flex-wrap">
-          {renderError && <p className="text-sm text-red-400">{renderError}</p>}
+        <div className="px-5 py-3 border-b border-edge bg-panel2 shrink-0 flex flex-col gap-2.5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            {renderError && <p className="text-sm text-red-400">{renderError}</p>}
+            {renderResult && (
+              <div className="flex items-center gap-3 flex-wrap">
+                <p className="text-sm text-green-400">
+                  Render done{renderResult.styleApplied ? ` — applied ${renderResult.styleApplied.pacing} reference style` : ""}
+                  {renderResult.appliedFeedback ? ` — ${renderResult.appliedFeedback.notes}` : ""}
+                  {renderResult.skipped.length > 0 ? ` — skipped (no clip attached): ${renderResult.skipped.join(", ")}` : ""}
+                </p>
+                <a
+                  href={renderResult.url}
+                  download
+                  className="px-3 py-1 rounded bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium"
+                >
+                  ⬇ Download MP4
+                </a>
+                <video src={renderResult.url} controls className="h-16 rounded border border-edge" />
+              </div>
+            )}
+            <button
+              onClick={() => {
+                setRenderError(null);
+                setRenderResult(null);
+              }}
+              className="text-zinc-500 hover:text-white text-xs"
+            >
+              ✕
+            </button>
+          </div>
+
           {renderResult && (
-            <div className="flex items-center gap-3 flex-wrap">
-              <p className="text-sm text-green-400">
-                Render done{renderResult.styleApplied ? ` — applied ${renderResult.styleApplied.pacing} reference style` : ""}
-                {renderResult.skipped.length > 0 ? ` — skipped (no clip attached): ${renderResult.skipped.join(", ")}` : ""}
-              </p>
-              <a
-                href={renderResult.url}
-                download
-                className="px-3 py-1 rounded bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium"
+            <div className="flex items-end gap-2 flex-wrap border-t border-edge pt-2.5">
+              <div className="flex-1 min-w-[240px]">
+                <label className="text-[10px] text-zinc-500 mb-1 block">Want something changed? Tell the AI what to adjust, then regenerate.</label>
+                <textarea
+                  value={board.direction}
+                  onChange={(e) => setBoard((b) => ({ ...b, direction: e.target.value }))}
+                  placeholder="e.g. faster cuts, punchier captions, less text on screen, more product close-ups..."
+                  rows={2}
+                  className="w-full px-3 py-2 rounded-lg bg-panel border border-edge text-sm text-zinc-100 outline-none focus:border-brand-500 resize-none"
+                />
+              </div>
+              <button
+                onClick={startStyleUpload}
+                className="h-9 px-2.5 rounded border border-dashed border-edge2 text-xs text-zinc-300 hover:text-white hover:border-brand-500 shrink-0"
               >
-                ⬇ Download MP4
-              </a>
-              <video src={renderResult.url} controls className="h-16 rounded border border-edge" />
+                📎 {board.styleProfile ? `Ref: ${board.styleProfile.sourceLabel}` : "Import reference video"}
+              </button>
+              <button
+                onClick={renderVideo}
+                disabled={rendering}
+                className="h-9 px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium shrink-0"
+              >
+                {rendering ? "Regenerating..." : "🔁 Regenerate"}
+              </button>
             </div>
           )}
-          <button
-            onClick={() => {
-              setRenderError(null);
-              setRenderResult(null);
-            }}
-            className="text-zinc-500 hover:text-white text-xs"
-          >
-            ✕
-          </button>
         </div>
       )}
 
@@ -973,7 +1003,7 @@ export default function StoryboardCanvas({
                     value={node.stageTag || ""}
                     onChange={(e) => updateNodeStageTag(node.id, (e.target.value || null) as FunnelStageKey | null)}
                     onMouseDown={(e) => e.stopPropagation()}
-                    title="Funnel stage this card covers (all 6 must be tagged, in order, to unlock Generate)"
+                    title="Funnel stage this card covers (optional — Breakdown/product-script features set this automatically; not required for Generate)"
                     className="shrink-0 bg-transparent border border-edge rounded text-[9px] text-zinc-400 outline-none px-1 py-0.5"
                   >
                     <option value="">—</option>
@@ -1126,23 +1156,23 @@ export default function StoryboardCanvas({
             );
           })}
 
-          {/* "Generate video" now lives anchored under the CTA-tagged card(s)
-              (moved out of the top toolbar) — inside the same pan/zoom
-              transform so it travels with the cards. Disabled until the
-              stage gate passes: all 6 funnel stages tagged and in order. */}
-          {board.nodes
-            .filter((n) => n.stageTag === "cta")
-            .map((n) => (
-              <button
-                key={`generate-${n.id}`}
-                onClick={renderVideo}
-                disabled={rendering || !stageGate.ok}
-                className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
-                style={{ left: n.x, top: n.y + NODE_H + 16, width: NODE_W }}
-              >
-                {rendering ? "Rendering..." : "🎬 Generate video"}
-              </button>
-            ))}
+          {/* "Generate video" lives anchored under the tail card of any
+              connected chain of 3+ cards — no stage tags required. A board
+              can have multiple independent chains, each gets its own
+              button. Uses cardHeight(n), not a flat NODE_H, since a tail
+              could in principle be a not-yet-broken-down TikTok import card
+              (taller than a normal card). */}
+          {chainTails.map(({ node: n }) => (
+            <button
+              key={`generate-${n.id}`}
+              onClick={renderVideo}
+              disabled={rendering}
+              className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
+              style={{ left: n.x, top: n.y + cardHeight(n) + 16, width: NODE_W }}
+            >
+              {rendering ? "Rendering..." : "🎬 Generate video"}
+            </button>
+          ))}
         </div>
       </div>
 

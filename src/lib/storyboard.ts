@@ -101,3 +101,56 @@ export function checkStageGate(
   }
   return { ok: missing.length === 0 && !outOfOrder, missing, outOfOrder };
 }
+
+// ---- Chain tails ("Generate" button anchor point) ----
+// The Generate button used to require all 6 funnel stages tagged in order,
+// anchored under the CTA card. That was too rigid — this instead anchors
+// the button under the END of any connected sequence of cards (a node with
+// at least one incoming connection but no outgoing connection), as soon as
+// that sequence has at least MIN_CHAIN_LENGTH cards feeding into it. No
+// stage tags required at all — this is about connection topology only, so
+// completely untagged freeform boards can still render. A board can have
+// several independent chains; each qualifying tail gets its own button.
+
+export const MIN_CHAIN_LENGTH_FOR_GENERATE = 3;
+
+export interface ChainTail {
+  node: StoryboardNode;
+  chainLength: number; // distinct nodes reachable by walking backward (incoming edges) from this tail, inclusive of the tail itself
+}
+
+export function resolveChainTails(
+  nodes: StoryboardNode[],
+  connections: Pick<CanvasConnection, "fromId" | "toId">[]
+): ChainTail[] {
+  const hasOutgoing = new Set(connections.map((c) => c.fromId));
+  const hasIncoming = new Set(connections.map((c) => c.toId));
+  const incomingByTo = new Map<string, string[]>();
+  for (const c of connections) {
+    if (!incomingByTo.has(c.toId)) incomingByTo.set(c.toId, []);
+    incomingByTo.get(c.toId)!.push(c.fromId);
+  }
+
+  const tails = nodes.filter((n) => hasIncoming.has(n.id) && !hasOutgoing.has(n.id));
+
+  return tails.map((tail) => {
+    // BFS over predecessors (handles fan-in/branches without double-counting
+    // a node reachable through more than one path, and can't loop forever
+    // even if the user wired a cycle, since `seen` blocks revisits).
+    const seen = new Set<string>([tail.id]);
+    let frontier = [tail.id];
+    while (frontier.length > 0) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        for (const pred of incomingByTo.get(id) || []) {
+          if (!seen.has(pred)) {
+            seen.add(pred);
+            next.push(pred);
+          }
+        }
+      }
+      frontier = next;
+    }
+    return { node: tail, chainLength: seen.size };
+  });
+}
