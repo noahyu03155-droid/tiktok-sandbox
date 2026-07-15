@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FunnelStageKey, GeneratedScriptStage, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
 import { checkStageGate, resolveStoryboardOrder, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
+import ProductPicker from "./ProductPicker";
 
 // Phase 1 (revised): a freeform storyboard canvas. Nodes are NOT locked 1:1
 // to the script's stages — they're seeded from the 6 beats on first open,
@@ -31,7 +32,10 @@ const GAP_X = 70;
 // 150px-tall landscape-ish clip box, since there's nothing to write yet
 // until the user runs Breakdown.
 const TIKTOK_HEADER_H = 34;
-const TIKTOK_BUTTON_ROW_H = 52;
+// Tall enough for the two stacked full-width actions (Breakdown + Generate
+// product script, ~32px each) plus the row's padding and gap — the card is
+// overflow-hidden, so an undersized row would clip the second button.
+const TIKTOK_BUTTON_ROW_H = 96;
 const TIKTOK_PREVIEW_VIDEO_H = Math.round(NODE_W * (16 / 9));
 const TIKTOK_PREVIEW_H = TIKTOK_HEADER_H + TIKTOK_PREVIEW_VIDEO_H + TIKTOK_BUTTON_ROW_H;
 const MIN_ZOOM = 0.4;
@@ -97,6 +101,9 @@ export default function StoryboardCanvas({
 }) {
   const [board, setBoard] = useState<StoryboardState>(() => initialStoryboard || defaultStoryboard(seedStages));
   const [pickerForNode, setPickerForNode] = useState<string | null>(null);
+  // Which pending TikTok card the "Generate product script" product picker
+  // is currently open for (null = closed).
+  const [productPickerNodeId, setProductPickerNodeId] = useState<string | null>(null);
   const [busyNodeId, setBusyNodeId] = useState<string | null>(null);
   const [nodeErrors, setNodeErrors] = useState<Record<string, string>>({});
   // Click-to-connect (not drag-to-connect — the dots are small and dragging
@@ -514,6 +521,39 @@ export default function StoryboardCanvas({
     }
   }
 
+  // "Generate product script" — for the same pending TikTok card Breakdown
+  // works on, but instead of handing back the reference video's own
+  // breakdown, the server runs the same transcription+analysis and then one
+  // more Claude call (generateScriptForProduct, the same logic as the
+  // standalone Video Analysis "Generate script" feature) to write a NEW
+  // 6-stage script adapted to the Shopify product the user just picked.
+  // Replaces this card with 6 stage-tagged, text-only cards (clip: null).
+  async function handleProductPicked(product: { id: string; title: string }) {
+    const nodeId = productPickerNodeId;
+    setProductPickerNodeId(null);
+    if (!nodeId) return;
+    setBusyNodeId(nodeId);
+    clearNodeError(nodeId);
+    try {
+      const res = await fetch(`${apiBase}/generate-product-script`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodeId, shopifyProductId: product.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Script generation failed");
+      setBoard((b) => ({
+        ...b,
+        nodes: [...b.nodes.filter((n) => n.id !== nodeId), ...data.newNodes],
+        connections: [...b.connections.filter((c) => c.fromId !== nodeId && c.toId !== nodeId), ...data.newConnections],
+      }));
+    } catch (err: any) {
+      setNodeErrors((prev) => ({ ...prev, [nodeId]: err.message || "Script generation failed" }));
+    } finally {
+      setBusyNodeId(null);
+    }
+  }
+
   function handleLibraryPick(choice: LibraryClipChoice) {
     const nodeId = pickerForNode;
     setPickerForNode(null);
@@ -892,7 +932,7 @@ export default function StoryboardCanvas({
                         <video src={node.clip.url} controls className="w-full h-full object-contain bg-black" />
                       )}
                     </div>
-                    <div className="p-2 flex-1 flex flex-col justify-center">
+                    <div className="p-2 flex-1 flex flex-col justify-center gap-1.5">
                       <button
                         onClick={() => startBreakdown(node)}
                         disabled={busy}
@@ -900,7 +940,14 @@ export default function StoryboardCanvas({
                       >
                         🔍 Breakdown into 6 stages
                       </button>
-                      {err && <p className="mt-1.5 text-[10px] text-red-400">{err}</p>}
+                      <button
+                        onClick={() => setProductPickerNodeId(node.id)}
+                        disabled={busy}
+                        className="w-full py-2 rounded-lg bg-panel2 border border-edge hover:border-brand-500 disabled:opacity-40 text-zinc-200 text-xs font-medium"
+                      >
+                        🛍️ Generate product script
+                      </button>
+                      {err && <p className="mt-0.5 text-[10px] text-red-400">{err}</p>}
                     </div>
                   </>
                 ) : (
@@ -1027,15 +1074,6 @@ export default function StoryboardCanvas({
                     onMouseDown={(e) => e.stopPropagation()}
                     className="px-2 py-1.5 border-t border-edge bg-panel flex items-center gap-2 text-[10px] shrink-0"
                   >
-                    {node.clip?.source === "tiktok" && (
-                      <button
-                        onClick={() => startBreakdown(node)}
-                        disabled={busy}
-                        className="px-2 py-1 rounded bg-panel2 border border-edge text-zinc-300 hover:text-white hover:border-brand-500 disabled:opacity-40"
-                      >
-                        🔍 Breakdown into 6 stages
-                      </button>
-                    )}
                     {!node.dub || node.dub.status === "error" ? (
                       <>
                         <button
@@ -1121,6 +1159,10 @@ export default function StoryboardCanvas({
 
       {pickerForNode && (
         <StoryboardLibraryPicker onSelect={handleLibraryPick} onClose={() => setPickerForNode(null)} />
+      )}
+
+      {productPickerNodeId && (
+        <ProductPicker onSelect={handleProductPicked} onClose={() => setProductPickerNodeId(null)} />
       )}
     </div>
   );
