@@ -189,7 +189,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
 
   return (
     <div>
-      <Link href="/creators" className="text-sm text-zinc-400 hover:text-white">
+      <Link href="/creators" className="text-sm text-zinc-500 hover:text-zinc-900">
         {t("creatorDetailBackToList")}
       </Link>
 
@@ -202,7 +202,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
             <div className="w-12 h-12 rounded-full bg-panel2" />
           )}
           <div>
-            <h2 className="text-2xl font-semibold text-white">@{creator.handle}</h2>
+            <h2 className="text-2xl font-semibold text-zinc-900">@{creator.handle}</h2>
             <p className="text-xs text-zinc-500 mt-0.5">
               {t("creatorDataAsOf", { date: creator.last_scanned_at ? creator.last_scanned_at.slice(0, 16).replace("T", " ") : "—", count: creator.videos.length })}
             </p>
@@ -221,7 +221,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
                     value={tagsInput}
                     onChange={(e) => setTagsInput(e.target.value)}
                     placeholder={t("creatorTagsPlaceholder")}
-                    className="bg-panel2 border border-edge rounded px-2 py-0.5 text-xs w-48 text-zinc-100"
+                    className="bg-panel2 border border-edge rounded px-2 py-0.5 text-xs w-48 text-zinc-900"
                   />
                   <button onClick={handleSaveTags} disabled={savingTags} className="text-brand-400 hover:underline disabled:opacity-40">
                     {t("creatorTagsSave")}
@@ -235,7 +235,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowRescanModal(true)}
-            className="text-xs text-zinc-400 hover:text-white border border-edge rounded-lg px-3 py-1.5"
+            className="text-xs text-zinc-500 hover:text-zinc-900 border border-edge rounded-lg px-3 py-1.5"
           >
             {t("creatorRescanButton")}
           </button>
@@ -245,7 +245,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
                 key={r}
                 onClick={() => setRange(r)}
                 className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
-                  range === r ? "bg-brand-500 text-white" : "text-zinc-400 hover:text-white"
+                  range === r ? "bg-brand-500 text-white" : "text-zinc-500 hover:text-zinc-900"
                 }`}
               >
                 {t(RANGE_LABEL_KEY[r])}
@@ -258,24 +258,24 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
         <div className="bg-panel border border-edge rounded-xl p-4">
           <p className="text-xs text-zinc-500">{t("creatorStatVideos")}</p>
-          <p className="text-2xl font-semibold text-white mt-1">{stats.videos}</p>
+          <p className="text-2xl font-semibold text-zinc-900 mt-1">{stats.videos}</p>
         </div>
         <div className="bg-panel border border-edge rounded-xl p-4">
           <p className="text-xs text-zinc-500">{t("creatorStatUniqueProducts")}</p>
-          <p className="text-2xl font-semibold text-white mt-1">{stats.uniqueProducts}</p>
+          <p className="text-2xl font-semibold text-zinc-900 mt-1">{stats.uniqueProducts}</p>
         </div>
         <div className="bg-panel border border-edge rounded-xl p-4">
           <p className="text-xs text-zinc-500">{t("creatorStatTotalViews")}</p>
-          <p className="text-2xl font-semibold text-white mt-1">{formatCompactNumber(stats.totalViews)}</p>
+          <p className="text-2xl font-semibold text-zinc-900 mt-1">{formatCompactNumber(stats.totalViews)}</p>
         </div>
         <div className="bg-panel border border-edge rounded-xl p-4">
           <p className="text-xs text-zinc-500">{t("creatorStatTopVideo")}</p>
-          <p className="text-2xl font-semibold text-white mt-1">{formatCompactNumber(stats.topVideo)}</p>
+          <p className="text-2xl font-semibold text-zinc-900 mt-1">{formatCompactNumber(stats.topVideo)}</p>
         </div>
       </div>
 
       <div className="mt-6">
-        <h3 className="text-sm font-semibold text-white mb-3">{t("creatorAffiliateTitle")}</h3>
+        <h3 className="text-sm font-semibold text-zinc-900 mb-3">{t("creatorAffiliateTitle")}</h3>
         {creator.affiliate ? (
           <div className="bg-panel border border-edge rounded-xl p-4 space-y-4">
             {(creator.affiliate.window_from || creator.affiliate.window_to) && (
@@ -300,7 +300,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
 
             {creator.affiliate.demographics && (
               <div className="border-t border-edge pt-4">
-                <p className="text-xs font-medium text-zinc-300 mb-2">{t("creatorDemographicsTitle")}</p>
+                <p className="text-xs font-medium text-zinc-700 mb-2">{t("creatorDemographicsTitle")}</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <p className="text-[11px] text-zinc-500 mb-1">{t("creatorGenderLabel")}</p>
@@ -328,7 +328,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
             )}
           </div>
         ) : (
-          <p className="text-sm text-zinc-400">{t("creatorAffiliateEmpty")}</p>
+          <p className="text-sm text-zinc-500">{t("creatorAffiliateEmpty")}</p>
         )}
       </div>
 
@@ -348,8 +348,8 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
               ) : (
                 <div className="w-8 h-8 rounded bg-panel2 shrink-0" />
               )}
-              <p className="text-xs text-zinc-300 leading-snug line-clamp-2">
-                <span className="font-semibold text-white">×{p.count}</span> {p.name}
+              <p className="text-xs text-zinc-700 leading-snug line-clamp-2">
+                <span className="font-semibold text-zinc-900">×{p.count}</span> {p.name}
               </p>
             </button>
           ))}
@@ -362,7 +362,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
       )}
 
       <div className="flex items-center justify-between gap-3 flex-wrap mt-8 border-t border-edge pt-4">
-        <h3 className="text-sm font-semibold text-white">
+        <h3 className="text-sm font-semibold text-zinc-900">
           {t("creatorProductsSectionTitle")}
           {selectedProduct && (
             <span className="ml-2 text-xs font-normal text-zinc-500">
@@ -375,7 +375,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
             <button
               onClick={() => setProductSort("videos")}
               className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
-                productSort === "videos" ? "bg-brand-500 text-white" : "text-zinc-400 hover:text-white"
+                productSort === "videos" ? "bg-brand-500 text-white" : "text-zinc-500 hover:text-zinc-900"
               }`}
             >
               {t("creatorSortByVideos")}
@@ -383,24 +383,24 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
             <button
               onClick={() => setProductSort("views")}
               className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
-                productSort === "views" ? "bg-brand-500 text-white" : "text-zinc-400 hover:text-white"
+                productSort === "views" ? "bg-brand-500 text-white" : "text-zinc-500 hover:text-zinc-900"
               }`}
             >
               {t("creatorSortByViews")}
             </button>
           </div>
-          <button onClick={() => setShowRescanModal(true)} className="text-xs text-zinc-400 hover:text-white border border-edge rounded-lg px-3 py-1.5">
+          <button onClick={() => setShowRescanModal(true)} className="text-xs text-zinc-500 hover:text-zinc-900 border border-edge rounded-lg px-3 py-1.5">
             {t("creatorRefresh")}
           </button>
-          <button onClick={handleExportCsv} className="text-xs text-zinc-400 hover:text-white border border-edge rounded-lg px-3 py-1.5">
+          <button onClick={handleExportCsv} className="text-xs text-zinc-500 hover:text-zinc-900 border border-edge rounded-lg px-3 py-1.5">
             {t("creatorExportCsv")}
           </button>
           {selectMode && (
             <>
-              <button onClick={handleSelectAllVideos} className="text-xs text-zinc-400 hover:text-white rounded-lg px-2 py-1.5">
+              <button onClick={handleSelectAllVideos} className="text-xs text-zinc-500 hover:text-zinc-900 rounded-lg px-2 py-1.5">
                 {t("selectAll")}
               </button>
-              <span className="text-xs text-zinc-400">{t("selectedCount", { count: selectedVideos.size })}</span>
+              <span className="text-xs text-zinc-500">{t("selectedCount", { count: selectedVideos.size })}</span>
               {selectedVideos.size > 0 && (
                 <button
                   onClick={handleDeleteSelectedVideos}
@@ -416,7 +416,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
             <button
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
               className={`text-xs rounded-lg px-3 py-1.5 border whitespace-nowrap ${
-                selectMode ? "bg-zinc-700 text-white border-zinc-700" : "text-zinc-400 hover:text-white border-edge"
+                selectMode ? "bg-zinc-900 text-white border-zinc-900" : "text-zinc-500 hover:text-zinc-900 border-edge"
               }`}
             >
               {selectMode ? t("selectModeExit") : t("selectMode")}
@@ -425,7 +425,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
         </div>
       </div>
 
-      {displayedVideos.length === 0 && <p className="text-sm text-zinc-400 mt-4">{t("creatorVideoListEmpty")}</p>}
+      {displayedVideos.length === 0 && <p className="text-sm text-zinc-500 mt-4">{t("creatorVideoListEmpty")}</p>}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 mt-4">
         {displayedVideos.map((v) => {
@@ -458,7 +458,7 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
                 </span>
               </div>
               <div className="p-2">
-                <p className="text-[11px] text-zinc-300 line-clamp-2 min-h-[2rem]">{v.title || v.url}</p>
+                <p className="text-[11px] text-zinc-700 line-clamp-2 min-h-[2rem]">{v.title || v.url}</p>
                 <p className="text-[10px] text-zinc-500 mt-1">{formatDateShort(v.create_timestamp)}</p>
               </div>
             </>
@@ -482,8 +482,8 @@ export default function CreatorDetailClient({ initialCreator }: { initialCreator
       {showRescanModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
           <div className="bg-panel rounded-xl border border-edge max-w-md w-full p-6">
-            <h3 className="text-white font-semibold mb-2">{t("creatorRescanModalTitle")}</h3>
-            <p className="text-sm text-zinc-400 leading-relaxed">{t("creatorRescanModalBody")}</p>
+            <h3 className="text-zinc-900 font-semibold mb-2">{t("creatorRescanModalTitle")}</h3>
+            <p className="text-sm text-zinc-500 leading-relaxed">{t("creatorRescanModalBody")}</p>
             <button
               onClick={() => setShowRescanModal(false)}
               className="mt-5 w-full py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"
@@ -502,7 +502,7 @@ function AffiliateStat({ label, value }: { label: string; value: string | null }
   return (
     <div>
       <p className="text-[10px] text-zinc-500 uppercase tracking-wide">{label}</p>
-      <p className="text-sm font-semibold text-white mt-0.5">{value ?? "—"}</p>
+      <p className="text-sm font-semibold text-zinc-900 mt-0.5">{value ?? "—"}</p>
     </div>
   );
 }

@@ -61,8 +61,8 @@ export default function StoryboardLibraryPicker({
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] px-4">
       <div className="bg-panel rounded-xl border border-edge max-w-lg w-full p-5 max-h-[80vh] flex flex-col">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-white font-semibold">Pick from your video library</h3>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white text-sm">
+          <h3 className="text-zinc-900 font-semibold">Pick from your video library</h3>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-900 text-sm">
             ✕
           </button>
         </div>
@@ -71,13 +71,13 @@ export default function StoryboardLibraryPicker({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search by title or creator..."
-          className="w-full mb-3 px-3 py-2 rounded-lg bg-panel2 border border-edge text-sm text-zinc-100 outline-none focus:border-brand-500"
+          className="w-full mb-3 px-3 py-2 rounded-lg bg-panel2 border border-edge text-sm text-zinc-900 outline-none focus:border-brand-500"
         />
         <div className="overflow-y-auto flex-1 space-y-1">
           {error && <p className="text-sm text-red-400">{error}</p>}
-          {!error && videos === null && <p className="text-sm text-zinc-400">Loading...</p>}
+          {!error && videos === null && <p className="text-sm text-zinc-500">Loading...</p>}
           {!error && videos !== null && results.length === 0 && (
-            <p className="text-sm text-zinc-400">No videos found.</p>
+            <p className="text-sm text-zinc-500">No videos found.</p>
           )}
           {results.map((v) => {
             const thumb = v.thumbnail_path ? `/api/media/${v.thumbnail_path.split(/[\\/]/).pop()}` : null;
@@ -94,7 +94,7 @@ export default function StoryboardLibraryPicker({
                   <div className="w-10 h-14 rounded bg-panel2 shrink-0" />
                 )}
                 <div className="min-w-0">
-                  <p className="text-sm text-zinc-100 truncate">{v.title || v.id}</p>
+                  <p className="text-sm text-zinc-900 truncate">{v.title || v.id}</p>
                   {v.author && <p className="text-xs text-zinc-500 truncate">@{v.author}</p>}
                 </div>
               </button>

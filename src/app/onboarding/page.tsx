@@ -116,7 +116,7 @@ function OnboardingForm() {
             className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
               value === opt.value
                 ? "bg-brand-500 border-brand-500 text-white"
-                : "border-edge text-zinc-400 hover:text-white hover:border-edge2"
+                : "border-edge text-zinc-500 hover:text-zinc-900 hover:border-edge2"
             }`}
           >
             {t(opt.labelKey)}
@@ -148,7 +148,7 @@ function OnboardingForm() {
               value={occupationOther}
               onChange={(e) => setOccupationOther(e.target.value)}
               placeholder={t("onboardingOccupationOtherPlaceholder")}
-              className="mt-2 w-full px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-100 text-sm outline-none focus:border-brand-500"
+              className="mt-2 w-full px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-900 text-sm outline-none focus:border-brand-500"
             />
           )}
         </div>
@@ -159,7 +159,7 @@ function OnboardingForm() {
             value={interests}
             onChange={(e) => setInterests(e.target.value)}
             placeholder={t("onboardingInterestsPlaceholder")}
-            className="w-full px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-100 text-sm outline-none focus:border-brand-500"
+            className="w-full px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-900 text-sm outline-none focus:border-brand-500"
           />
         </div>
 
@@ -186,7 +186,7 @@ function OnboardingForm() {
       <button
         type="button"
         onClick={goNext}
-        className="w-full py-2 mt-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+        className="w-full py-2 mt-2 text-xs text-zinc-500 hover:text-zinc-700 transition-colors"
       >
         {t("onboardingSkip")}
       </button>

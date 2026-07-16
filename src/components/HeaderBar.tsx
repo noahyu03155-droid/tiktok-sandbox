@@ -23,21 +23,24 @@ export default function HeaderBar({ role = null }: { role?: UserRole | null }) {
   ];
 
   return (
-    <header className="border-b border-edge bg-ink/80 backdrop-blur sticky top-0 z-20">
-      <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-3">
+    <header className="border-b border-edge bg-ink/90 backdrop-blur sticky top-0 z-20">
+      <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-4">
         <Link href="/" className="shrink-0">
           <Logo />
         </Link>
-        <p className="text-xs text-zinc-500 leading-tight ml-1 mr-2 hidden sm:block">{t("appTagline")}</p>
-        <nav className="flex items-center gap-1 ml-2">
+        <p className="text-xs text-zinc-500 leading-tight mr-2 hidden lg:block">{t("appTagline")}</p>
+        {/* Pill/capsule nav, matching the reference design — a rounded-full
+            track holding rounded-full items, the active one filled solid
+            black with white text, inactive ones plain dark-gray text. */}
+        <nav className="flex items-center gap-0.5 bg-zinc-100 rounded-full p-1 ml-1">
           {navItems.map((item) => {
             const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${
-                  active ? "bg-brand-500 text-white" : "text-zinc-400 hover:text-white"
+                className={`text-sm px-3.5 py-1.5 rounded-full transition-colors whitespace-nowrap ${
+                  active ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-900"
                 }`}
               >
                 {item.label}

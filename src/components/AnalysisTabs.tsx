@@ -129,8 +129,8 @@ export default function AnalysisTabs({
             onClick={() => setTab(tItem.key)}
             className={`px-4 py-2 text-sm whitespace-nowrap border-b-2 transition-colors ${
               tab === tItem.key
-                ? "border-brand-500 text-white"
-                : "border-transparent text-zinc-400 hover:text-zinc-200"
+                ? "border-brand-500 text-zinc-900"
+                : "border-transparent text-zinc-500 hover:text-zinc-800"
             }`}
           >
             {tItem.label}
@@ -140,7 +140,7 @@ export default function AnalysisTabs({
 
       {!analysis && canRunBreakdown && (
         <div className="text-center py-10">
-          <p className="text-sm text-zinc-400 mb-3">{t("trendReadyNoBreakdown")}</p>
+          <p className="text-sm text-zinc-500 mb-3">{t("trendReadyNoBreakdown")}</p>
           <button
             onClick={runBreakdown}
             disabled={startingBreakdown}
@@ -167,13 +167,13 @@ export default function AnalysisTabs({
           </button>
         </div>
       )}
-      {!analysis && !canRunBreakdown && !needsRetry && <p className="text-sm text-zinc-400">{t("analysisNotReady")}</p>}
+      {!analysis && !canRunBreakdown && !needsRetry && <p className="text-sm text-zinc-500">{t("analysisNotReady")}</p>}
 
       {analysis && tab === "hook" && (
         <div className="space-y-4">
           <div className="bg-panel border border-edge rounded-xl p-4">
             <p className="text-xs text-zinc-500 mb-1">{t("hookOriginalText", { sec: analysis.hook.duration_sec })}</p>
-            <p className="text-zinc-100 text-base leading-relaxed">"{analysis.hook.hook_text}"</p>
+            <p className="text-zinc-900 text-base leading-relaxed">"{analysis.hook.hook_text}"</p>
           </div>
           <div>
             <p className="text-xs text-zinc-500 mb-2">{t("hookTechniquesLabel")}</p>
@@ -187,7 +187,7 @@ export default function AnalysisTabs({
           </div>
           <div>
             <p className="text-xs text-zinc-500 mb-1">{t("hookWhyLabel")}</p>
-            <p className="text-sm text-zinc-300 leading-relaxed">{analysis.hook.why_it_works}</p>
+            <p className="text-sm text-zinc-700 leading-relaxed">{analysis.hook.why_it_works}</p>
           </div>
         </div>
       )}
@@ -203,7 +203,7 @@ export default function AnalysisTabs({
                 <p className="text-sm font-medium text-brand-400">
                   {i + 1}. {beat.label}
                 </p>
-                <p className="text-sm text-zinc-300 mt-1 leading-relaxed">{beat.summary}</p>
+                <p className="text-sm text-zinc-700 mt-1 leading-relaxed">{beat.summary}</p>
                 {beat.quote && (
                   <p className="text-xs text-zinc-500 italic mt-1.5">&ldquo;{beat.quote}&rdquo;</p>
                 )}
@@ -221,7 +221,7 @@ export default function AnalysisTabs({
           <SellingSection title={t("sellingKeyPhrases")} items={analysis.selling_points.key_phrases} quote />
           <div>
             <p className="text-xs text-zinc-500 mb-1">{t("sellingCTA")}</p>
-            <p className="text-sm text-zinc-100 bg-panel border border-edge rounded-xl p-3">
+            <p className="text-sm text-zinc-900 bg-panel border border-edge rounded-xl p-3">
               {analysis.selling_points.call_to_action}
             </p>
           </div>
@@ -230,13 +230,13 @@ export default function AnalysisTabs({
 
       {tab === "transcript" && (
         <div className="space-y-2">
-          {video.transcript_segments.length === 0 && <p className="text-sm text-zinc-400">{t("noTranscript")}</p>}
+          {video.transcript_segments.length === 0 && <p className="text-sm text-zinc-500">{t("noTranscript")}</p>}
           {video.transcript_segments.map((seg, i) => (
             <div key={i} className="flex gap-3 text-sm py-1.5 border-b border-edge">
               <span className="text-zinc-500 font-mono text-xs whitespace-nowrap pt-0.5">
                 {formatTime(seg.start)}
               </span>
-              <span className="text-zinc-200 leading-relaxed">{seg.text}</span>
+              <span className="text-zinc-800 leading-relaxed">{seg.text}</span>
             </div>
           ))}
         </div>
@@ -245,7 +245,7 @@ export default function AnalysisTabs({
       {tab === "script" && (
         <div>
           {!analysis && (
-            <p className="text-sm text-zinc-400">Run the breakdown first — the script generator uses it as a reference.</p>
+            <p className="text-sm text-zinc-500">Run the breakdown first — the script generator uses it as a reference.</p>
           )}
           {analysis && (
             <div className="space-y-4">
@@ -276,7 +276,7 @@ export default function AnalysisTabs({
                           className={`text-xs px-3 py-1 rounded-full border ${
                             i === activeScriptIdx
                               ? "bg-brand-500 text-white border-brand-500"
-                              : "text-zinc-400 border-edge hover:border-edge2"
+                              : "text-zinc-500 border-edge hover:border-edge2"
                           }`}
                         >
                           {s.shopify_product_title}
@@ -287,7 +287,7 @@ export default function AnalysisTabs({
 
                   {video.generated_scripts[activeScriptIdx] && (
                     <div className="space-y-3">
-                      <p className="text-sm text-zinc-100 font-medium">
+                      <p className="text-sm text-zinc-900 font-medium">
                         For: {video.generated_scripts[activeScriptIdx].shopify_product_title}
                       </p>
                       {video.generated_scripts[activeScriptIdx].stages.map((stage, i) => (
@@ -302,7 +302,7 @@ export default function AnalysisTabs({
                       ))}
                       <button
                         onClick={() => setShowStoryboard(true)}
-                        className="w-full py-2.5 rounded-lg border border-dashed border-edge2 text-zinc-300 hover:text-white hover:border-brand-500 text-sm font-medium"
+                        className="w-full py-2.5 rounded-lg border border-dashed border-edge2 text-zinc-600 hover:text-zinc-900 hover:border-brand-500 text-sm font-medium"
                       >
                         🎬 Generate video — plan the storyboard
                       </button>
@@ -338,7 +338,7 @@ function SellingSection({ title, items, quote }: { title: string; items: string[
       <p className="text-xs text-zinc-500 mb-2">{title}</p>
       <ul className="space-y-1.5">
         {items.map((item, i) => (
-          <li key={i} className="text-sm text-zinc-200 bg-panel border border-edge rounded-lg px-3 py-2">
+          <li key={i} className="text-sm text-zinc-800 bg-panel border border-edge rounded-lg px-3 py-2">
             {quote ? `"${item}"` : item}
           </li>
         ))}
@@ -423,7 +423,7 @@ function ScriptStageCard({
               <button
                 onClick={() => pickVersion("previous")}
                 className={`text-[11px] px-2 py-0.5 rounded-full transition-colors ${
-                  selected === "previous" ? "bg-panel shadow-sm text-white" : "text-zinc-400 hover:text-zinc-200"
+                  selected === "previous" ? "bg-panel shadow-sm text-zinc-900" : "text-zinc-500 hover:text-zinc-800"
                 }`}
               >
                 {t("scriptVersionOld")}
@@ -431,7 +431,7 @@ function ScriptStageCard({
               <button
                 onClick={() => pickVersion("current")}
                 className={`text-[11px] px-2 py-0.5 rounded-full transition-colors ${
-                  selected === "current" ? "bg-panel shadow-sm text-white" : "text-zinc-400 hover:text-zinc-200"
+                  selected === "current" ? "bg-panel shadow-sm text-zinc-900" : "text-zinc-500 hover:text-zinc-800"
                 }`}
               >
                 {t("scriptVersionNew")}
@@ -439,7 +439,7 @@ function ScriptStageCard({
             </div>
           )}
         </div>
-        <p className="text-sm text-zinc-200 mt-1.5 leading-relaxed">{shown.script}</p>
+        <p className="text-sm text-zinc-800 mt-1.5 leading-relaxed">{shown.script}</p>
         {shown.direction && <p className="text-xs text-zinc-500 italic mt-1.5">🎬 {shown.direction}</p>}
       </div>
 
@@ -450,7 +450,7 @@ function ScriptStageCard({
           onChange={(e) => setFeedback(e.target.value)}
           placeholder={t("scriptFeedbackPlaceholder")}
           rows={3}
-          className="flex-1 resize-none bg-panel2 border border-edge rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-brand-500"
+          className="flex-1 resize-none bg-panel2 border border-edge rounded-lg px-2 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-500 outline-none focus:border-brand-500"
         />
         {error && <p className="text-[11px] text-red-400 mt-1">{error}</p>}
         <button

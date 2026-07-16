@@ -1,17 +1,18 @@
-// Text-based recreation of The Pawmart's pink bubble-letter wordmark. This
-// is still a CSS approximation, not the real artwork — the logo image you
-// shared in chat isn't reachable as a file from this sandbox (the uploads
-// folder is empty on this end), so I rebuilt the look with a rounded
-// Google font instead of the actual custom lettering. Swap in an <img> once
-// you can get me the actual PNG/SVG file (e.g. drop it in the project and
-// I can wire it up, or share it through a working file upload).
+// Phase 19 rebrand: "The Pawmart" → COTORX. Wordmark is set in a bold
+// sans face with the "X" rendered noticeably larger and offset slightly
+// below the baseline, so it reads as a small logo-mark rather than just a
+// bigger letter — the brand-blue accent color the site already used for
+// buttons/active nav carries over onto just the X, while the rest of the
+// word stays near-black to match the bold, high-contrast type treatment of
+// the reference design.
 export default function Logo({ size = "md" }: { size?: "sm" | "md" }) {
-  const textSize = size === "sm" ? "text-lg" : "text-2xl";
+  const textSize = size === "sm" ? "text-xl" : "text-3xl";
+  const xSize = size === "sm" ? "text-3xl" : "text-4xl";
   return (
     <div className="leading-none select-none font-sans">
-      <div className="text-[9px] tracking-[0.25em] text-pawpink-500 font-semibold -mb-0.5">THE</div>
-      <div className={`${textSize} font-bold text-pawpink-500 tracking-tight`}>
-        PAW<span className="italic">mart</span>
+      <div className={`${textSize} font-black text-zinc-900 tracking-tight flex items-baseline`}>
+        <span>COTOR</span>
+        <span className={`${xSize} font-black text-brand-500 -ml-0.5 relative top-[0.08em]`}>X</span>
       </div>
     </div>
   );

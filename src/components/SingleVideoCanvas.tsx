@@ -122,7 +122,7 @@ function StageLegend({ hint }: { hint: string }) {
       {STAGE_TAGS.map(({ color, label }) => (
         <div key={color} className="flex items-center gap-1 shrink-0">
           <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-          <span className="text-[11px] text-zinc-400 whitespace-nowrap">{label}</span>
+          <span className="text-[11px] text-zinc-500 whitespace-nowrap">{label}</span>
         </div>
       ))}
     </div>
@@ -658,7 +658,7 @@ function CanvasToolbar({
             title={tl.label}
             onClick={() => onToolChange(tl.key)}
             className={`w-8 h-8 rounded-lg text-sm flex items-center justify-center transition-colors ${
-              tool === tl.key ? "bg-brand-500 text-white" : "text-zinc-400 hover:bg-panel2 hover:text-white"
+              tool === tl.key ? "bg-brand-500 text-white" : "text-zinc-500 hover:bg-panel2 hover:text-zinc-900"
             }`}
           >
             {tl.icon}
@@ -684,7 +684,7 @@ function CanvasToolbar({
             key={s}
             onClick={() => onFontSizeChange(s)}
             className={`w-7 h-8 rounded-lg text-[10px] font-medium flex items-center justify-center ${
-              fontSize === s ? "bg-brand-500 text-white" : "text-zinc-400 hover:bg-panel2 hover:text-white"
+              fontSize === s ? "bg-brand-500 text-white" : "text-zinc-500 hover:bg-panel2 hover:text-zinc-900"
             }`}
           >
             {s.toUpperCase()}
@@ -1076,7 +1076,7 @@ export default function SingleVideoCanvas({ video }: { video: VideoRecord }) {
   );
 
   if (segments.length === 0) {
-    return <p className="text-sm text-zinc-400">{t("noCanvasTranscript")}</p>;
+    return <p className="text-sm text-zinc-500">{t("noCanvasTranscript")}</p>;
   }
 
   return (
@@ -1105,24 +1105,24 @@ export default function SingleVideoCanvas({ video }: { video: VideoRecord }) {
             className={`text-xs rounded-lg px-3 py-1.5 border ${
               isFullscreen
                 ? "bg-brand-500 text-white border-brand-500 hover:bg-brand-600"
-                : "text-zinc-400 hover:text-white border-edge"
+                : "text-zinc-500 hover:text-zinc-900 border-edge"
             }`}
           >
             {isFullscreen ? `✕ ${t("canvasExitFullscreen")}` : `⛶ ${t("canvasFullscreen")}`}
           </button>
           <div className="flex items-center gap-1 border border-edge rounded-lg overflow-hidden">
-            <button onClick={() => setZoom((z) => clamp(z - 0.15, MIN_ZOOM, MAX_ZOOM))} className="px-2 py-1.5 text-xs text-zinc-400 hover:text-white">
+            <button onClick={() => setZoom((z) => clamp(z - 0.15, MIN_ZOOM, MAX_ZOOM))} className="px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-900">
               −
             </button>
-            <span className="text-xs text-zinc-400 px-1 w-10 text-center">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom((z) => clamp(z + 0.15, MIN_ZOOM, MAX_ZOOM))} className="px-2 py-1.5 text-xs text-zinc-400 hover:text-white">
+            <span className="text-xs text-zinc-500 px-1 w-10 text-center">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom((z) => clamp(z + 0.15, MIN_ZOOM, MAX_ZOOM))} className="px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-900">
               +
             </button>
           </div>
-          <button onClick={resetView} className="text-xs text-zinc-400 hover:text-white border border-edge rounded-lg px-3 py-1.5">
+          <button onClick={resetView} className="text-xs text-zinc-500 hover:text-zinc-900 border border-edge rounded-lg px-3 py-1.5">
             Reset view
           </button>
-          <button onClick={resetLayout} className="text-xs text-zinc-400 hover:text-white border border-edge rounded-lg px-3 py-1.5">
+          <button onClick={resetLayout} className="text-xs text-zinc-500 hover:text-zinc-900 border border-edge rounded-lg px-3 py-1.5">
             {t("resetLayout")}
           </button>
           <button onClick={addNote} className="text-xs text-white bg-brand-500 hover:bg-brand-600 rounded-lg px-3 py-1.5">
@@ -1133,10 +1133,10 @@ export default function SingleVideoCanvas({ video }: { video: VideoRecord }) {
 
       {saveStatus === "error" && (
         <div className="mb-2 px-5 py-2 rounded-lg bg-red-500/15 border border-red-500/40 flex items-center justify-between gap-3">
-          <span className="text-xs text-red-300">{t("canvasSaveFailedBanner")}</span>
+          <span className="text-xs text-red-600">{t("canvasSaveFailedBanner")}</span>
           <button
             onClick={saveCanvasNow}
-            className="px-2.5 py-1 rounded bg-red-500/20 border border-red-500/50 text-red-200 text-xs font-medium hover:bg-red-500/30 shrink-0"
+            className="px-2.5 py-1 rounded bg-red-500/20 border border-red-500/50 text-red-700 text-xs font-medium hover:bg-red-500/30 shrink-0"
           >
             {t("canvasRetrySave")}
           </button>

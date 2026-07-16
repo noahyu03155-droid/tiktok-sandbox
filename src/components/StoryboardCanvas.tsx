@@ -679,15 +679,15 @@ export default function StoryboardCanvas({
           Close button (shrink-0 all round), and the Generate-readiness
           status text lives on its own full-width line below where it can
           wrap freely without crowding Close out of reach. */}
-      <div className="border-b border-edge bg-panel shrink-0">
-        <div className="flex items-center justify-between px-5 py-3 flex-wrap gap-2">
-          <div>
-            <h3 className="text-white font-semibold text-sm">Generate Video — Storyboard</h3>
-            <p className="text-xs text-zinc-500">
+      <div className="border-b border-edge bg-panel shrink-0 w-full overflow-x-hidden">
+        <div className="flex items-center justify-between px-5 py-3 flex-wrap gap-2 w-full">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-zinc-900 font-semibold text-sm truncate">Generate Video — Storyboard</h3>
+            <p className="text-xs text-zinc-500 break-words">
               Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok link anywhere to add it as a new video card.
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
             <span className="text-xs flex items-center gap-1.5 text-zinc-500 mr-1">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
@@ -704,29 +704,29 @@ export default function StoryboardCanvas({
               {saveStatus === "saved" && "Saved"}
               {saveStatus === "error" && "Save failed"}
             </span>
-            <button onClick={addNode} className="px-2.5 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-xs">
+            <button onClick={addNode} className="px-2.5 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs">
               + Add shot
             </button>
-            <button onClick={() => zoomBy(1.2)} className="w-7 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-sm">
+            <button onClick={() => zoomBy(1.2)} className="w-7 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-sm">
               +
             </button>
-            <button onClick={() => zoomBy(1 / 1.2)} className="w-7 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-sm">
+            <button onClick={() => zoomBy(1 / 1.2)} className="w-7 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-sm">
               −
             </button>
             <button
               onClick={() => setBoard((b) => ({ ...b, zoom: 1, pan: { x: 40, y: 40 } }))}
-              className="px-2 h-7 rounded border border-edge text-zinc-300 hover:text-white hover:border-edge2 text-xs"
+              className="px-2 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs"
             >
               Reset view
             </button>
-            <button onClick={onClose} className="ml-2 text-zinc-400 hover:text-white text-sm shrink-0">
+            <button onClick={onClose} className="ml-2 text-zinc-500 hover:text-zinc-900 text-sm shrink-0">
               ✕ Close
             </button>
           </div>
         </div>
         <div className="px-5 pb-2.5">
           {chainTails.length > 0 ? (
-            <span className="text-xs text-green-400">
+            <span className="text-xs text-green-600">
               ✓ Ready — see the Generate button under the end of your connected card{chainTails.length > 1 ? "s (one per chain)" : ""}
             </span>
           ) : (
@@ -737,12 +737,12 @@ export default function StoryboardCanvas({
         </div>
         {saveStatus === "error" && (
           <div className="px-5 py-2 bg-red-500/15 border-t border-red-500/40 flex items-center justify-between gap-3">
-            <span className="text-xs text-red-300">
+            <span className="text-xs text-red-600">
               ⚠ Your last change didn't save — it may only exist in this browser tab right now. Don't close this window until it saves.
             </span>
             <button
               onClick={saveBoardNow}
-              className="px-2.5 py-1 rounded bg-red-500/20 border border-red-500/50 text-red-200 text-xs font-medium hover:bg-red-500/30 shrink-0"
+              className="px-2.5 py-1 rounded bg-red-500/20 border border-red-500/50 text-red-700 text-xs font-medium hover:bg-red-500/30 shrink-0"
             >
               Retry save
             </button>
@@ -756,7 +756,7 @@ export default function StoryboardCanvas({
             {renderError && <p className="text-sm text-red-400">{renderError}</p>}
             {renderResult && (
               <div className="flex items-center gap-3 flex-wrap">
-                <p className="text-sm text-green-400">
+                <p className="text-sm text-green-600">
                   Render done{renderResult.styleApplied ? ` — applied ${renderResult.styleApplied.pacing} reference style` : ""}
                   {renderResult.appliedFeedback ? ` — ${renderResult.appliedFeedback.notes}` : ""}
                   {renderResult.skipped.length > 0 ? ` — skipped (no clip attached): ${renderResult.skipped.join(", ")}` : ""}
@@ -776,7 +776,7 @@ export default function StoryboardCanvas({
                 setRenderError(null);
                 setRenderResult(null);
               }}
-              className="text-zinc-500 hover:text-white text-xs"
+              className="text-zinc-500 hover:text-zinc-900 text-xs"
             >
               ✕
             </button>
@@ -791,12 +791,12 @@ export default function StoryboardCanvas({
                   onChange={(e) => setBoard((b) => ({ ...b, direction: e.target.value }))}
                   placeholder="e.g. faster cuts, punchier captions, less text on screen, more product close-ups..."
                   rows={2}
-                  className="w-full px-3 py-2 rounded-lg bg-panel border border-edge text-sm text-zinc-100 outline-none focus:border-brand-500 resize-none"
+                  className="w-full px-3 py-2 rounded-lg bg-panel border border-edge text-sm text-zinc-900 outline-none focus:border-brand-500 resize-none"
                 />
               </div>
               <button
                 onClick={startStyleUpload}
-                className="h-9 px-2.5 rounded border border-dashed border-edge2 text-xs text-zinc-300 hover:text-white hover:border-brand-500 shrink-0"
+                className="h-9 px-2.5 rounded border border-dashed border-edge2 text-xs text-zinc-600 hover:text-zinc-900 hover:border-brand-500 shrink-0"
               >
                 📎 {board.styleProfile ? `Ref: ${board.styleProfile.sourceLabel}` : "Import reference video"}
               </button>
@@ -870,7 +870,7 @@ export default function StoryboardCanvas({
                 key={c.id}
                 onClick={() => removeConnection(c.id)}
                 title="Remove connection"
-                className="absolute w-4 h-4 rounded-full bg-ink border border-edge2 text-zinc-400 hover:text-red-400 hover:border-red-400 text-[10px] leading-none flex items-center justify-center"
+                className="absolute w-4 h-4 rounded-full bg-ink border border-edge2 text-zinc-500 hover:text-red-500 hover:border-red-400 text-[10px] leading-none flex items-center justify-center"
                 style={{ left: g.midX, top: g.midY, transform: "translate(-50%,-50%)" }}
               >
                 ✕
@@ -901,7 +901,7 @@ export default function StoryboardCanvas({
                       >
                         {orderNumber.get(node.id) ?? "?"}
                       </span>
-                      <span className="flex-1 min-w-0 text-xs font-semibold text-white truncate">TikTok clip</span>
+                      <span className="flex-1 min-w-0 text-xs font-semibold text-zinc-900 truncate">TikTok clip</span>
                       <button
                         onMouseDown={(e) => e.stopPropagation()}
                         onClick={() => deleteNode(node.id)}
@@ -933,7 +933,7 @@ export default function StoryboardCanvas({
                       <button
                         onClick={() => setProductPickerNodeId(node.id)}
                         disabled={busy}
-                        className="w-full py-2 rounded-lg bg-panel2 border border-edge hover:border-brand-500 disabled:opacity-40 text-zinc-200 text-xs font-medium"
+                        className="w-full py-2 rounded-lg bg-panel2 border border-edge hover:border-brand-500 disabled:opacity-40 text-zinc-800 text-xs font-medium"
                       >
                         🛍️ Generate product script
                       </button>
@@ -957,14 +957,14 @@ export default function StoryboardCanvas({
                     value={node.label}
                     onChange={(e) => updateNodeText(node.id, { label: e.target.value })}
                     onMouseDown={(e) => e.stopPropagation()}
-                    className="flex-1 min-w-0 bg-transparent text-xs font-semibold text-white outline-none"
+                    className="flex-1 min-w-0 bg-transparent text-xs font-semibold text-zinc-900 outline-none"
                   />
                   <select
                     value={node.stageTag || ""}
                     onChange={(e) => updateNodeStageTag(node.id, (e.target.value || null) as FunnelStageKey | null)}
                     onMouseDown={(e) => e.stopPropagation()}
                     title="Funnel stage this card covers (optional — Breakdown/product-script features set this automatically; not required for Generate)"
-                    className="shrink-0 bg-transparent border border-edge rounded text-[9px] text-zinc-400 outline-none px-1 py-0.5"
+                    className="shrink-0 bg-transparent border border-edge rounded text-[9px] text-zinc-500 outline-none px-1 py-0.5"
                   >
                     <option value="">—</option>
                     {REQUIRED_STAGE_SEQUENCE.map((key) => (
@@ -990,7 +990,7 @@ export default function StoryboardCanvas({
                     onChange={(e) => updateNodeText(node.id, { instruction: e.target.value })}
                     onMouseDown={(e) => e.stopPropagation()}
                     placeholder="What happens in this shot? Dialogue, action, camera direction..."
-                    className="w-full bg-transparent text-xs text-zinc-200 leading-relaxed outline-none resize-none placeholder:text-zinc-600"
+                    className="w-full bg-transparent text-xs text-zinc-800 leading-relaxed outline-none resize-none placeholder:text-zinc-400"
                     style={{ height: SCRIPT_BOX_H - 22 }}
                   />
                 </div>
@@ -1001,7 +1001,7 @@ export default function StoryboardCanvas({
                     onChange={(e) => updateNodeText(node.id, { editorNotes: e.target.value })}
                     onMouseDown={(e) => e.stopPropagation()}
                     placeholder="Notes for yourself when filming/editing this shot — pacing, framing, tone..."
-                    className="w-full bg-transparent text-xs text-zinc-400 leading-relaxed outline-none resize-none placeholder:text-zinc-600"
+                    className="w-full bg-transparent text-xs text-zinc-500 leading-relaxed outline-none resize-none placeholder:text-zinc-400"
                     style={{ height: NOTES_BOX_H - 22 }}
                   />
                 </div>
@@ -1052,19 +1052,19 @@ export default function StoryboardCanvas({
                       <div className="w-full flex items-center justify-center gap-1.5">
                         <button
                           onClick={() => startUpload(node.id)}
-                          className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-300 hover:text-white hover:border-edge2"
+                          className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-600 hover:text-zinc-900 hover:border-edge2"
                         >
                           📤 Upload
                         </button>
                         <button
                           onClick={() => setPickerForNode(node.id)}
-                          className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-300 hover:text-white hover:border-edge2"
+                          className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-600 hover:text-zinc-900 hover:border-edge2"
                         >
                           📚 Library
                         </button>
                         <button
                           onClick={() => generateAiImage(node)}
-                          className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-300 hover:text-white hover:border-edge2"
+                          className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-600 hover:text-zinc-900 hover:border-edge2"
                         >
                           ✨ AI
                         </button>
@@ -1116,16 +1116,16 @@ export default function StoryboardCanvas({
                   style={{ left: n.x, top: styleWidgetTop, width: NODE_W, height: STYLE_WIDGET_H }}
                 >
                   {analyzingStyle ? (
-                    <span className="text-yellow-400 animate-pulse">Analyzing reference video...</span>
+                    <span className="text-yellow-600 animate-pulse">Analyzing reference video...</span>
                   ) : board.styleProfile ? (
                     <>
                       <span
-                        className="text-zinc-300 truncate flex-1"
+                        className="text-zinc-700 truncate flex-1"
                         title={`${board.styleProfile.pacing} pacing · ${board.styleProfile.transition === "hard_cut" ? "hard cuts" : `${board.styleProfile.transition} transitions`} · ${board.styleProfile.captionStyle} captions · ~${board.styleProfile.avgShotSec.toFixed(1)}s/shot · ${board.styleProfile.notes}`}
                       >
                         🎨 {board.styleProfile.pacing} · {board.styleProfile.sourceLabel}
                       </span>
-                      <button onClick={startStyleUpload} title="Replace reference video" className="text-zinc-500 hover:text-white shrink-0">
+                      <button onClick={startStyleUpload} title="Replace reference video" className="text-zinc-500 hover:text-zinc-900 shrink-0">
                         ↺
                       </button>
                       <button onClick={clearStyleProfile} title="Clear reference video" className="text-zinc-500 hover:text-red-400 shrink-0">
@@ -1135,10 +1135,10 @@ export default function StoryboardCanvas({
                   ) : (
                     <>
                       <span className="text-zinc-500 shrink-0">🎨 Reference (optional):</span>
-                      <button onClick={startStyleUpload} className="text-zinc-300 hover:text-white shrink-0">
+                      <button onClick={startStyleUpload} className="text-zinc-600 hover:text-zinc-900 shrink-0">
                         📎 Upload
                       </button>
-                      <button onClick={promptForStyleUrl} className="text-zinc-300 hover:text-white shrink-0">
+                      <button onClick={promptForStyleUrl} className="text-zinc-600 hover:text-zinc-900 shrink-0">
                         🔗 Link
                       </button>
                     </>

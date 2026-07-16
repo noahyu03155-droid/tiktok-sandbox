@@ -127,7 +127,7 @@ export default function TranscriptCanvas({ video }: { video: VideoRecord }) {
         style={isDesktop ? { width: `calc(${100 - leftPct}% - 6px)` } : undefined}
         className="min-w-0 border-t xl:border-t-0 xl:border-l border-edge pt-6 xl:pt-0 xl:pl-3"
       >
-        <p className="text-xs text-zinc-400 mb-2 font-medium">{t("referenceSectionTitle")}</p>
+        <p className="text-xs text-zinc-500 mb-2 font-medium">{t("referenceSectionTitle")}</p>
 
         {!referenceVideo && initialScanDone && (
           <>
@@ -136,7 +136,7 @@ export default function TranscriptCanvas({ video }: { video: VideoRecord }) {
                 value={refUrl}
                 onChange={(e) => setRefUrl(e.target.value)}
                 placeholder={t("referenceImportPlaceholder")}
-                className="flex-1 bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-brand-500"
+                className="flex-1 bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 outline-none focus:border-brand-500"
               />
               <button
                 type="submit"

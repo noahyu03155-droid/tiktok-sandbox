@@ -59,7 +59,7 @@ export default function CreationPageContent({
 
   return (
     <div>
-      <h1 className="text-xl font-semibold text-white mb-5">{t("creationHeading")}</h1>
+      <h1 className="text-xl font-semibold text-zinc-900 mb-5">{t("creationHeading")}</h1>
 
       <div className="flex items-center gap-2 mb-6">
         <input
@@ -67,7 +67,7 @@ export default function CreationPageContent({
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !creating && createProject()}
           placeholder={t("creationNewProjectPlaceholder")}
-          className="flex-1 max-w-xs px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-100 text-sm outline-none focus:border-brand-500"
+          className="flex-1 max-w-xs px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-900 text-sm outline-none focus:border-brand-500"
         />
         <button
           onClick={createProject}
@@ -85,7 +85,7 @@ export default function CreationPageContent({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-10">
           {projects.map((p) => (
             <div key={p.id} className="rounded-xl border border-edge bg-panel p-4 hover:border-brand-500 transition-colors">
-              <p className="text-sm font-medium text-zinc-100 truncate mb-1">{p.title}</p>
+              <p className="text-sm font-medium text-zinc-900 truncate mb-1">{p.title}</p>
               <p className="text-[11px] text-zinc-500 mb-3">{t("creationUpdatedAt", { date: formatDate(p.updatedAt) })}</p>
               <div className="flex items-center gap-2">
                 <Link
@@ -96,7 +96,7 @@ export default function CreationPageContent({
                 </Link>
                 <button
                   onClick={() => deleteProject(p.id)}
-                  className="text-xs px-3 py-1.5 rounded-lg text-zinc-400 hover:text-red-400 transition-colors"
+                  className="text-xs px-3 py-1.5 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
                 >
                   {t("creationDelete")}
                 </button>
@@ -108,7 +108,7 @@ export default function CreationPageContent({
 
       {role === "admin" && (
         <div>
-          <h2 className="text-sm font-semibold text-zinc-300 mb-3">{t("creationMemberFoldersHeading")}</h2>
+          <h2 className="text-sm font-semibold text-zinc-700 mb-3">{t("creationMemberFoldersHeading")}</h2>
           {owners.length === 0 ? (
             <p className="text-sm text-zinc-500">{t("creationMemberFoldersEmpty")}</p>
           ) : (
@@ -119,10 +119,10 @@ export default function CreationPageContent({
                   href={`/creation/member/${o.ownerId}`}
                   className="rounded-xl border border-edge bg-panel p-4 hover:border-brand-500 transition-colors block"
                 >
-                  <div className="w-10 h-10 rounded-full bg-panel2 flex items-center justify-center text-zinc-300 text-sm font-semibold mb-3">
+                  <div className="w-10 h-10 rounded-full bg-panel2 flex items-center justify-center text-zinc-700 text-sm font-semibold mb-3">
                     {o.username.slice(0, 1).toUpperCase()}
                   </div>
-                  <p className="text-sm font-medium text-zinc-100 truncate">@{o.username}</p>
+                  <p className="text-sm font-medium text-zinc-900 truncate">@{o.username}</p>
                   <p className="text-[11px] text-zinc-500 mt-1">{t("creationProjectCount", { count: o.projectCount })}</p>
                 </Link>
               ))}

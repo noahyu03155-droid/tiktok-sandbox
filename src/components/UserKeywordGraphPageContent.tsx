@@ -25,10 +25,10 @@ export default function UserKeywordGraphPageContent({
   const { t } = useLocale();
   return (
     <div>
-      <Link href="/user-data" className="text-xs text-zinc-500 hover:text-zinc-300 mb-4 inline-block">
+      <Link href="/user-data" className="text-xs text-zinc-500 hover:text-zinc-700 mb-4 inline-block">
         {t("userDataBackToList")}
       </Link>
-      <h1 className="text-xl font-semibold text-white mb-1">@{username}</h1>
+      <h1 className="text-xl font-semibold text-zinc-900 mb-1">@{username}</h1>
       <p className="text-xs text-zinc-500 mb-6">
         {t("userDataJoinedAt", { date: formatDate(joinedAt) })}
         {" · "}

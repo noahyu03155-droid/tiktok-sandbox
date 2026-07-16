@@ -92,7 +92,7 @@ export default function VideoCard({
 
   const details = (
     <div className="p-3">
-      <p className="text-sm text-zinc-100 line-clamp-2 min-h-[2.5rem]">{video.title || video.source_url}</p>
+      <p className="text-sm text-zinc-900 line-clamp-2 min-h-[2.5rem]">{video.title || video.source_url}</p>
       <div className="flex items-center gap-1.5 mt-1">
         {profileUrl ? (
           <a
@@ -112,12 +112,12 @@ export default function VideoCard({
         <div className="flex items-center gap-3 mt-2 pt-2 border-t border-edge text-[11px] text-zinc-500">
           {creator.followers != null && (
             <span>
-              {t("creatorFollowers")}: <span className="text-zinc-300 font-medium">{formatCompactNumber(creator.followers)}</span>
+              {t("creatorFollowers")}: <span className="text-zinc-700 font-medium">{formatCompactNumber(creator.followers)}</span>
             </span>
           )}
           {creator.avg_views != null && (
             <span>
-              {t("creatorAvgViews")}: <span className="text-zinc-300 font-medium">{formatCompactNumber(creator.avg_views)}</span>
+              {t("creatorAvgViews")}: <span className="text-zinc-700 font-medium">{formatCompactNumber(creator.avg_views)}</span>
             </span>
           )}
         </div>

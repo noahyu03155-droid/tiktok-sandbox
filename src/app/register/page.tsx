@@ -125,7 +125,7 @@ function RegisterForm() {
       <input
         value={username}
         onChange={(e) => setUsername(e.target.value)}
-        className="w-full mb-1 px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-100 text-sm outline-none focus:border-brand-500"
+        className="w-full mb-1 px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-900 text-sm outline-none focus:border-brand-500"
         autoFocus
       />
       <p className="text-[11px] text-zinc-600 mb-3">{t("usernameHint")}</p>
@@ -134,7 +134,7 @@ function RegisterForm() {
         type="password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
-        className="w-full mb-4 px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-100 text-sm outline-none focus:border-brand-500"
+        className="w-full mb-4 px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-900 text-sm outline-none focus:border-brand-500"
       />
 
       {/* Optional category picker — hidden entirely if the category list
@@ -147,7 +147,7 @@ function RegisterForm() {
               <button
                 type="button"
                 onClick={() => setSelectedCategory(null)}
-                className="text-[11px] text-zinc-500 hover:text-zinc-300 underline underline-offset-2"
+                className="text-[11px] text-zinc-500 hover:text-zinc-700 underline underline-offset-2"
               >
                 {t("registerCategoryClear")}
               </button>
@@ -160,7 +160,7 @@ function RegisterForm() {
               className="w-full text-left px-3 py-2 rounded-lg bg-panel2 border border-edge text-sm outline-none hover:border-brand-500 truncate"
               title={selectedCategory?.label || t("trendCategoryPlaceholder")}
             >
-              <span className={selectedCategory ? "text-zinc-100" : "text-zinc-500"}>
+              <span className={selectedCategory ? "text-zinc-900" : "text-zinc-500"}>
                 {selectedCategory ? selectedCategory.label : t("trendCategoryPlaceholder")}
               </span>
             </button>
@@ -171,7 +171,7 @@ function RegisterForm() {
                   value={categoryQuery}
                   onChange={(e) => setCategoryQuery(e.target.value)}
                   placeholder={t("trendCategorySearchPlaceholder")}
-                  className="w-full px-2 py-1.5 rounded bg-panel2 border border-edge text-xs text-zinc-100 outline-none focus:border-brand-500 mb-2"
+                  className="w-full px-2 py-1.5 rounded bg-panel2 border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 mb-2"
                 />
                 <div className="max-h-64 overflow-y-auto space-y-0.5">
                   {filteredCategories.length === 0 && (
@@ -186,7 +186,7 @@ function RegisterForm() {
                         setCategoryDropdownOpen(false);
                         setCategoryQuery("");
                       }}
-                      className="w-full text-left px-2 py-1.5 rounded text-xs text-zinc-300 hover:bg-panel2 hover:text-white truncate"
+                      className="w-full text-left px-2 py-1.5 rounded text-xs text-zinc-600 hover:bg-panel2 hover:text-zinc-900 truncate"
                       title={c.label}
                     >
                       {c.label}

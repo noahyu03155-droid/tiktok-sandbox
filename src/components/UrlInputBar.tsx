@@ -42,7 +42,7 @@ export default function UrlInputBar({ onQueued }: { onQueued?: (id: string) => v
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder={t("pastePlaceholder")}
-          className="flex-1 bg-transparent px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none"
+          className="flex-1 bg-transparent px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 outline-none"
         />
         <button
           type="submit"

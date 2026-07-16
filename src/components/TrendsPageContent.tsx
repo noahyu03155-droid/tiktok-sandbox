@@ -297,14 +297,14 @@ function TrendCard({
             )}
           </div>
         )}
-        <p className="text-sm text-zinc-100 line-clamp-2 min-h-[2.5rem]">
+        <p className="text-sm text-zinc-900 line-clamp-2 min-h-[2.5rem]">
           {video?.title || item.fastmoss_title || item.product_name || item.fastmoss_url}
         </p>
 
         {gmvPrimary && (
           <div className="mt-2 pt-2 border-t border-edge">
             <p className="text-[9px] text-zinc-500 uppercase tracking-wide">{t("trendGMV")}</p>
-            <p className="text-sm font-semibold text-zinc-100">{gmvPrimary}</p>
+            <p className="text-sm font-semibold text-zinc-900">{gmvPrimary}</p>
           </div>
         )}
         {metric === "sales" && item.sales != null && (
@@ -319,7 +319,7 @@ function TrendCard({
               🛍
             </div>
             <div className="min-w-0">
-              <p className="text-[11px] text-zinc-300 leading-snug line-clamp-1" title={item.product_name}>
+              <p className="text-[11px] text-zinc-700 leading-snug line-clamp-1" title={item.product_name}>
                 {item.product_name}
               </p>
               {item.sales != null && <p className="text-[10px] text-zinc-500">{item.sales} {t("trendSales").toLowerCase()}</p>}
@@ -330,43 +330,43 @@ function TrendCard({
         {item.product_id && (
           <button
             onClick={toggleAnalysis}
-            className="mt-2 w-full text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-400 hover:text-white hover:border-brand-500"
+            className="mt-2 w-full text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-500 hover:text-zinc-900 hover:border-brand-500"
           >
             {analysisOpen ? `▲ ${t("trendHideAnalysis")}` : `🔍 ${t("trendShowAnalysis")}`}
           </button>
         )}
         {item.product_id && analysisOpen && (
           <div className="mt-2 pt-2 border-t border-edge space-y-2" onMouseDown={(e) => e.stopPropagation()}>
-            {analysisLoading && <p className="text-[11px] text-yellow-400 animate-pulse">{t("trendAnalysisLoading")}</p>}
+            {analysisLoading && <p className="text-[11px] text-yellow-600 animate-pulse">{t("trendAnalysisLoading")}</p>}
             {analysisError && <p className="text-[11px] text-red-400">{analysisError}</p>}
             {analysis && (
               <>
                 <SalesTrendChart points={analysis.salesTrend.list} />
-                <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-zinc-400">
+                <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-zinc-500">
                   <span>
-                    {t("trendSaturation7d")}: <span className="text-zinc-200 font-medium">{analysis.saturation7d}</span>
+                    {t("trendSaturation7d")}: <span className="text-zinc-800 font-medium">{analysis.saturation7d}</span>
                   </span>
                   <span>
                     {t("trendRelatedCreators")}:{" "}
-                    <span className="text-zinc-200 font-medium">
+                    <span className="text-zinc-800 font-medium">
                       {formatCompactNumber(analysis.salesTrend.overview.creator_count)}
                     </span>
                   </span>
                   <span>
                     {t("trendRelatedVideos")}:{" "}
-                    <span className="text-zinc-200 font-medium">
+                    <span className="text-zinc-800 font-medium">
                       {formatCompactNumber(analysis.salesTrend.overview.aweme_count)}
                     </span>
                   </span>
                   <span>
                     {t("trendRelatedLives")}:{" "}
-                    <span className="text-zinc-200 font-medium">
+                    <span className="text-zinc-800 font-medium">
                       {formatCompactNumber(analysis.salesTrend.overview.live_count)}
                     </span>
                   </span>
                 </div>
                 {analysis.creatorStats && analysis.creatorStats.day28_gmv != null && (
-                  <p className="text-[10px] text-zinc-400">
+                  <p className="text-[10px] text-zinc-500">
                     {t("trendCreatorGmv28d")}:{" "}
                     <span className="text-brand-400 font-medium">
                       ${analysis.creatorStats.day28_gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
@@ -384,7 +384,7 @@ function TrendCard({
               <button
                 onClick={handleAddToCreation}
                 disabled={addState === "adding"}
-                className="flex-1 text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-400 hover:text-white hover:border-brand-500 disabled:opacity-40"
+                className="flex-1 text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-500 hover:text-zinc-900 hover:border-brand-500 disabled:opacity-40"
               >
                 {addState === "adding"
                   ? t("trendAddingToCreation")
@@ -446,7 +446,7 @@ function TrendSection({
   if (items.length === 0) return null;
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-white">{title}</h3>
+      <h3 className="text-sm font-semibold text-zinc-900">{title}</h3>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {items.map((item) => {
           const key = selKey(batchId, metric, item.rank);
@@ -770,21 +770,21 @@ export default function TrendsPageContent({
         <div className="space-y-6 pb-8 border-b border-edge">
           <div className="flex items-baseline justify-between gap-3 flex-wrap">
             <div>
-              <h2 className="text-xl font-semibold text-white mb-1">{t("trendForYou")}</h2>
-              <p className="text-sm text-zinc-400">
+              <h2 className="text-xl font-semibold text-zinc-900 mb-1">{t("trendForYou")}</h2>
+              <p className="text-sm text-zinc-500">
                 {t("trendForYouSubtitle", { category: preferredCategory.label })}
               </p>
             </div>
             <button
               onClick={() => loadPersonalized(true)}
               disabled={personalizedLoading}
-              className="text-xs rounded-lg px-3 py-1.5 border border-edge text-zinc-400 hover:text-white hover:border-edge2 disabled:opacity-40 whitespace-nowrap"
+              className="text-xs rounded-lg px-3 py-1.5 border border-edge text-zinc-500 hover:text-zinc-900 hover:border-edge2 disabled:opacity-40 whitespace-nowrap"
             >
               {personalizedLoading ? t("trendUpdating") : t("trendRefresh")}
             </button>
           </div>
           {personalizedLoading && !personalizedData && (
-            <p className="text-sm text-yellow-400 animate-pulse">{t("trendUpdating")}</p>
+            <p className="text-sm text-yellow-600 animate-pulse">{t("trendUpdating")}</p>
           )}
           {personalizedError && <p className="text-sm text-red-400">{personalizedError}</p>}
           {personalizedData && (
@@ -814,8 +814,8 @@ export default function TrendsPageContent({
 
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-xl font-semibold text-white mb-1">{t("trendPageHeading")}</h2>
-          <p className="text-sm text-zinc-400">{t("trendPageSubheading")}</p>
+          <h2 className="text-xl font-semibold text-zinc-900 mb-1">{t("trendPageHeading")}</h2>
+          <p className="text-sm text-zinc-500">{t("trendPageSubheading")}</p>
         </div>
         <div className="flex items-center gap-2">
           {selectMode && selected.size > 0 && (
@@ -827,12 +827,12 @@ export default function TrendsPageContent({
               {deleting ? "..." : t("deleteSelected")}
             </button>
           )}
-          {selectMode && <span className="text-xs text-zinc-400">{t("selectedCount", { count: selected.size })}</span>}
+          {selectMode && <span className="text-xs text-zinc-500">{t("selectedCount", { count: selected.size })}</span>}
           {totalItems > 0 && (
             <button
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
               className={`text-xs rounded-lg px-3 py-1.5 border whitespace-nowrap ${
-                selectMode ? "bg-zinc-700 text-white border-zinc-700" : "text-zinc-400 hover:text-white border-edge"
+                selectMode ? "bg-zinc-900 text-white border-zinc-900" : "text-zinc-500 hover:text-zinc-900 border-edge"
               }`}
             >
               {selectMode ? t("selectModeExit") : t("selectMode")}
@@ -841,7 +841,7 @@ export default function TrendsPageContent({
           <div className="relative" ref={categoryDropdownRef}>
             <button
               onClick={() => setCategoryDropdownOpen((v) => !v)}
-              className="text-xs rounded-lg px-3 py-1.5 border border-edge text-zinc-300 hover:text-white hover:border-edge2 whitespace-nowrap max-w-[180px] truncate"
+              className="text-xs rounded-lg px-3 py-1.5 border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 whitespace-nowrap max-w-[180px] truncate"
               title={selectedCategory?.label || t("trendCategoryPlaceholder")}
             >
               {selectedCategory ? selectedCategory.label : t("trendCategoryPlaceholder")}
@@ -853,7 +853,7 @@ export default function TrendsPageContent({
                   value={categoryQuery}
                   onChange={(e) => setCategoryQuery(e.target.value)}
                   placeholder={t("trendCategorySearchPlaceholder")}
-                  className="w-full px-2 py-1.5 rounded bg-panel2 border border-edge text-xs text-zinc-100 outline-none focus:border-brand-500 mb-2"
+                  className="w-full px-2 py-1.5 rounded bg-panel2 border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 mb-2"
                 />
                 {categoriesError && <p className="text-[11px] text-red-400 px-1 pb-1">{categoriesError}</p>}
                 <div className="max-h-64 overflow-y-auto space-y-0.5">
@@ -868,7 +868,7 @@ export default function TrendsPageContent({
                         setCategoryDropdownOpen(false);
                         setCategoryQuery("");
                       }}
-                      className="w-full text-left px-2 py-1.5 rounded text-xs text-zinc-300 hover:bg-panel2 hover:text-white truncate"
+                      className="w-full text-left px-2 py-1.5 rounded text-xs text-zinc-600 hover:bg-panel2 hover:text-zinc-900 truncate"
                       title={c.label}
                     >
                       {c.label}
@@ -884,7 +884,7 @@ export default function TrendsPageContent({
                 key={d}
                 onClick={() => setDays(d)}
                 className={`text-xs px-2.5 py-1.5 whitespace-nowrap ${
-                  days === d ? "bg-brand-500 text-white" : "text-zinc-400 hover:text-white"
+                  days === d ? "bg-brand-500 text-white" : "text-zinc-500 hover:text-zinc-900"
                 }`}
               >
                 {d}D
@@ -909,7 +909,7 @@ export default function TrendsPageContent({
             everyone; non-admins just get the server's 403 error inline. */}
         <div className="flex items-center gap-2 flex-wrap text-[11px] text-zinc-500">
           {scanStatus?.status === "running" ? (
-            <span className="text-yellow-400 animate-pulse">
+            <span className="text-yellow-600 animate-pulse">
               {t("trendCategoryScanRunning", { tested: scanStatus.tested, total: scanStatus.total || "?" })}
             </span>
           ) : (
@@ -938,8 +938,8 @@ export default function TrendsPageContent({
 
       {updateError && (
         <div className="flex items-start justify-between gap-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">
-          <p className="text-sm text-red-300 leading-relaxed">{updateError}</p>
-          <button onClick={() => setUpdateError(null)} className="text-red-400 hover:text-red-200 text-sm shrink-0">
+          <p className="text-sm text-red-600 leading-relaxed">{updateError}</p>
+          <button onClick={() => setUpdateError(null)} className="text-red-500 hover:text-red-700 text-sm shrink-0">
             ✕
           </button>
         </div>
@@ -953,7 +953,7 @@ export default function TrendsPageContent({
         <div key={batch.id} className="space-y-6 pb-8 border-b border-edge last:border-b-0">
           <div className="flex items-baseline justify-between gap-3 flex-wrap">
             <div className="flex items-baseline gap-3 flex-wrap">
-              <h3 className="text-white font-medium">
+              <h3 className="text-zinc-900 font-medium">
                 {t("trendCategory")}: {batch.category}
               </h3>
               <span className="text-xs text-zinc-500">

@@ -14,32 +14,35 @@ const config: Config = {
           700: "#1a7fac",
         },
         // Page background — The Pawmart's cream brand color. Kept around
-        // for any leftover reference, but the app now runs a dark theme
-        // (see ink/panel/edge below) — the cream color no longer appears
-        // as the page bg.
+        // for any leftover reference; superseded by ink/panel below.
         cream: {
           DEFAULT: "#f3efec",
         },
-        // Dark theme surfaces (Daily-Virals-style dashboard look). "ink" is
-        // the page background, "panel"/"panel2" are card surfaces (panel2
-        // = one step lighter, for nested/hover elements), "edge"/"edge2"
-        // are borders (edge2 = one step lighter, for hover states).
+        // Phase 19: flipped from the old dark (near-black) theme to a light,
+        // bold-type theme (white page bg, black headline text, thin light
+        // borders) matching the COTORX rebrand reference. Same semantic
+        // token NAMES as before (ink/panel/panel2/edge/edge2) so most
+        // components didn't need per-file edits — only the VALUES changed
+        // here. "ink" is the page background, "panel"/"panel2" are card
+        // surfaces (panel2 = one step darker, for nested/hover elements),
+        // "edge"/"edge2" are borders (edge2 = one step darker, for hover
+        // states).
         ink: {
-          DEFAULT: "#0a0a0b",
+          DEFAULT: "#ffffff",
         },
         panel: {
-          DEFAULT: "#161618",
+          DEFAULT: "#f7f7f8",
         },
         // Flat (unnested) keys so classes read as `bg-panel2` / `border-edge2`
         // rather than Tailwind's nested `bg-panel-2` — matches what's
         // actually used across the components.
-        panel2: "#1f1f22",
+        panel2: "#eeeef0",
         edge: {
-          DEFAULT: "#28282c",
+          DEFAULT: "#e4e4e7",
         },
-        edge2: "#38383e",
-        // Pink used for the wordmark logo only (see Logo.tsx) — the rest of
-        // the UI (buttons, active nav, links) still uses `brand` (blue).
+        edge2: "#d4d4d8",
+        // Retired with the old pink "PAWmart" wordmark (see Logo.tsx, now
+        // COTORX) — kept defined in case anything still references it.
         pawpink: {
           400: "#f472b6",
           500: "#ec4899",

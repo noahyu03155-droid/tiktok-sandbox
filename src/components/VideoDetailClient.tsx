@@ -69,7 +69,7 @@ export default function VideoDetailClient({ initialVideo }: { initialVideo: Vide
       <button
         onClick={() => setViewMode("tabs")}
         className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
-          viewMode === "tabs" ? "bg-brand-500 text-white" : "text-zinc-400 hover:text-white"
+          viewMode === "tabs" ? "bg-brand-500 text-white" : "text-zinc-500 hover:text-zinc-900"
         }`}
       >
         {t("viewModeTabs")}
@@ -77,7 +77,7 @@ export default function VideoDetailClient({ initialVideo }: { initialVideo: Vide
       <button
         onClick={() => setViewMode("canvas")}
         className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
-          viewMode === "canvas" ? "bg-brand-500 text-white" : "text-zinc-400 hover:text-white"
+          viewMode === "canvas" ? "bg-brand-500 text-white" : "text-zinc-500 hover:text-zinc-900"
         }`}
       >
         {t("viewModeCanvas")}
@@ -92,7 +92,7 @@ export default function VideoDetailClient({ initialVideo }: { initialVideo: Vide
     return (
       <div>
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <Link href="/" className="text-sm text-zinc-400 hover:text-white">{t("backToBoard")}</Link>
+          <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-900">{t("backToBoard")}</Link>
           {ModeToggle}
         </div>
         {video.status === "error" && (
@@ -109,7 +109,7 @@ export default function VideoDetailClient({ initialVideo }: { initialVideo: Vide
 
   return (
     <div>
-      <Link href="/" className="text-sm text-zinc-400 hover:text-white">{t("backToBoard")}</Link>
+      <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-900">{t("backToBoard")}</Link>
 
       <div className="mt-4 grid grid-cols-1 md:grid-cols-[320px_1fr] gap-6">
         <div>
@@ -117,13 +117,13 @@ export default function VideoDetailClient({ initialVideo }: { initialVideo: Vide
             {videoSrc ? (
               <video src={videoSrc} controls className="w-full h-full object-contain bg-black" />
             ) : (
-              <span className="text-sm text-zinc-400 px-4 text-center">
+              <span className="text-sm text-zinc-500 px-4 text-center">
                 {isBusy ? statusLabel : t("videoUnavailable")}
               </span>
             )}
           </div>
           <div className="mt-3">
-            <p className="text-zinc-100 text-sm font-medium leading-snug">{video.title || video.source_url}</p>
+            <p className="text-zinc-900 text-sm font-medium leading-snug">{video.title || video.source_url}</p>
             {profileUrl ? (
               <a
                 href={profileUrl}
@@ -136,16 +136,16 @@ export default function VideoDetailClient({ initialVideo }: { initialVideo: Vide
             ) : (
               <p className="text-xs text-zinc-500 mt-1">@{handle || t("unknownAuthor")}</p>
             )}
-            <div className="flex items-center gap-4 mt-3 text-xs text-zinc-400">
+            <div className="flex items-center gap-4 mt-3 text-xs text-zinc-500">
               <span>▶ {t("statsPlay")} {formatCompactNumber(video.stats?.play_count)}</span>
               <span>♥ {t("statsLike")} {formatCompactNumber(video.stats?.digg_count)}</span>
             </div>
-            <div className="flex items-center gap-4 mt-1 text-xs text-zinc-400">
+            <div className="flex items-center gap-4 mt-1 text-xs text-zinc-500">
               <span>💬 {t("statsComment")} {formatCompactNumber(video.stats?.comment_count)}</span>
               <span>↗ {t("statsShare")} {formatCompactNumber(video.stats?.share_count)}</span>
             </div>
             {engagementRate !== null && (
-              <div className="mt-1 text-xs text-zinc-400">
+              <div className="mt-1 text-xs text-zinc-500">
                 <span>{t("statsEngagementRate")} {engagementRate.toFixed(2)}%</span>
               </div>
             )}
@@ -164,7 +164,7 @@ export default function VideoDetailClient({ initialVideo }: { initialVideo: Vide
                     <div className="w-11 h-11 rounded-full bg-panel2 shrink-0" />
                   )}
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-zinc-100 truncate">{creator.name || handle}</p>
+                    <p className="text-sm font-medium text-zinc-900 truncate">{creator.name || handle}</p>
                     {profileUrl && (
                       <a
                         href={profileUrl}
@@ -179,15 +179,15 @@ export default function VideoDetailClient({ initialVideo }: { initialVideo: Vide
                 </div>
                 <div className="grid grid-cols-3 gap-2 mt-3 text-center">
                   <div className="bg-panel2 rounded-lg py-2">
-                    <p className="text-sm font-semibold text-zinc-100">{formatCompactNumber(creator.followers)}</p>
+                    <p className="text-sm font-semibold text-zinc-900">{formatCompactNumber(creator.followers)}</p>
                     <p className="text-[10px] text-zinc-500 mt-0.5">{t("creatorFollowers")}</p>
                   </div>
                   <div className="bg-panel2 rounded-lg py-2">
-                    <p className="text-sm font-semibold text-zinc-100">{formatCompactNumber(creator.avg_views)}</p>
+                    <p className="text-sm font-semibold text-zinc-900">{formatCompactNumber(creator.avg_views)}</p>
                     <p className="text-[10px] text-zinc-500 mt-0.5">{t("creatorAvgViews")}</p>
                   </div>
                   <div className="bg-panel2 rounded-lg py-2">
-                    <p className="text-sm font-semibold text-zinc-100">{formatCompactNumber(creator.avg_likes)}</p>
+                    <p className="text-sm font-semibold text-zinc-900">{formatCompactNumber(creator.avg_likes)}</p>
                     <p className="text-[10px] text-zinc-500 mt-0.5">{t("creatorAvgLikes")}</p>
                   </div>
                 </div>
@@ -196,7 +196,7 @@ export default function VideoDetailClient({ initialVideo }: { initialVideo: Vide
             {video.hashtags?.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-3">
                 {video.hashtags.slice(0, 8).map((h, i) => (
-                  <span key={i} className="text-xs text-zinc-400 bg-panel border border-edge rounded-full px-2 py-0.5">
+                  <span key={i} className="text-xs text-zinc-500 bg-panel border border-edge rounded-full px-2 py-0.5">
                     #{h}
                   </span>
                 ))}
@@ -208,7 +208,7 @@ export default function VideoDetailClient({ initialVideo }: { initialVideo: Vide
                 <button
                   onClick={forceRetry}
                   disabled={forceRetrying}
-                  className="text-xs text-zinc-500 hover:text-zinc-300 underline mt-1 disabled:opacity-40"
+                  className="text-xs text-zinc-500 hover:text-zinc-700 underline mt-1 disabled:opacity-40"
                 >
                   {forceRetrying ? "..." : t("stuckRetry")}
                 </button>

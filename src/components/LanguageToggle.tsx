@@ -8,7 +8,7 @@ export default function LanguageToggle() {
   return (
     <button
       onClick={toggleLocale}
-      className="text-xs text-zinc-400 hover:text-white border border-edge rounded-lg px-3 py-1.5 transition-colors"
+      className="text-xs text-zinc-500 hover:text-zinc-900 border border-edge rounded-full px-3 py-1.5 transition-colors"
       title="Switch language / 切换语言"
     >
       {locale === "en" ? "中文" : "EN"}

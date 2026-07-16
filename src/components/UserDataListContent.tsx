@@ -19,7 +19,7 @@ export default function UserDataListContent({ members }: { members: MemberSummar
   const { t } = useLocale();
   return (
     <div>
-      <h1 className="text-xl font-semibold text-white mb-1">{t("userDataHeading")}</h1>
+      <h1 className="text-xl font-semibold text-zinc-900 mb-1">{t("userDataHeading")}</h1>
       <p className="text-sm text-zinc-500 mb-6">{t("userDataHeadingHint")}</p>
       {members.length === 0 ? (
         <p className="text-sm text-zinc-500">{t("userDataEmpty")}</p>
@@ -31,10 +31,10 @@ export default function UserDataListContent({ members }: { members: MemberSummar
               href={`/user-data/${m.id}`}
               className="rounded-xl border border-edge bg-panel p-4 hover:border-brand-500 transition-colors block"
             >
-              <div className="w-10 h-10 rounded-full bg-panel2 flex items-center justify-center text-zinc-300 text-sm font-semibold mb-3">
+              <div className="w-10 h-10 rounded-full bg-panel2 flex items-center justify-center text-zinc-700 text-sm font-semibold mb-3">
                 {m.username.slice(0, 1).toUpperCase()}
               </div>
-              <p className="text-sm font-medium text-zinc-100 truncate">@{m.username}</p>
+              <p className="text-sm font-medium text-zinc-900 truncate">@{m.username}</p>
               {m.preferredCategoryLabel && (
                 <p className="text-[11px] text-zinc-500 mt-1 truncate">{m.preferredCategoryLabel}</p>
               )}

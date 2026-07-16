@@ -45,7 +45,7 @@ function CreatorCard({
         ) : (
           <div className="w-10 h-10 rounded-full bg-panel2 shrink-0" />
         )}
-        <p className="text-sm font-medium text-zinc-100 truncate">@{creator.handle}</p>
+        <p className="text-sm font-medium text-zinc-900 truncate">@{creator.handle}</p>
       </div>
 
       {isBusy ? (
@@ -57,15 +57,15 @@ function CreatorCard({
       ) : (
         <div className="grid grid-cols-3 gap-2 mt-4 text-center">
           <div>
-            <p className="text-xl font-semibold text-white">{creator.videos_7d}</p>
+            <p className="text-xl font-semibold text-zinc-900">{creator.videos_7d}</p>
             <p className="text-[10px] text-zinc-500 mt-0.5 uppercase tracking-wide">{t("creatorVideos7d")}</p>
           </div>
           <div>
-            <p className="text-xl font-semibold text-white">{creator.products_7d}</p>
+            <p className="text-xl font-semibold text-zinc-900">{creator.products_7d}</p>
             <p className="text-[10px] text-zinc-500 mt-0.5 uppercase tracking-wide">{t("creatorProducts7d")}</p>
           </div>
           <div>
-            <p className="text-xl font-semibold text-white">{formatCompactNumber(creator.archived_count)}</p>
+            <p className="text-xl font-semibold text-zinc-900">{formatCompactNumber(creator.archived_count)}</p>
             <p className="text-[10px] text-zinc-500 mt-0.5 uppercase tracking-wide">{t("creatorArchived")}</p>
           </div>
         </div>
@@ -235,8 +235,8 @@ export default function CreatorsPageContent() {
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-xl font-semibold text-white mb-1">{t("creatorPageHeading")}</h2>
-        <p className="text-sm text-zinc-400">{t("creatorPageSubheading")}</p>
+        <h2 className="text-xl font-semibold text-zinc-900 mb-1">{t("creatorPageHeading")}</h2>
+        <p className="text-sm text-zinc-500">{t("creatorPageSubheading")}</p>
       </div>
 
       <form onSubmit={handleTrack} className="flex gap-2 max-w-xl">
@@ -244,7 +244,7 @@ export default function CreatorsPageContent() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={t("creatorTrackPlaceholder")}
-          className="flex-1 bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-brand-500"
+          className="flex-1 bg-panel border border-edge rounded-lg px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-500 outline-none focus:border-brand-500"
         />
         <button
           type="submit"
@@ -256,14 +256,14 @@ export default function CreatorsPageContent() {
       </form>
 
       <div className="flex items-center justify-between gap-4 flex-wrap border-t border-edge pt-4">
-        <p className="text-sm text-zinc-400">{t("creatorTrackedCount", { count: creators?.length ?? 0 })}</p>
+        <p className="text-sm text-zinc-500">{t("creatorTrackedCount", { count: creators?.length ?? 0 })}</p>
         <div className="flex items-center gap-2 flex-wrap">
           {selectMode && (
             <>
-              <button onClick={handleSelectAll} className="text-xs text-zinc-400 hover:text-white rounded-lg px-2 py-1.5">
+              <button onClick={handleSelectAll} className="text-xs text-zinc-500 hover:text-zinc-900 rounded-lg px-2 py-1.5">
                 {t("selectAll")}
               </button>
-              <span className="text-xs text-zinc-400">{t("selectedCount", { count: selected.size })}</span>
+              <span className="text-xs text-zinc-500">{t("selectedCount", { count: selected.size })}</span>
               {selected.size > 0 && (
                 <button
                   onClick={handleDeleteSelected}
@@ -279,7 +279,7 @@ export default function CreatorsPageContent() {
             <button
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
               className={`text-xs rounded-lg px-3 py-1.5 border whitespace-nowrap ${
-                selectMode ? "bg-zinc-700 text-white border-zinc-700" : "text-zinc-400 hover:text-white border-edge"
+                selectMode ? "bg-zinc-900 text-white border-zinc-900" : "text-zinc-500 hover:text-zinc-900 border-edge"
               }`}
             >
               {selectMode ? t("selectModeExit") : t("selectMode")}
@@ -291,7 +291,7 @@ export default function CreatorsPageContent() {
                 key={s.key}
                 onClick={() => setSort(s.key)}
                 className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
-                  sort === s.key ? "bg-brand-500 text-white" : "text-zinc-400 hover:text-white"
+                  sort === s.key ? "bg-brand-500 text-white" : "text-zinc-500 hover:text-zinc-900"
                 }`}
               >
                 {s.label}
@@ -321,8 +321,8 @@ export default function CreatorsPageContent() {
       {showTrackModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
           <div className="bg-panel rounded-xl border border-edge max-w-md w-full p-6">
-            <h3 className="text-white font-semibold mb-2">{t("creatorTrackModalTitle")}</h3>
-            <p className="text-sm text-zinc-400 leading-relaxed">{t("creatorTrackModalBody")}</p>
+            <h3 className="text-zinc-900 font-semibold mb-2">{t("creatorTrackModalTitle")}</h3>
+            <p className="text-sm text-zinc-500 leading-relaxed">{t("creatorTrackModalBody")}</p>
             <button
               onClick={() => setShowTrackModal(false)}
               className="mt-5 w-full py-2 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"

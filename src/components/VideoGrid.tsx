@@ -82,10 +82,10 @@ export default function VideoGrid({ initialVideos }: { initialVideos: VideoRecor
           <div className="flex items-center gap-2">
             {selectMode && (
               <>
-                <button onClick={toggleSelectAll} className="text-xs text-zinc-400 hover:text-white border border-edge rounded-lg px-3 py-1.5">
+                <button onClick={toggleSelectAll} className="text-xs text-zinc-500 hover:text-zinc-900 border border-edge rounded-lg px-3 py-1.5">
                   {t("selectAll")}
                 </button>
-                <span className="text-xs text-zinc-400">{t("selectedCount", { count: selected.size })}</span>
+                <span className="text-xs text-zinc-500">{t("selectedCount", { count: selected.size })}</span>
               </>
             )}
           </div>
@@ -102,7 +102,7 @@ export default function VideoGrid({ initialVideos }: { initialVideos: VideoRecor
             <button
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
               className={`text-xs rounded-lg px-3 py-1.5 border ${
-                selectMode ? "bg-zinc-700 text-white border-zinc-700" : "text-zinc-400 hover:text-white border-edge"
+                selectMode ? "bg-zinc-900 text-white border-zinc-900" : "text-zinc-500 hover:text-zinc-900 border-edge"
               }`}
             >
               {selectMode ? t("selectModeExit") : t("selectMode")}
