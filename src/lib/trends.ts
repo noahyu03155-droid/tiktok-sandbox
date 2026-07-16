@@ -24,6 +24,7 @@ export interface RawTrendItem {
   video_url?: string;
   fastmoss_title?: string;
   product_name?: string;
+  product_id?: string;
   views?: number;
   likes?: number;
   comments?: number;
@@ -35,8 +36,10 @@ export interface RawTrendItem {
 
 export interface IngestTrendBatchInput {
   category: string;
+  category_id?: string | null;
   date_from: string;
   date_to: string;
+  days?: number;
   top_by_views: RawTrendItem[];
   top_by_sales: RawTrendItem[];
 }
@@ -87,6 +90,7 @@ export function ingestTrendBatch(input: IngestTrendBatchInput): TrendBatch {
       fastmoss_url: fastmossUrl,
       fastmoss_title: raw.fastmoss_title ?? null,
       product_name: raw.product_name ?? null,
+      product_id: raw.product_id ?? null,
       views: typeof raw.views === "number" ? raw.views : null,
       likes: typeof raw.likes === "number" ? raw.likes : null,
       comments: typeof raw.comments === "number" ? raw.comments : null,
@@ -94,6 +98,7 @@ export function ingestTrendBatch(input: IngestTrendBatchInput): TrendBatch {
       gmv_28d: raw.gmv_28d ?? null,
       sales: raw.sales ?? null,
       video_id: videoId,
+      creator_handle: raw.creator?.handle ?? null,
     };
   }
 
@@ -103,8 +108,10 @@ export function ingestTrendBatch(input: IngestTrendBatchInput): TrendBatch {
   const batch: TrendBatch = {
     id: batchId,
     category: input.category,
+    category_id: input.category_id ?? null,
     date_from: input.date_from,
     date_to: input.date_to,
+    days: input.days ?? 7,
     top_by_views,
     top_by_sales,
     created_at: new Date().toISOString(),

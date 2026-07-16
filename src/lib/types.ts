@@ -352,6 +352,10 @@ export interface TrendItem {
   fastmoss_url: string;
   fastmoss_title: string | null;
   product_name: string | null;
+  // FastMoss's product id for this item's linked product, if any — used to
+  // look up a real sales-trend chart / saturation count on demand, see
+  // /api/trends/analyze-product.
+  product_id: string | null;
   views: number | null;
   likes: number | null;
   comments: number | null;
@@ -359,13 +363,23 @@ export interface TrendItem {
   gmv_28d: string | null; // trailing 28-day GMV for the product, for scale/context
   sales: number | string | null;
   video_id: string | null;
+  // The @handle of the video's creator, if known — used to look up creator
+  // 28-day GMV stats on demand alongside the product analysis, see
+  // /api/trends/analyze-product.
+  creator_handle: string | null;
 }
 
 export interface TrendBatch {
   id: string;
   category: string;
+  // FastMoss product_category_id used for this batch's search, if a specific
+  // category was picked (vs the legacy keyword-fallback sweep). Lets a future
+  // "Update" re-run reuse the same category by default.
+  category_id: string | null;
   date_from: string; // YYYY-MM-DD
   date_to: string; // YYYY-MM-DD
+  // The date-range window (7/28/90) this batch was pulled with.
+  days: number;
   top_by_views: TrendItem[];
   top_by_sales: TrendItem[];
   created_at: string;

@@ -113,16 +113,39 @@ async function searchVideos(opts: {
 // category-filtered call; set the category id once you know it).
 const FALLBACK_KEYWORDS = ["dog", "cat", "pet", "puppy", "kitten"];
 
-export async function fetchPetTrendVideos(
+// General version: an explicit categoryId always wins over the env var,
+// letting a caller (the Trend Analysis page's category picker) target any
+// FastMoss category, not just the pets one this app started with. Falls
+// back to FASTMOSS_PET_CATEGORY_ID, then to the keyword sweep, exactly like
+// before, when no categoryId is passed — so any existing caller (or a
+// scheduled task) that doesn't know about categories yet keeps working
+// unchanged.
+export async function fetchCategoryTrendVideos(
   orderField: "play_count" | "units_sold",
-  days = 7,
-  region = "US",
-  limit = 20
+  opts: {
+    days?: number;
+    region?: string;
+    limit?: number;
+    categoryId?: number | string | null;
+  } = {}
 ): Promise<FastMossVideoResult[]> {
-  const categoryIdRaw = process.env.FASTMOSS_PET_CATEGORY_ID;
-  const categoryId = categoryIdRaw ? Number(categoryIdRaw) : undefined;
+  const days = opts.days ?? 7;
+  const region = opts.region ?? "US";
+  const limit = opts.limit ?? 20;
 
-  if (categoryId != null && !Number.isNaN(categoryId)) {
+  let categoryId: number | undefined;
+  if (opts.categoryId != null && opts.categoryId !== "") {
+    const n = Number(opts.categoryId);
+    if (!Number.isNaN(n)) categoryId = n;
+  } else {
+    const categoryIdRaw = process.env.FASTMOSS_PET_CATEGORY_ID;
+    if (categoryIdRaw) {
+      const n = Number(categoryIdRaw);
+      if (!Number.isNaN(n)) categoryId = n;
+    }
+  }
+
+  if (categoryId != null) {
     const { list } = await searchVideos({ orderField, days, region, pagesize: limit, categoryId });
     return list.slice(0, limit);
   }
@@ -140,6 +163,90 @@ export async function fetchPetTrendVideos(
   });
   petOnly.sort((a, b) => (b[orderField] ?? 0) - (a[orderField] ?? 0));
   return petOnly.slice(0, limit);
+}
+
+// Kept for any existing caller (e.g. a scheduled task) that still calls the
+// old pet-specific name with the old positional-args signature — delegates
+// straight through to fetchCategoryTrendVideos with no categoryId override.
+export async function fetchPetTrendVideos(
+  orderField: "play_count" | "units_sold",
+  days = 7,
+  region = "US",
+  limit = 20
+): Promise<FastMossVideoResult[]> {
+  return fetchCategoryTrendVideos(orderField, { days, region, limit });
+}
+
+export interface FastMossSalesTrendPoint {
+  dt: string;
+  units_sold: number;
+  gmv: number;
+}
+
+export interface FastMossSalesTrendResult {
+  list: FastMossSalesTrendPoint[];
+  overview: {
+    units_sold: number;
+    gmv: number;
+    live_count: number;
+    creator_count: number;
+    aweme_count: number;
+    currency: string;
+    region: string;
+  };
+}
+
+// Real per-day units_sold/gmv for a specific product, plus totals — powers
+// the on-demand "AI Analysis" sales-trend chart on a trend card. FastMoss
+// caps this at 28 days regardless of what's asked for (documented API
+// limit, not our own choice), so a caller asking for the site's 90-day
+// window still only gets a 28-day chart here — that's the real ceiling of
+// what this endpoint can return, not a bug.
+export async function fetchProductSalesTrend(productId: string, days: number): Promise<FastMossSalesTrendResult> {
+  const clampedDays = Math.max(1, Math.min(28, Math.round(days)));
+  const data = await fastmossPost<FastMossSalesTrendResult>("/product/v1/salesTrend", {
+    filter: { product_id: productId, days: clampedDays },
+  });
+  return { list: data.list || [], overview: data.overview };
+}
+
+// How many videos have been posted promoting this product in the last N
+// days — a proxy for "how saturated/competitive is this product right
+// now" (mirrors the "SATURATION (posted last 7 days)" stat FastMoss's own
+// UI shows). We only need the count, so pagesize is kept at 1 to minimize
+// the response payload — data.total is accurate regardless of pagesize.
+export async function fetchProductVideoCount(productId: string, days: number): Promise<number> {
+  const data = await fastmossPost<{ total: number }>("/product/v1/videoList", {
+    filter: { product_id: productId, days: Math.max(1, Math.round(days)) },
+    page: 1,
+    pagesize: 1,
+  });
+  return data.total || 0;
+}
+
+export interface FastMossCreatorStats {
+  day28_gmv: number | null;
+  day28_units_sold: number | null;
+  currency: string | null;
+}
+
+// Looks up a creator's own trailing-28-day GMV by @handle. FastMoss has no
+// day-by-day creator GMV trend endpoint (only product-level trends have
+// that) — this is a single aggregate snapshot, not chart data, and the
+// caller should render it as a stat, not a sparkline.
+export async function fetchCreatorStats(handle: string): Promise<FastMossCreatorStats | null> {
+  const data = await fastmossPost<{ list: any[] }>("/creator/v1/search", {
+    filter: { unique_id: handle },
+    page: 1,
+    pagesize: 1,
+  });
+  const row = data.list?.[0];
+  if (!row) return null;
+  return {
+    day28_gmv: typeof row.day28_gmv === "number" ? row.day28_gmv : null,
+    day28_units_sold: typeof row.day28_units_sold === "number" ? row.day28_units_sold : null,
+    currency: row.currency || null,
+  };
 }
 
 export function toCreatorInfo(c: FastMossVideoResult["creator"]): CreatorInfo | null {

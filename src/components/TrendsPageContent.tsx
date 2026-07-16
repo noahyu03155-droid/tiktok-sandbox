@@ -20,10 +20,66 @@ interface EnrichedBatch {
   created_at: string;
 }
 
+// FastMoss category tree node, as returned by /api/trends/fastmoss-categories
+// (up to 3 levels deep; leaf nodes omit `sub`).
+interface CategoryNode {
+  c_code: string;
+  c_name: string;
+  sub?: CategoryNode[];
+}
+
+// Response shape of POST /api/trends/analyze-product.
+interface ProductAnalysis {
+  salesTrend: {
+    list: { dt: string; units_sold: number; gmv: number }[];
+    overview: {
+      units_sold: number;
+      gmv: number;
+      live_count: number;
+      creator_count: number;
+      aweme_count: number;
+      currency: string;
+      region: string;
+    };
+  };
+  saturation7d: number;
+  creatorStats: { day28_gmv: number | null; day28_units_sold: number | null; currency: string | null } | null;
+}
+
 type Metric = "views" | "sales";
 
 function selKey(batchId: string, metric: Metric, rank: number) {
   return `${batchId}:${metric}:${rank}`;
+}
+
+// Dependency-free inline SVG sparkline for the on-demand product sales trend
+// (daily GMV). Stroke color = brand-400 (#5cc4ee), same accent used for
+// connection lines in StoryboardCanvas.tsx.
+function SalesTrendChart({ points }: { points: { dt: string; units_sold: number; gmv: number }[] }) {
+  if (points.length === 0) return null;
+  const w = 240;
+  const h = 48;
+  const values = points.map((p) => p.gmv);
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const range = max - min || 1;
+  const stepX = points.length > 1 ? w / (points.length - 1) : 0;
+  const coords = points.map((p, i) => {
+    const x = i * stepX;
+    const y = h - ((p.gmv - min) / range) * h;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  return (
+    <div>
+      <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none" className="block">
+        <polyline points={coords.join(" ")} fill="none" stroke="#5cc4ee" strokeWidth={1.5} />
+      </svg>
+      <div className="flex items-center justify-between text-[9px] text-zinc-500 mt-0.5">
+        <span>{points[0]?.dt}</span>
+        <span>{points[points.length - 1]?.dt}</span>
+      </div>
+    </div>
+  );
 }
 
 function TrendCard({
@@ -40,6 +96,48 @@ function TrendCard({
   onToggleSelect: () => void;
 }) {
   const { t } = useLocale();
+
+  // On-demand "AI Analysis" panel — deliberately NOT auto-loaded (each fetch
+  // spends real FastMoss API credits); only fetched the first time this
+  // card's panel is expanded, then cached in local state.
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<ProductAnalysis | null>(null);
+
+  async function toggleAnalysis(e: React.MouseEvent) {
+    // The whole card body sits inside a <Link> (or a click-to-select div in
+    // select mode) — don't let this button navigate/select.
+    e.preventDefault();
+    e.stopPropagation();
+    if (analysisOpen) {
+      setAnalysisOpen(false);
+      return;
+    }
+    setAnalysisOpen(true);
+    if (analysis || analysisLoading) return; // already loaded or in flight, don't refetch
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try {
+      const res = await fetch("/api/trends/analyze-product", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product_id: item.product_id,
+          creator_handle: item.creator_handle || undefined,
+          days: 28,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Analysis failed");
+      setAnalysis(data);
+    } catch (err: any) {
+      setAnalysisError(err.message || "Analysis failed");
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }
+
   const video = item.video;
   const status = video?.status;
   const isBusy = video ? !["done", "error"].includes(status as string) : false;
@@ -189,6 +287,57 @@ function TrendCard({
             </div>
           </div>
         )}
+
+        {item.product_id && (
+          <button
+            onClick={toggleAnalysis}
+            className="mt-2 w-full text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-400 hover:text-white hover:border-brand-500"
+          >
+            {analysisOpen ? `▲ ${t("trendHideAnalysis")}` : `🔍 ${t("trendShowAnalysis")}`}
+          </button>
+        )}
+        {item.product_id && analysisOpen && (
+          <div className="mt-2 pt-2 border-t border-edge space-y-2" onMouseDown={(e) => e.stopPropagation()}>
+            {analysisLoading && <p className="text-[11px] text-yellow-400 animate-pulse">{t("trendAnalysisLoading")}</p>}
+            {analysisError && <p className="text-[11px] text-red-400">{analysisError}</p>}
+            {analysis && (
+              <>
+                <SalesTrendChart points={analysis.salesTrend.list} />
+                <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-zinc-400">
+                  <span>
+                    {t("trendSaturation7d")}: <span className="text-zinc-200 font-medium">{analysis.saturation7d}</span>
+                  </span>
+                  <span>
+                    {t("trendRelatedCreators")}:{" "}
+                    <span className="text-zinc-200 font-medium">
+                      {formatCompactNumber(analysis.salesTrend.overview.creator_count)}
+                    </span>
+                  </span>
+                  <span>
+                    {t("trendRelatedVideos")}:{" "}
+                    <span className="text-zinc-200 font-medium">
+                      {formatCompactNumber(analysis.salesTrend.overview.aweme_count)}
+                    </span>
+                  </span>
+                  <span>
+                    {t("trendRelatedLives")}:{" "}
+                    <span className="text-zinc-200 font-medium">
+                      {formatCompactNumber(analysis.salesTrend.overview.live_count)}
+                    </span>
+                  </span>
+                </div>
+                {analysis.creatorStats && analysis.creatorStats.day28_gmv != null && (
+                  <p className="text-[10px] text-zinc-400">
+                    {t("trendCreatorGmv28d")}:{" "}
+                    <span className="text-brand-400 font-medium">
+                      ${analysis.creatorStats.day28_gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </span>
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -258,6 +407,15 @@ export default function TrendsPageContent() {
   const [deleting, setDeleting] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Category picker + date-range window for the Update pull.
+  const [categories, setCategories] = useState<CategoryNode[] | null>(null);
+  const [categoriesError, setCategoriesError] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<{ id: string; label: string } | null>(null);
+  const [categoryQuery, setCategoryQuery] = useState("");
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const [days, setDays] = useState<7 | 28 | 90>(7);
+  const categoryDropdownRef = useRef<HTMLDivElement | null>(null);
+
   async function load() {
     const res = await fetch("/api/trends", { cache: "no-store" });
     if (!res.ok) return;
@@ -268,6 +426,53 @@ export default function TrendsPageContent() {
   useEffect(() => {
     load();
   }, []);
+
+  // Fetch the FastMoss category tree once on mount (cheap, cached server-side).
+  useEffect(() => {
+    fetch("/api/trends/fastmoss-categories")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) {
+          setCategoriesError(data.error);
+          return;
+        }
+        setCategories(data.categories || []);
+      })
+      .catch(() => setCategoriesError("Failed to load categories"));
+  }, []);
+
+  // Close the category dropdown on any click outside it.
+  useEffect(() => {
+    if (!categoryDropdownOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (!categoryDropdownRef.current?.contains(e.target as Node)) {
+        setCategoryDropdownOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [categoryDropdownOpen]);
+
+  // Flatten the (up to 3-level) tree into a searchable flat list, with each
+  // entry labeled by its full breadcrumb path so nested leaves stay findable.
+  const flatCategories = useMemo(() => {
+    const out: { id: string; label: string }[] = [];
+    function walk(nodes: CategoryNode[], pathLabels: string[]) {
+      for (const n of nodes) {
+        const path = [...pathLabels, n.c_name];
+        out.push({ id: n.c_code, label: path.join(" › ") });
+        if (n.sub && n.sub.length > 0) walk(n.sub, path);
+      }
+    }
+    if (categories) walk(categories, []);
+    return out;
+  }, [categories]);
+
+  const filteredCategories = useMemo(() => {
+    const q = categoryQuery.trim().toLowerCase();
+    if (!q) return flatCategories.slice(0, 50); // cap the no-query list so it isn't 1000s of DOM nodes
+    return flatCategories.filter((c) => c.label.toLowerCase().includes(q)).slice(0, 50);
+  }, [flatCategories, categoryQuery]);
 
   useEffect(() => {
     const hasBusy = (batches || []).some((b) =>
@@ -288,7 +493,17 @@ export default function TrendsPageContent() {
     setUpdating(true);
     setUpdateError(null);
     try {
-      const res = await fetch("/api/trends/update", { method: "POST" });
+      // No category selected => categoryId/categoryLabel are undefined and the
+      // backend falls back to the legacy default (pet category).
+      const res = await fetch("/api/trends/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          categoryId: selectedCategory?.id,
+          categoryLabel: selectedCategory?.label,
+          days,
+        }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Update failed");
       await load();
@@ -380,6 +595,59 @@ export default function TrendsPageContent() {
               {selectMode ? t("selectModeExit") : t("selectMode")}
             </button>
           )}
+          <div className="relative" ref={categoryDropdownRef}>
+            <button
+              onClick={() => setCategoryDropdownOpen((v) => !v)}
+              className="text-xs rounded-lg px-3 py-1.5 border border-edge text-zinc-300 hover:text-white hover:border-edge2 whitespace-nowrap max-w-[180px] truncate"
+              title={selectedCategory?.label || t("trendCategoryPlaceholder")}
+            >
+              {selectedCategory ? selectedCategory.label : t("trendCategoryPlaceholder")}
+            </button>
+            {categoryDropdownOpen && (
+              <div className="absolute z-20 top-full left-0 mt-1 w-72 rounded-lg border border-edge bg-panel shadow-xl p-2">
+                <input
+                  autoFocus
+                  value={categoryQuery}
+                  onChange={(e) => setCategoryQuery(e.target.value)}
+                  placeholder={t("trendCategorySearchPlaceholder")}
+                  className="w-full px-2 py-1.5 rounded bg-panel2 border border-edge text-xs text-zinc-100 outline-none focus:border-brand-500 mb-2"
+                />
+                {categoriesError && <p className="text-[11px] text-red-400 px-1 pb-1">{categoriesError}</p>}
+                <div className="max-h-64 overflow-y-auto space-y-0.5">
+                  {filteredCategories.length === 0 && (
+                    <p className="text-[11px] text-zinc-500 px-1 py-2">{t("trendCategoryNoMatches")}</p>
+                  )}
+                  {filteredCategories.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        setSelectedCategory(c);
+                        setCategoryDropdownOpen(false);
+                        setCategoryQuery("");
+                      }}
+                      className="w-full text-left px-2 py-1.5 rounded text-xs text-zinc-300 hover:bg-panel2 hover:text-white truncate"
+                      title={c.label}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center rounded-lg border border-edge overflow-hidden">
+            {([7, 28, 90] as const).map((d) => (
+              <button
+                key={d}
+                onClick={() => setDays(d)}
+                className={`text-xs px-2.5 py-1.5 whitespace-nowrap ${
+                  days === d ? "bg-brand-500 text-white" : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                {d}D
+              </button>
+            ))}
+          </div>
           <button
             onClick={handleUpdate}
             disabled={updating}
@@ -389,6 +657,10 @@ export default function TrendsPageContent() {
           </button>
         </div>
       </div>
+
+      {categories && !selectedCategory && (
+        <p className="text-[11px] text-zinc-500">{t("trendCategoryHint")}</p>
+      )}
 
       {updateError && (
         <div className="flex items-start justify-between gap-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">
