@@ -1,6 +1,6 @@
 import type { User } from "./types";
 
-export type ProfileBranchKind = "category" | "age" | "occupation" | "interests" | "experience" | "style";
+export type ProfileBranchKind = "category" | "age" | "occupation" | "interests" | "experience" | "style" | "journal";
 
 export interface ProfileBranch {
   kind: ProfileBranchKind;
@@ -46,6 +46,9 @@ export function buildProfileBranches(user: User): ProfileBranch[] {
   }
   if (p?.experienceLevel) branches.push({ kind: "experience", values: [p.experienceLevel] });
   if (p?.contentStyle) branches.push({ kind: "style", values: [p.contentStyle] });
+  if (user.journalKeywords && user.journalKeywords.length > 0) {
+    branches.push({ kind: "journal", values: user.journalKeywords.slice(0, 12) });
+  }
 
   return branches;
 }

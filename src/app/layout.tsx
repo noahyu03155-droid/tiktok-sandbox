@@ -6,7 +6,7 @@ import RobotAssistant from "@/components/RobotAssistant";
 import { getCurrentUser } from "@/lib/session";
 
 export const metadata: Metadata = {
-  title: "The Pawmart TokBox",
+  title: "COTORX",
   description: "Paste a TikTok video link, get an instant video card and script breakdown",
 };
 

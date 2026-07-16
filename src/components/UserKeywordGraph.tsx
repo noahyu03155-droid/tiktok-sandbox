@@ -11,6 +11,7 @@ const BRANCH_COLOR: Record<ProfileBranchKind, string> = {
   interests: "#f472b6",
   experience: "#34d399",
   style: "#fb923c",
+  journal: "#5cc4ee",
 };
 
 const BRANCH_LABEL_KEY: Record<ProfileBranchKind, TranslationKey> = {
@@ -20,6 +21,7 @@ const BRANCH_LABEL_KEY: Record<ProfileBranchKind, TranslationKey> = {
   interests: "userDataBranchInterests",
   experience: "userDataBranchExperience",
   style: "userDataBranchStyle",
+  journal: "userDataBranchJournal",
 };
 
 // Canvas geometry for the radial layout — root at center, branch nodes on

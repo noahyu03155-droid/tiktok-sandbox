@@ -2,7 +2,7 @@ export type Locale = "en" | "zh";
 
 export const translations = {
   en: {
-    appName: "The Pawmart TokBox",
+    appName: "COTORX",
     appTagline: "Video Script Breakdown Workbench",
     navVideoAnalysis: "Video Analysis",
     navTrendAnalysis: "Trend Analysis",
@@ -88,7 +88,7 @@ export const translations = {
     referenceNotLinkedYet: "Paste a competitor / creator reference video link to compare side by side.",
     referenceFailedWithReason: "Reference video failed: {reason}",
 
-    loginTitle: "The Pawmart TokBox Login",
+    loginTitle: "COTORX Login",
     usernameLabel: "Username",
     passwordLabel: "Password",
     loginButton: "Log in",
@@ -226,6 +226,7 @@ export const translations = {
     userDataBranchInterests: "Interests",
     userDataBranchExperience: "Experience",
     userDataBranchStyle: "Style",
+    userDataBranchJournal: "Journal",
 
     scriptFeedbackLabel: "Feedback on this beat",
     scriptFeedbackPlaceholder: "e.g. make this punchier, mention the 30-day guarantee instead...",
@@ -322,7 +323,7 @@ export const translations = {
     deleteSelectedConfirm: "Delete {count} selected item(s)? This can't be undone.",
   },
   zh: {
-    appName: "The Pawmart TokBox",
+    appName: "COTORX",
     appTagline: "视频话术拆解工作台",
     navVideoAnalysis: "视频分析",
     navTrendAnalysis: "趋势分析",
@@ -408,7 +409,7 @@ export const translations = {
     referenceNotLinkedYet: "粘贴一条竞品/达人的参考视频链接，方便和自己视频并排对比。",
     referenceFailedWithReason: "参考视频拆解失败：{reason}",
 
-    loginTitle: "The Pawmart TokBox 登录",
+    loginTitle: "COTORX 登录",
     usernameLabel: "账号",
     passwordLabel: "密码",
     loginButton: "登录",
@@ -543,6 +544,7 @@ export const translations = {
     userDataBranchInterests: "兴趣爱好",
     userDataBranchExperience: "拍摄经验",
     userDataBranchStyle: "内容风格",
+    userDataBranchJournal: "日记",
 
     scriptFeedbackLabel: "对这一段的反馈",
     scriptFeedbackPlaceholder: "例如：语气更有冲击力一点、改成提保修期而不是这个卖点...",

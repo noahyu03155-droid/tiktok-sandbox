@@ -48,6 +48,11 @@ const TIKTOK_PREVIEW_VIDEO_H = Math.round(NODE_W * (16 / 9));
 const TIKTOK_PREVIEW_H = TIKTOK_HEADER_H + TIKTOK_PREVIEW_VIDEO_H + TIKTOK_BUTTON_ROW_H;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2;
+// Free per-card resize (bottom-right grip) clamps — see handleResizeMouseDown.
+const MIN_NODE_W = 220;
+const MAX_NODE_W = 560;
+const MIN_NODE_H = 260;
+const MAX_NODE_H = 900;
 
 const ACCENTS = ["#5cc4ee", "#f472b6", "#facc15", "#4ade80", "#a78bfa", "#fb923c"];
 
@@ -65,8 +70,40 @@ function isTikTokUrl(text: string): string | null {
 function isPendingTiktokBreakdown(node: StoryboardNode): boolean {
   return node.clip?.source === "tiktok" && !node.stageTag;
 }
+// ---- per-card custom sizing (node.w/node.h, set by the resize grip) ----
+// The NODE_W/SCRIPT_BOX_H/NOTES_BOX_H/CLIP_VIDEO_H constants above stay as
+// the defaults; these helpers resolve a specific node's actual dimensions.
+// Pending-TikTok-import cards keep the fixed TIKTOK_* sizing and don't get
+// a resize handle (out of scope for resize).
+function nodeWidth(node: StoryboardNode): number {
+  return node.w ?? NODE_W;
+}
+// Clip preview keeps a 16:9 box scaled to the card's actual width, same
+// formula the default already uses (NODE_W * 16/9) just parametrized.
+function nodeClipVideoH(node: StoryboardNode): number {
+  return Math.round(nodeWidth(node) * (16 / 9));
+}
+// When the user drags the card taller/shorter than the natural default
+// height, the extra/removed height is distributed between the Script and
+// Notes boxes (60% to Script, 40% to Notes), each with a floor so neither
+// can be squeezed unreadably small. Header height and the clip video
+// height are NOT affected by vertical resize (clip height only changes
+// with width, via nodeClipVideoH above).
+function nodeScriptBoxH(node: StoryboardNode): number {
+  if (isPendingTiktokBreakdown(node)) return SCRIPT_BOX_H;
+  const totalH = node.h ?? NODE_H;
+  const delta = totalH - NODE_H;
+  return Math.max(80, SCRIPT_BOX_H + Math.round(delta * 0.6));
+}
+function nodeNotesBoxH(node: StoryboardNode): number {
+  if (isPendingTiktokBreakdown(node)) return NOTES_BOX_H;
+  const totalH = node.h ?? NODE_H;
+  const delta = totalH - NODE_H;
+  return Math.max(60, NOTES_BOX_H + Math.round(delta * 0.4));
+}
 function cardHeight(node: StoryboardNode): number {
-  return isPendingTiktokBreakdown(node) ? TIKTOK_PREVIEW_H : NODE_H;
+  if (isPendingTiktokBreakdown(node)) return TIKTOK_PREVIEW_H;
+  return HEADER_H + nodeScriptBoxH(node) + nodeNotesBoxH(node) + nodeClipVideoH(node);
 }
 
 function seedInstruction(script: string, direction: string) {
@@ -153,6 +190,56 @@ export default function StoryboardCanvas({
   // just local UI status for the upload/analyze call.
   const [analyzingStyle, setAnalyzingStyle] = useState(false);
   const [styleError, setStyleError] = useState<string | null>(null);
+
+  // ---- daily journal chat ("write like a diary, AI replies like a friend").
+  // Per-USER, not per-project — always talks to the fixed /api/journal
+  // route, never `${apiBase}/...`. Toggled from the top toolbar; renders as
+  // a slide-down panel between the header and the canvas viewport.
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [journalEntries, setJournalEntries] = useState<{ id: string; role: "user" | "ai"; content: string }[]>([]);
+  const [journalDraft, setJournalDraft] = useState("");
+  const [journalLoading, setJournalLoading] = useState(false);
+  const [journalSending, setJournalSending] = useState(false);
+  const journalScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!journalOpen || journalEntries.length > 0) return;
+    setJournalLoading(true);
+    fetch("/api/journal")
+      .then((r) => r.json())
+      .then((data) => setJournalEntries(data.entries || []))
+      .catch(() => {})
+      .finally(() => setJournalLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [journalOpen]);
+
+  useEffect(() => {
+    journalScrollRef.current?.scrollTo({ top: journalScrollRef.current.scrollHeight });
+  }, [journalEntries, journalSending]);
+
+  async function sendJournalMessage() {
+    const text = journalDraft.trim();
+    if (!text || journalSending) return;
+    setJournalDraft("");
+    setJournalEntries((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: text }]);
+    setJournalSending(true);
+    try {
+      const res = await fetch("/api/journal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+      const data = await res.json();
+      if (res.ok && data.entry) {
+        setJournalEntries((prev) => [...prev, { id: data.entry.id, role: "ai", content: data.entry.content }]);
+      }
+    } catch {
+      // silent fail is acceptable here — the panel is a lightweight aside,
+      // not core workflow (the entry itself is still saved server-side).
+    } finally {
+      setJournalSending(false);
+    }
+  }
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -268,6 +355,34 @@ export default function StoryboardCanvas({
       setBoard((b) => ({
         ...b,
         nodes: b.nodes.map((n) => (n.id === node.id ? { ...n, x: originX + dx, y: originY + dy } : n)),
+      }));
+    }
+    function onUp() {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  // ---- resizing a node (bottom-right grip; normal cards only, pending
+  // TikTok imports keep their fixed size) ----
+  function handleResizeMouseDown(e: React.MouseEvent, node: StoryboardNode) {
+    e.stopPropagation();
+    e.preventDefault();
+    if (e.button !== 0) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const originW = node.w ?? NODE_W;
+    const originH = node.h ?? NODE_H;
+    function onMove(ev: MouseEvent) {
+      const dw = (ev.clientX - startX) / board.zoom;
+      const dh = (ev.clientY - startY) / board.zoom;
+      const w = Math.round(Math.min(MAX_NODE_W, Math.max(MIN_NODE_W, originW + dw)));
+      const h = Math.round(Math.min(MAX_NODE_H, Math.max(MIN_NODE_H, originH + dh)));
+      setBoard((b) => ({
+        ...b,
+        nodes: b.nodes.map((n) => (n.id === node.id ? { ...n, w, h } : n)),
       }));
     }
     function onUp() {
@@ -648,9 +763,9 @@ export default function StoryboardCanvas({
     const forward = to.x >= from.x;
     const fromKey = `${c.fromId}:${forward ? "r" : "l"}`;
     const toKey = `${c.toId}:${forward ? "l" : "r"}`;
-    const x1 = from.x + (forward ? NODE_W : 0);
+    const x1 = from.x + (forward ? nodeWidth(from) : 0);
     const y1 = from.y + cardHeight(from) / 2 + fanOffset(fromKey);
-    const x2 = to.x + (forward ? 0 : NODE_W);
+    const x2 = to.x + (forward ? 0 : nodeWidth(to));
     const y2 = to.y + cardHeight(to) / 2 + fanOffset(toKey);
     const dx = x2 - x1;
     const bend = Math.max(50, Math.min(220, Math.abs(dx) * 0.5));
@@ -671,7 +786,7 @@ export default function StoryboardCanvas({
   const connectionGeoms = board.connections.map((c) => ({ c, g: connectionGeometry(c) }));
 
   return (
-    <div className="fixed inset-0 bg-black/85 z-50 flex flex-col">
+    <div className="fixed inset-0 bg-panel2 z-50 flex flex-col">
       <input ref={fileInputRef} type="file" accept="video/*,image/*" className="hidden" onChange={handleFileChosen} />
       <input ref={styleFileInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" onChange={handleStyleFileChosen} />
 
@@ -706,6 +821,12 @@ export default function StoryboardCanvas({
             </span>
             <button onClick={addNode} className="px-2.5 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs">
               + Add shot
+            </button>
+            <button
+              onClick={() => setJournalOpen((v) => !v)}
+              className="px-2.5 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs"
+            >
+              📔 Journal
             </button>
             <button onClick={() => zoomBy(1.2)} className="w-7 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-sm">
               +
@@ -749,6 +870,50 @@ export default function StoryboardCanvas({
           </div>
         )}
       </div>
+
+      {journalOpen && (
+        <div className="border-b border-edge bg-panel shrink-0 w-full max-h-72 flex flex-col">
+          <div ref={journalScrollRef} className="flex-1 overflow-y-auto px-5 py-3 flex flex-col gap-2.5 min-h-0">
+            {journalEntries.length === 0 && !journalLoading && (
+              <p className="text-xs text-zinc-500">
+                Write like you're journaling to a friend — how's today going, what are you working on, what's on your mind?
+              </p>
+            )}
+            {journalEntries.map((e) => (
+              <div
+                key={e.id}
+                className={`max-w-[75%] px-3 py-2 rounded-2xl text-xs leading-relaxed ${
+                  e.role === "user" ? "self-end bg-brand-500 text-white" : "self-start bg-panel2 text-zinc-800"
+                }`}
+              >
+                {e.content}
+              </div>
+            ))}
+            {journalSending && <div className="self-start text-xs text-zinc-500 animate-pulse">...</div>}
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              sendJournalMessage();
+            }}
+            className="border-t border-edge px-3 py-2 flex items-center gap-2 shrink-0"
+          >
+            <input
+              value={journalDraft}
+              onChange={(e) => setJournalDraft(e.target.value)}
+              placeholder="Today was..."
+              className="flex-1 h-8 px-3 rounded-full bg-panel2 border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 placeholder:text-zinc-400"
+            />
+            <button
+              type="submit"
+              disabled={!journalDraft.trim() || journalSending}
+              className="h-8 px-3 rounded-full bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium shrink-0"
+            >
+              Send
+            </button>
+          </form>
+        </div>
+      )}
 
       {(renderError || renderResult) && (
         <div className="px-5 py-3 border-b border-edge bg-panel2 shrink-0 flex flex-col gap-2.5">
@@ -817,7 +982,7 @@ export default function StoryboardCanvas({
         onMouseDown={handleBackgroundMouseDown}
         className="relative flex-1 overflow-hidden cursor-grab active:cursor-grabbing"
         style={{
-          backgroundImage: "radial-gradient(circle, #28282c 1px, transparent 1px)",
+          backgroundImage: "radial-gradient(circle, #d4d4d8 1px, transparent 1px)",
           backgroundSize: "24px 24px",
           backgroundPosition: `${board.pan.x}px ${board.pan.y}px`,
         }}
@@ -844,8 +1009,8 @@ export default function StoryboardCanvas({
               (() => {
                 const from = nodeById.get(connStart);
                 if (!from) return null;
-                const forward = connDraft.x >= from.x + NODE_W / 2;
-                const x1 = from.x + (forward ? NODE_W : 0);
+                const forward = connDraft.x >= from.x + nodeWidth(from) / 2;
+                const x1 = from.x + (forward ? nodeWidth(from) : 0);
                 const y1 = from.y + cardHeight(from) / 2;
                 const dx = connDraft.x - x1;
                 const bend = Math.max(50, Math.min(220, Math.abs(dx) * 0.5));
@@ -870,7 +1035,7 @@ export default function StoryboardCanvas({
                 key={c.id}
                 onClick={() => removeConnection(c.id)}
                 title="Remove connection"
-                className="absolute w-4 h-4 rounded-full bg-ink border border-edge2 text-zinc-500 hover:text-red-500 hover:border-red-400 text-[10px] leading-none flex items-center justify-center"
+                className="absolute w-6 h-6 rounded-full bg-ink border border-edge2 text-zinc-500 hover:text-red-500 hover:border-red-400 text-xs leading-none flex items-center justify-center"
                 style={{ left: g.midX, top: g.midY, transform: "translate(-50%,-50%)" }}
               >
                 ✕
@@ -886,7 +1051,7 @@ export default function StoryboardCanvas({
               <div
                 key={node.id}
                 className="absolute bg-panel border border-edge rounded-xl shadow-xl flex flex-col overflow-hidden"
-                style={{ left: node.x, top: node.y, width: NODE_W, height: cardHeight(node) }}
+                style={{ left: node.x, top: node.y, width: nodeWidth(node), height: cardHeight(node) }}
               >
                 {isPendingTiktokBreakdown(node) ? (
                   <>
@@ -983,7 +1148,7 @@ export default function StoryboardCanvas({
                   </button>
                 </div>
 
-                <div className="px-3 py-2 border-b border-edge shrink-0" style={{ height: SCRIPT_BOX_H }}>
+                <div className="px-3 py-2 border-b border-edge shrink-0" style={{ height: nodeScriptBoxH(node) }}>
                   <label className="text-[9px] uppercase tracking-wide text-zinc-500 mb-1 block">Script</label>
                   <textarea
                     value={node.instruction}
@@ -991,10 +1156,10 @@ export default function StoryboardCanvas({
                     onMouseDown={(e) => e.stopPropagation()}
                     placeholder="What happens in this shot? Dialogue, action, camera direction..."
                     className="w-full bg-transparent text-xs text-zinc-800 leading-relaxed outline-none resize-none placeholder:text-zinc-400"
-                    style={{ height: SCRIPT_BOX_H - 22 }}
+                    style={{ height: nodeScriptBoxH(node) - 22 }}
                   />
                 </div>
-                <div className="px-3 py-2 border-b border-edge shrink-0" style={{ height: NOTES_BOX_H }}>
+                <div className="px-3 py-2 border-b border-edge shrink-0" style={{ height: nodeNotesBoxH(node) }}>
                   <label className="text-[9px] uppercase tracking-wide text-zinc-500 mb-1 block">Your editing notes</label>
                   <textarea
                     value={node.editorNotes || ""}
@@ -1002,14 +1167,14 @@ export default function StoryboardCanvas({
                     onMouseDown={(e) => e.stopPropagation()}
                     placeholder="Notes for yourself when filming/editing this shot — pacing, framing, tone..."
                     className="w-full bg-transparent text-xs text-zinc-500 leading-relaxed outline-none resize-none placeholder:text-zinc-400"
-                    style={{ height: NOTES_BOX_H - 22 }}
+                    style={{ height: nodeNotesBoxH(node) - 22 }}
                   />
                 </div>
 
                 <div
                   onMouseDown={(e) => e.stopPropagation()}
                   className="relative border-b border-edge shrink-0 bg-black"
-                  style={{ height: CLIP_VIDEO_H }}
+                  style={{ height: nodeClipVideoH(node) }}
                 >
                   {busy && (
                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
@@ -1081,20 +1246,31 @@ export default function StoryboardCanvas({
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => handleDotClick(e, node.id)}
                   title={connStart === node.id ? "Click to cancel" : connStart ? "Click to connect here" : "Click to start a connection"}
-                  className={`absolute w-6 h-6 rounded-full border-[3px] cursor-pointer transition-transform hover:scale-125 ${
+                  className={`absolute w-8 h-8 rounded-full border-[4px] cursor-pointer transition-transform hover:scale-125 ${
                     connStart === node.id ? "border-white animate-pulse" : "border-ink"
                   }`}
-                  style={{ left: NODE_W, top: cardHeight(node) / 2, transform: "translate(-50%,-50%)", background: accent }}
+                  style={{ left: nodeWidth(node), top: cardHeight(node) / 2, transform: "translate(-50%,-50%)", background: accent }}
                 />
                 <button
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => handleDotClick(e, node.id)}
                   title={connStart === node.id ? "Click to cancel" : connStart ? "Click to connect here" : "Click to start a connection"}
-                  className={`absolute w-6 h-6 rounded-full border-[3px] cursor-pointer transition-transform hover:scale-125 ${
+                  className={`absolute w-8 h-8 rounded-full border-[4px] cursor-pointer transition-transform hover:scale-125 ${
                     connStart === node.id ? "border-white animate-pulse" : "border-ink"
                   }`}
                   style={{ left: 0, top: cardHeight(node) / 2, transform: "translate(-50%,-50%)", background: accent }}
                 />
+                {!isPendingTiktokBreakdown(node) && (
+                  <div
+                    onMouseDown={(e) => handleResizeMouseDown(e, node)}
+                    title="Drag to resize"
+                    className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize opacity-40 hover:opacity-100 transition-opacity"
+                    style={{
+                      backgroundImage:
+                        "linear-gradient(135deg, transparent 0%, transparent 45%, #71717a 45%, #71717a 55%, transparent 55%, transparent 100%)",
+                    }}
+                  />
+                )}
               </div>
             );
           })}
@@ -1113,7 +1289,7 @@ export default function StoryboardCanvas({
                 <div
                   onMouseDown={(e) => e.stopPropagation()}
                   className="absolute rounded-lg border border-dashed border-edge2 bg-panel px-2 flex items-center gap-1.5 text-[10px] overflow-hidden"
-                  style={{ left: n.x, top: styleWidgetTop, width: NODE_W, height: STYLE_WIDGET_H }}
+                  style={{ left: n.x, top: styleWidgetTop, width: nodeWidth(n), height: STYLE_WIDGET_H }}
                 >
                   {analyzingStyle ? (
                     <span className="text-yellow-600 animate-pulse">Analyzing reference video...</span>
@@ -1147,7 +1323,7 @@ export default function StoryboardCanvas({
                 {styleError && (
                   <p
                     className="absolute text-[9px] text-red-400 leading-tight"
-                    style={{ left: n.x, top: styleWidgetTop + STYLE_WIDGET_H + 2, width: NODE_W }}
+                    style={{ left: n.x, top: styleWidgetTop + STYLE_WIDGET_H + 2, width: nodeWidth(n) }}
                   >
                     {styleError}
                   </p>
@@ -1156,7 +1332,7 @@ export default function StoryboardCanvas({
                   onClick={renderVideo}
                   disabled={rendering}
                   className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
-                  style={{ left: n.x, top: generateButtonTop, width: NODE_W }}
+                  style={{ left: n.x, top: generateButtonTop, width: nodeWidth(n) }}
                 >
                   {rendering ? "Rendering..." : "🎬 Generate video"}
                 </button>

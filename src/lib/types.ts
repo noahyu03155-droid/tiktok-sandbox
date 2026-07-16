@@ -32,6 +32,24 @@ export interface User {
   // Optional short creator profile collected right after registration —
   // see CreatorProfile above.
   creatorProfile?: CreatorProfile | null;
+  // Keywords the AI has extracted over time from this user's journal chat
+  // (see src/lib/journal.ts) — free-text personality/habit/interest signals
+  // that accumulate across entries. Shown as a "journal" branch on the User
+  // Data keyword graph (src/components/UserKeywordGraph.tsx). Capped, see
+  // journal.ts for the merge/dedupe logic. undefined/[] until they've
+  // journaled at least once.
+  journalKeywords?: string[];
+}
+
+// ---- Daily journal chat ("write like a diary, AI replies like a friend") ----
+// One turn of the per-user journal conversation, stored append-only per
+// user (see journalEntries in src/lib/db.ts) and served by /api/journal.
+export interface JournalEntry {
+  id: string;
+  userId: string;
+  role: "user" | "ai";
+  content: string;
+  createdAt: string; // ISO
 }
 
 export interface VideoStats {
@@ -290,6 +308,12 @@ export interface StoryboardNode {
   // exists somewhere and appears in funnel order along the resolved shot
   // order.
   stageTag?: FunnelStageKey | null;
+  // Optional per-card custom size, set by dragging the resize handle in the
+  // canvas (src/components/StoryboardCanvas.tsx). undefined = use the
+  // default NODE_W/derived-height sizing. Persisted with the rest of the
+  // node like x/y.
+  w?: number;
+  h?: number;
 }
 
 export interface StoryboardState {
