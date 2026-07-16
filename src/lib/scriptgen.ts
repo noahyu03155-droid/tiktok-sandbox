@@ -10,6 +10,7 @@ const SYSTEM_PROMPT = `You are a senior TikTok e-commerce content strategist. Yo
 You'll receive:
 1. A full breakdown of a viral video (golden hook, 6-stage structure: Reaction / Hook / Pain Point / Product Intro / Desired Outcome / CTA, and its copywriting/selling-point techniques)
 2. Our own product's info (title, description, tags, category)
+3. Optionally, a short profile of the creator who will actually film this script (age range, occupation, interests, on-camera experience, preferred content style)
 
 Based on the viral video's structure and techniques, generate a new script for our product, still organized around the same 6 stages (Reaction, Hook, Pain Point, Product Intro, Desired Outcome, CTA), but with content swapped for our product's actual selling points and use cases. You can reference the original video's tone and pacing, but don't copy it verbatim.
 
@@ -37,12 +38,27 @@ Requirements:
 - Write everything in English.
 - Target a natural total spoken duration across all 6 stages of roughly 40-50 seconds when read aloud (rarely more than 60) — pace each stage's script length accordingly; don't pad any stage just to fill time.
 - The "Reaction" stage's script should be a single sharp reactive beat, roughly 2-3 seconds when read aloud — a short exclamation or visible reaction, not an explanation.
-- The "Hook" stage should create a genuine curiosity gap or a bold/contrarian claim that makes someone stop scrolling — not a generic "check out this product" opener.`;
+- The "Hook" stage should create a genuine curiosity gap or a bold/contrarian claim that makes someone stop scrolling — not a generic "check out this product" opener.
+- If a creator profile is provided, let it shape voice/persona and how much filming guidance to spell out (e.g. more explicit, encouraging step-by-step direction for someone with little on-camera experience; terser, more autonomous direction for a veteran creator) — but never invent product facts or claims from the profile, those must still come only from the product info.`;
+
+// A creator's short self-reported profile (see CreatorProfile in
+// src/lib/types.ts, collected at /onboarding) — every field optional.
+// Passed through here so the generated script's voice/persona and the
+// specificity of its filming directions can be tailored to whoever's
+// actually going to film it, without ever inventing product facts from it.
+export interface ScriptGenCreatorProfile {
+  ageRange?: string | null;
+  occupation?: string | null;
+  interests?: string | null;
+  experienceLevel?: string | null;
+  contentStyle?: string | null;
+}
 
 interface ScriptGenInput {
   videoTitle: string;
   analysis: AnalysisResult;
   product: ShopifyProductSummary;
+  creatorProfile?: ScriptGenCreatorProfile | null;
 }
 
 export async function generateScriptForProduct(input: ScriptGenInput): Promise<GeneratedScriptStage[]> {
@@ -53,6 +69,20 @@ export async function generateScriptForProduct(input: ScriptGenInput): Promise<G
   const structureText = input.analysis.structure
     .map((s) => `- [${s.label}] ${s.summary}${s.quote ? ` (quote: "${s.quote}")` : ""}`)
     .join("\n");
+
+  const profileLines: string[] = [];
+  if (input.creatorProfile) {
+    const p = input.creatorProfile;
+    if (p.ageRange) profileLines.push(`- Age range: ${p.ageRange}`);
+    if (p.occupation) profileLines.push(`- Occupation: ${p.occupation}`);
+    if (p.interests) profileLines.push(`- Interests: ${p.interests}`);
+    if (p.experienceLevel) profileLines.push(`- On-camera experience: ${p.experienceLevel}`);
+    if (p.contentStyle) profileLines.push(`- Preferred content style: ${p.contentStyle}`);
+  }
+  const profileText =
+    profileLines.length > 0
+      ? `\n\n---\n\nCreator profile (use to shape voice/persona/filming-direction detail — don't invent product facts from it):\n${profileLines.join("\n")}`
+      : "";
 
   const userContent = `Reference viral video: "${input.videoTitle}"
 
@@ -75,7 +105,7 @@ Our product to adapt the script for:
 Title: ${input.product.title}
 Category: ${input.product.productType || "unknown"}
 Tags: ${input.product.tags.join(", ") || "none"}
-Description: ${input.product.description || "(no description)"}`;
+Description: ${input.product.description || "(no description)"}${profileText}`;
 
   const msg = await trackAiTask(() =>
     client.messages.create({

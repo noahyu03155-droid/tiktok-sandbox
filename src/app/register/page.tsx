@@ -103,8 +103,11 @@ function RegisterForm() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Registration failed");
       const next = searchParams.get("next") || "/";
-      router.push(next);
-      router.refresh();
+      // New accounts get a short 5-question profile prompt right after
+      // registering (see /onboarding) — that page's own submit/skip both
+      // forward to this same `next` destination afterward (and call
+      // router.refresh() themselves once they do).
+      router.push(`/onboarding?next=${encodeURIComponent(next)}`);
     } catch (err: any) {
       setError(err.message || "Registration failed");
     } finally {

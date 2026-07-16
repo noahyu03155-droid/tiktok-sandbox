@@ -2,6 +2,20 @@
 
 export type UserRole = "admin" | "member";
 
+// A handful of short answers collected right after registration (see
+// /onboarding) — used purely to nudge the AI script generator's tone,
+// persona, and filming-direction detail toward this specific creator
+// instead of one generic voice for everyone (see src/lib/scriptgen.ts).
+// Every field is optional — the onboarding form can be skipped entirely.
+export interface CreatorProfile {
+  ageRange: string | null;
+  occupation: string | null;
+  interests: string | null;
+  experienceLevel: string | null;
+  contentStyle: string | null;
+  completedAt: string | null;
+}
+
 export interface User {
   id: string;
   username: string;
@@ -15,6 +29,9 @@ export interface User {
   // Trend Analysis page. Both null/absent until the user picks one.
   preferredCategoryId?: string | null;
   preferredCategoryLabel?: string | null;
+  // Optional short creator profile collected right after registration —
+  // see CreatorProfile above.
+  creatorProfile?: CreatorProfile | null;
 }
 
 export interface VideoStats {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
-import { getVideo, updateVideoRecord } from "@/lib/db";
+import { getVideo, getUserById, updateVideoRecord } from "@/lib/db";
+import { getCurrentUser } from "@/lib/session";
 import { getShopifyProduct } from "@/lib/shopify";
 import { generateScriptForProduct } from "@/lib/scriptgen";
 import type { GeneratedScript } from "@/lib/types";
@@ -20,6 +21,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: "shopify_product_id is required" }, { status: 400 });
   }
 
+  const sessionUser = getCurrentUser();
+  const dbUser = sessionUser ? getUserById(sessionUser.userId) : null;
+
   try {
     const product = await getShopifyProduct(shopifyProductId);
     if (!product) return NextResponse.json({ error: "Shopify product not found" }, { status: 404 });
@@ -28,6 +32,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       videoTitle: video.title || video.source_url,
       analysis: video.analysis,
       product,
+      creatorProfile: dbUser?.creatorProfile || null,
     });
 
     const script: GeneratedScript = {

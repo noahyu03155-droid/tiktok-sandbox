@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { getMediaDir, getVideo, updateVideoRecord } from "@/lib/db";
+import { getMediaDir, getVideo, getUserById, updateVideoRecord } from "@/lib/db";
+import { getCurrentUser } from "@/lib/session";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
 import { getShopifyProduct } from "@/lib/shopify";
@@ -47,6 +48,9 @@ export async function POST(
 ) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  const sessionUser = getCurrentUser();
+  const dbUser = sessionUser ? getUserById(sessionUser.userId) : null;
 
   if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json(
@@ -150,6 +154,7 @@ export async function POST(
       videoTitle: meta.title || "TikTok clip",
       analysis,
       product,
+      creatorProfile: dbUser?.creatorProfile || null,
     });
 
     // generateScriptForProduct always returns the 6 stages in the fixed
