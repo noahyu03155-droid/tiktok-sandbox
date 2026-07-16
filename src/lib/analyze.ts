@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AnalysisResult, TranscriptSegment, VideoStats } from "./types";
+import { trackAiTask } from "./aiActivity";
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
 
@@ -117,19 +118,21 @@ Plays: ${input.stats.play_count ?? "unknown"} | Likes: ${input.stats.digg_count 
 Full timestamped transcript:
 ${formatTranscript(input.transcript_segments)}`;
 
-  const msg = await client.messages.create(
-    {
-      model: MODEL,
-      max_tokens: 4000,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userContent }],
-    },
-    // Without an explicit timeout, a hung/stalled network request can leave
-    // a video stuck in status:"analyzing" indefinitely — nothing else ever
-    // updates the record, and the "Run breakdown" button won't re-trigger
-    // because that route only accepts status "done"/"error". Fail fast so
-    // the record actually reaches "error" and becomes retryable.
-    { timeout: 120_000 }
+  const msg = await trackAiTask(() =>
+    client.messages.create(
+      {
+        model: MODEL,
+        max_tokens: 4000,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: userContent }],
+      },
+      // Without an explicit timeout, a hung/stalled network request can leave
+      // a video stuck in status:"analyzing" indefinitely — nothing else ever
+      // updates the record, and the "Run breakdown" button won't re-trigger
+      // because that route only accepts status "done"/"error". Fail fast so
+      // the record actually reaches "error" and becomes retryable.
+      { timeout: 120_000 }
+    )
   );
 
   const textBlock = msg.content.find((b) => b.type === "text") as { type: "text"; text: string } | undefined;

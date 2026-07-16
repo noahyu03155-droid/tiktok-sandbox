@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AnalysisResult, GeneratedScriptStage } from "./types";
 import type { ShopifyProductSummary } from "./shopify";
+import { trackAiTask } from "./aiActivity";
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
 
@@ -76,12 +77,14 @@ Category: ${input.product.productType || "unknown"}
 Tags: ${input.product.tags.join(", ") || "none"}
 Description: ${input.product.description || "(no description)"}`;
 
-  const msg = await client.messages.create({
-    model: MODEL,
-    max_tokens: 3000,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userContent }],
-  });
+  const msg = await trackAiTask(() =>
+    client.messages.create({
+      model: MODEL,
+      max_tokens: 3000,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userContent }],
+    })
+  );
 
   const textBlock = msg.content.find((b) => b.type === "text") as { type: "text"; text: string } | undefined;
   if (!textBlock) throw new Error("Claude returned no text content");
@@ -143,14 +146,16 @@ Brand team's feedback on this beat: "${input.feedback}"
 
 Rewrite this beat's script and direction to address the feedback.`;
 
-  const msg = await client.messages.create(
-    {
-      model: MODEL,
-      max_tokens: 1000,
-      system: REFINE_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userContent }],
-    },
-    { timeout: 60_000 }
+  const msg = await trackAiTask(() =>
+    client.messages.create(
+      {
+        model: MODEL,
+        max_tokens: 1000,
+        system: REFINE_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: userContent }],
+      },
+      { timeout: 60_000 }
+    )
   );
 
   const textBlock = msg.content.find((b) => b.type === "text") as { type: "text"; text: string } | undefined;

@@ -59,18 +59,23 @@ function RegisterForm() {
     return () => window.removeEventListener("mousedown", onMouseDown);
   }, [categoryDropdownOpen]);
 
-  // Flatten the (up to 3-level) tree into a searchable flat list, with each
-  // entry labeled by its full breadcrumb path so nested leaves stay findable.
+  // Registration is meant to be a quick, low-friction pick of a broad
+  // interest area — not the fine-grained 3-level drill-down the Trend
+  // Analysis page's own category picker offers. So this only surfaces the
+  // top two tree levels (major category, and its direct sub-groups, e.g.
+  // "Pet Supplies" and "Pet Supplies › Dog & Cat Food") and deliberately
+  // drops the noisiest, most granular 3rd level (e.g. "...› Vitamins &
+  // Supplements") entirely.
   const flatCategories = useMemo(() => {
     const out: { id: string; label: string }[] = [];
-    function walk(nodes: CategoryNode[], pathLabels: string[]) {
-      for (const n of nodes) {
-        const path = [...pathLabels, n.c_name];
-        out.push({ id: n.c_code, label: path.join(" › ") });
-        if (n.sub && n.sub.length > 0) walk(n.sub, path);
+    if (categories) {
+      for (const l1 of categories) {
+        out.push({ id: l1.c_code, label: l1.c_name });
+        for (const l2 of l1.sub || []) {
+          out.push({ id: l2.c_code, label: `${l1.c_name} › ${l2.c_name}` });
+        }
       }
     }
-    if (categories) walk(categories, []);
     return out;
   }, [categories]);
 
