@@ -3,21 +3,23 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLocale } from "@/lib/i18n";
+import type { UserRole } from "@/lib/types";
 import Logo from "./Logo";
 import LanguageToggle from "./LanguageToggle";
 import LogoutButton from "./LogoutButton";
 
-export default function HeaderBar() {
+export default function HeaderBar({ role = null }: { role?: UserRole | null }) {
   const { t } = useLocale();
   const pathname = usePathname();
 
-  if (pathname === "/login" || pathname === "/register") return null;
+  if (pathname === "/login" || pathname === "/register" || pathname === "/onboarding") return null;
 
   const navItems = [
     { href: "/", label: t("navVideoAnalysis") },
     { href: "/trends", label: t("navTrendAnalysis") },
     { href: "/creators", label: t("navCreatorTracker") },
     { href: "/creation", label: t("navCreation") },
+    ...(role === "admin" ? [{ href: "/user-data", label: t("navUserData") }] : []),
   ];
 
   return (
