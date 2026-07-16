@@ -220,7 +220,7 @@ export default function StoryboardCanvas({
     window.addEventListener("mouseup", onUp);
   }
 
-  function handleWheel(e: React.WheelEvent) {
+  function handleWheel(e: WheelEvent) {
     e.preventDefault();
     const rect = viewportRef.current?.getBoundingClientRect();
     const mouseX = e.clientX - (rect?.left ?? 0);
@@ -232,6 +232,23 @@ export default function StoryboardCanvas({
       return { ...b, zoom: nextZoom, pan: { x: mouseX - worldX * nextZoom, y: mouseY - worldY * nextZoom } };
     });
   }
+
+  // Bound as a native, non-passive listener rather than via React's
+  // onWheel prop. React 17+ registers onWheel (and onTouchMove/onTouchStart)
+  // as passive listeners for scroll performance, which silently ignores
+  // e.preventDefault() — so a JSX onWheel handler alone can't stop the
+  // browser's own pinch-zoom/ctrl+scroll page zoom from also firing.
+  // Attaching it manually with { passive: false } is the only way
+  // preventDefault() actually takes effect, so a trackpad two-finger pinch
+  // (or ctrl+scroll) over the canvas zooms the canvas only, without also
+  // zooming the whole page.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function zoomBy(factor: number) {
     setBoard((b) => ({ ...b, zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, b.zoom * factor)) }));
@@ -798,7 +815,6 @@ export default function StoryboardCanvas({
       <div
         ref={viewportRef}
         onMouseDown={handleBackgroundMouseDown}
-        onWheel={handleWheel}
         className="relative flex-1 overflow-hidden cursor-grab active:cursor-grabbing"
         style={{
           backgroundImage: "radial-gradient(circle, #28282c 1px, transparent 1px)",
