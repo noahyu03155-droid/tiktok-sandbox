@@ -8,7 +8,50 @@ const DATA_DIR = path.join(process.cwd(), "data");
 const MEDIA_DIR = path.join(DATA_DIR, "media");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
+const STALE_TMP_DIR_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+// Every render/breakdown/generate-product-script/style-analyze route creates
+// a `_<name>_<timestamp>` working directory under MEDIA_DIR and cleans it up
+// in a `finally` block — reliable in the normal case, but if the server
+// process itself crashes or gets killed mid-request, that `finally` never
+// runs and the directory is orphaned forever, silently eating disk space.
+// This runs once at startup and removes anything `_`-prefixed and older
+// than STALE_TMP_DIR_MAX_AGE_MS (age-gated so a tmp dir from a request
+// that's still genuinely in progress is never touched). Recurses one level
+// at a time rather than assuming a fixed folder depth, since these tmp
+// dirs can live under data/media/storyboard/<id>/ at varying nesting.
+function sweepStaleTmpDirs(dir: string) {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const fullPath = path.join(dir, entry.name);
+    if (entry.name.startsWith("_")) {
+      try {
+        const stat = fs.statSync(fullPath);
+        if (Date.now() - stat.mtimeMs > STALE_TMP_DIR_MAX_AGE_MS) {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+          console.log(`[db] Removed stale temp directory left over from a previous crashed request: ${fullPath}`);
+        }
+      } catch (err) {
+        console.error(`[db] Failed to inspect/remove candidate stale temp directory ${fullPath}:`, err);
+      }
+    } else {
+      sweepStaleTmpDirs(fullPath);
+    }
+  }
+}
+
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
+try {
+  sweepStaleTmpDirs(MEDIA_DIR);
+} catch (err) {
+  console.error("[db] Startup tmp-dir sweep failed (non-fatal, continuing):", err);
+}
 
 interface Store {
   videos: Record<string, VideoRecord>;
@@ -34,7 +77,27 @@ function load(): Store {
       if (!cache!.creators) cache!.creators = {};
       if (!cache!.users) cache!.users = {};
       if (!cache!.creationProjects) cache!.creationProjects = {};
-    } catch {
+    } catch (err) {
+      // db.json exists but couldn't be parsed — this must never happen
+      // silently. Back up the unreadable file (its bytes might still be
+      // partially recoverable by hand even though JSON.parse rejects it)
+      // before falling back to an empty store, and log loudly so this is
+      // impossible to miss in the deploy logs.
+      const backupPath = `${DB_FILE}.corrupt.${Date.now()}`;
+      try {
+        fs.copyFileSync(DB_FILE, backupPath);
+        console.error(
+          `[db] db.json failed to parse — backed up the unreadable file to ${backupPath} before starting from an empty store. This should be investigated; data may be recoverable from the backup. Original error:`,
+          err
+        );
+      } catch (backupErr) {
+        console.error(
+          `[db] db.json failed to parse AND could not be backed up (both must be investigated immediately — the original file is still at ${DB_FILE}, do not delete it). Parse error:`,
+          err,
+          "Backup error:",
+          backupErr
+        );
+      }
       cache = { videos: {}, trendBatches: {}, creators: {}, users: {}, creationProjects: {} };
     }
   } else {

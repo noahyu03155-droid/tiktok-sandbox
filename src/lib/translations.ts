@@ -65,6 +65,8 @@ export const translations = {
     canvasSaving: "Saving...",
     canvasSaved: "Saved",
     canvasSaveFailed: "Save failed",
+    canvasSaveFailedBanner: "Your last change didn't save — it may only exist in this browser tab right now. Don't close this window until it saves.",
+    canvasRetrySave: "Retry save",
     noteTitle: "Note",
     notePlaceholder: "Write a note...",
     noCanvasTranscript: "No transcript available, can't build a canvas.",
@@ -300,6 +302,8 @@ export const translations = {
     canvasSaving: "保存中...",
     canvasSaved: "已保存",
     canvasSaveFailed: "保存失败",
+    canvasSaveFailedBanner: "刚才的修改没有保存成功——目前可能只存在于这个浏览器标签页里，请先别关闭窗口，等保存成功再离开。",
+    canvasRetrySave: "重试保存",
     noteTitle: "笔记",
 
     toolSelect: "选择",

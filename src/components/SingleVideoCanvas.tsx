@@ -763,6 +763,27 @@ export default function SingleVideoCanvas({ video }: { video: VideoRecord }) {
   zoomRef.current = zoom;
   panRef.current = pan;
 
+  function saveCanvasNow() {
+    setSaveStatus("saving");
+    fetch(`/api/videos/${video.id}/canvas`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cardPositions,
+        notes,
+        images,
+        connections,
+        textBoxes,
+        drawings,
+        videoPosition: videoPos,
+        zoom,
+        pan,
+      }),
+    })
+      .then((res) => setSaveStatus(res.ok ? "saved" : "error"))
+      .catch(() => setSaveStatus("error"));
+  }
+
   useEffect(() => {
     if (isFirstRender.current) {
       isFirstRender.current = false;
@@ -770,25 +791,7 @@ export default function SingleVideoCanvas({ video }: { video: VideoRecord }) {
     }
     setSaveStatus("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      fetch(`/api/videos/${video.id}/canvas`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cardPositions,
-          notes,
-          images,
-          connections,
-          textBoxes,
-          drawings,
-          videoPosition: videoPos,
-          zoom,
-          pan,
-        }),
-      })
-        .then((res) => setSaveStatus(res.ok ? "saved" : "error"))
-        .catch(() => setSaveStatus("error"));
-    }, 600);
+    saveTimer.current = setTimeout(saveCanvasNow, 600);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
@@ -1110,6 +1113,18 @@ export default function SingleVideoCanvas({ video }: { video: VideoRecord }) {
           </button>
         </div>
       </div>
+
+      {saveStatus === "error" && (
+        <div className="mb-2 px-5 py-2 rounded-lg bg-red-500/15 border border-red-500/40 flex items-center justify-between gap-3">
+          <span className="text-xs text-red-300">{t("canvasSaveFailedBanner")}</span>
+          <button
+            onClick={saveCanvasNow}
+            className="px-2.5 py-1 rounded bg-red-500/20 border border-red-500/50 text-red-200 text-xs font-medium hover:bg-red-500/30 shrink-0"
+          >
+            {t("canvasRetrySave")}
+          </button>
+        </div>
+      )}
 
       <div className="mb-2">
         <StageLegend hint={t("canvasStageLegendHint")} />

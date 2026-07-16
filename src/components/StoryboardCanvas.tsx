@@ -185,6 +185,18 @@ export default function StoryboardCanvas({
   // ---- autosave (debounced) ----
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstRun = useRef(true);
+
+  function saveBoardNow() {
+    setSaveStatus("saving");
+    fetch(`${apiBase}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(board),
+    })
+      .then((res) => setSaveStatus(res.ok ? "saved" : "error"))
+      .catch(() => setSaveStatus("error"));
+  }
+
   useEffect(() => {
     if (firstRun.current) {
       firstRun.current = false;
@@ -192,15 +204,7 @@ export default function StoryboardCanvas({
     }
     setSaveStatus("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      fetch(`${apiBase}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(board),
-      })
-        .then((res) => setSaveStatus(res.ok ? "saved" : "error"))
-        .catch(() => setSaveStatus("error"));
-    }, 600);
+    saveTimer.current = setTimeout(saveBoardNow, 600);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
@@ -758,6 +762,19 @@ export default function StoryboardCanvas({
             </span>
           )}
         </div>
+        {saveStatus === "error" && (
+          <div className="px-5 py-2 bg-red-500/15 border-t border-red-500/40 flex items-center justify-between gap-3">
+            <span className="text-xs text-red-300">
+              ⚠ Your last change didn't save — it may only exist in this browser tab right now. Don't close this window until it saves.
+            </span>
+            <button
+              onClick={saveBoardNow}
+              className="px-2.5 py-1 rounded bg-red-500/20 border border-red-500/50 text-red-200 text-xs font-medium hover:bg-red-500/30 shrink-0"
+            >
+              Retry save
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="px-5 py-2.5 border-b border-edge bg-panel2 shrink-0 flex items-center gap-3 flex-wrap">
