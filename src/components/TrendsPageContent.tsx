@@ -28,6 +28,17 @@ interface CategoryNode {
   sub?: CategoryNode[];
 }
 
+// Status of the background category-cleanup scan, as returned by
+// GET/POST /api/trends/fastmoss-categories/scan.
+interface CategoryScanStatus {
+  status: "idle" | "running" | "done" | "error";
+  total: number;
+  tested: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}
+
 // Response shape of POST /api/trends/analyze-product.
 interface ProductAnalysis {
   salesTrend: {
@@ -104,6 +115,34 @@ function TrendCard({
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<ProductAnalysis | null>(null);
+
+  // "Add to Creation" — imports this trending video into the user's own
+  // default Creation canvas (see /api/creation/import-trend-video). Per-card
+  // local state, same pattern as the AI-analysis panel above.
+  const [addState, setAddState] = useState<"idle" | "adding" | "added" | "error">("idle");
+  const [addedProjectId, setAddedProjectId] = useState<string | null>(null);
+
+  async function handleAddToCreation(e: React.MouseEvent) {
+    // Same as toggleAnalysis: the whole card body sits inside a <Link> (or a
+    // click-to-select div in select mode) — don't let this button navigate.
+    e.preventDefault();
+    e.stopPropagation();
+    if (!item.video || addState === "adding" || addState === "added") return;
+    setAddState("adding");
+    try {
+      const res = await fetch("/api/creation/import-trend-video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoRecordId: item.video.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.projectId) throw new Error(data.error || "Import failed");
+      setAddedProjectId(data.projectId);
+      setAddState("added");
+    } catch {
+      setAddState("error");
+    }
+  }
 
   async function toggleAnalysis(e: React.MouseEvent) {
     // The whole card body sits inside a <Link> (or a click-to-select div in
@@ -338,6 +377,36 @@ function TrendCard({
             )}
           </div>
         )}
+
+        {video?.source_url && /tiktok\.com/.test(video.source_url) && (
+          <>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                onClick={handleAddToCreation}
+                disabled={addState === "adding"}
+                className="flex-1 text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-400 hover:text-white hover:border-brand-500 disabled:opacity-40"
+              >
+                {addState === "adding"
+                  ? t("trendAddingToCreation")
+                  : addState === "added"
+                  ? `✓ ${t("trendAddedToCreation")}`
+                  : `🎬 ${t("trendAddToCreation")}`}
+              </button>
+              {addState === "added" && addedProjectId && (
+                <a
+                  href={`/creation/${addedProjectId}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[10px] text-brand-400 hover:text-brand-300 underline underline-offset-2 whitespace-nowrap"
+                >
+                  {t("trendViewInCreation")}
+                </a>
+              )}
+            </div>
+            {addState === "error" && (
+              <p className="text-[10px] text-red-400 mt-1">{t("trendAddToCreationError")}</p>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -397,7 +466,29 @@ function TrendSection({
   );
 }
 
-export default function TrendsPageContent() {
+// Response shape of GET /api/trends/personalized (when the user has a saved
+// category and data exists for it).
+interface PersonalizedData {
+  batch: EnrichedBatch;
+  topProducts: EnrichedItem[];
+  categoryId: string;
+  categoryLabel: string;
+}
+
+// The personalized "For You" section deliberately doesn't participate in
+// select-mode deletion (its cards can also appear in the batch list below,
+// where selection/deletion already works) — so it always renders its
+// TrendSections with an empty, inert selection.
+const EMPTY_SELECTION = new Set<string>();
+
+export default function TrendsPageContent({
+  preferredCategory = null,
+}: {
+  // The logged-in user's saved registration category, if any — passed down
+  // from the server component (src/app/trends/page.tsx). Optional so any
+  // other call site without the prop still compiles.
+  preferredCategory?: { id: string; label: string } | null;
+}) {
   const { t } = useLocale();
   const [batches, setBatches] = useState<EnrichedBatch[] | null>(null);
   const [updating, setUpdating] = useState(false);
@@ -406,6 +497,13 @@ export default function TrendsPageContent() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Personalized "For You" section — only fetched when the user registered
+  // with a saved category (preferredCategory prop). Non-fatal: an error here
+  // just shows inline, the rest of the page renders normally.
+  const [personalizedData, setPersonalizedData] = useState<PersonalizedData | null>(null);
+  const [personalizedLoading, setPersonalizedLoading] = useState(false);
+  const [personalizedError, setPersonalizedError] = useState<string | null>(null);
 
   // Category picker + date-range window for the Update pull.
   const [categories, setCategories] = useState<CategoryNode[] | null>(null);
@@ -416,6 +514,20 @@ export default function TrendsPageContent() {
   const [days, setDays] = useState<7 | 28 | 90>(7);
   const categoryDropdownRef = useRef<HTMLDivElement | null>(null);
 
+  // Category-cleanup scan (admin-triggered background job on the server).
+  // scanInfo = metadata about the last completed scan (from the categories
+  // response); scanStatus = live status of a currently running/finished scan.
+  const [scanInfo, setScanInfo] = useState<{
+    scannedAt: string;
+    totalNodes: number;
+    totalTested: number;
+    totalBefore: number;
+    totalAfterTopLevel: number;
+  } | null>(null);
+  const [scanStatus, setScanStatus] = useState<CategoryScanStatus | null>(null);
+  const [scanTriggerError, setScanTriggerError] = useState<string | null>(null);
+  const scanPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
   async function load() {
     const res = await fetch("/api/trends", { cache: "no-store" });
     if (!res.ok) return;
@@ -423,11 +535,31 @@ export default function TrendsPageContent() {
     setBatches(data.batches);
   }
 
+  async function loadPersonalized(refresh = false) {
+    setPersonalizedLoading(true);
+    setPersonalizedError(null);
+    try {
+      const res = await fetch(`/api/trends/personalized${refresh ? "?refresh=1" : ""}`, { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to load personalized trends");
+      if (data.batch) setPersonalizedData(data as PersonalizedData);
+    } catch (err: any) {
+      setPersonalizedError(err.message || "Failed to load personalized trends");
+    } finally {
+      setPersonalizedLoading(false);
+    }
+  }
+
   useEffect(() => {
     load();
+    if (preferredCategory) loadPersonalized();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Fetch the FastMoss category tree once on mount (cheap, cached server-side).
+  // Also do a single status poll (GET only — never triggers a scan) so that a
+  // scan already running from a previous page load / another admin session
+  // shows live progress after a refresh.
   useEffect(() => {
     fetch("/api/trends/fastmoss-categories")
       .then((res) => res.json())
@@ -437,8 +569,18 @@ export default function TrendsPageContent() {
           return;
         }
         setCategories(data.categories || []);
+        setScanInfo(data.scan || null);
       })
       .catch(() => setCategoriesError("Failed to load categories"));
+    pollScanStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Make sure the scan-status poll timer never leaks past unmount.
+  useEffect(() => {
+    return () => {
+      if (scanPollTimer.current) clearInterval(scanPollTimer.current);
+    };
   }, []);
 
   // Close the category dropdown on any click outside it.
@@ -486,6 +628,59 @@ export default function TrendsPageContent() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batches]);
+
+  // Poll the background category-scan status. While the scan is running we
+  // keep a 3s interval alive; once it leaves "running" (done OR error) the
+  // interval is cleared. On "done" we re-fetch the category list so the
+  // dropdown reflects the freshly pruned tree.
+  function pollScanStatus() {
+    fetch("/api/trends/fastmoss-categories/scan")
+      .then((res) => res.json())
+      .then((data) => {
+        setScanStatus(data.status);
+        if (data.status?.status === "running") {
+          if (!scanPollTimer.current) scanPollTimer.current = setInterval(pollScanStatus, 3000);
+        } else {
+          if (scanPollTimer.current) {
+            clearInterval(scanPollTimer.current);
+            scanPollTimer.current = null;
+          }
+          if (data.status?.status === "done") {
+            fetch("/api/trends/fastmoss-categories")
+              .then((res) => res.json())
+              .then((catData) => {
+                if (!catData.error) {
+                  setCategories(catData.categories || []);
+                  setScanInfo(catData.scan || null);
+                }
+              })
+              .catch(() => {});
+          }
+        }
+      })
+      .catch(() => {
+        if (scanPollTimer.current) {
+          clearInterval(scanPollTimer.current);
+          scanPollTimer.current = null;
+        }
+      });
+  }
+
+  // Kick off a category-cleanup scan. Admin-only server-side: non-admins get
+  // a 403 whose error message is surfaced inline (we deliberately don't try
+  // to know the role client-side just to hide the button).
+  async function triggerScan() {
+    setScanTriggerError(null);
+    try {
+      const res = await fetch("/api/trends/fastmoss-categories/scan", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to start scan");
+      setScanStatus(data.status);
+      pollScanStatus();
+    } catch (err: any) {
+      setScanTriggerError(err.message || "Failed to start scan");
+    }
+  }
 
   // Directly calls FastMoss's own API server-side (see /api/trends/update) —
   // no more "go ask Claude to live-scrape in a logged-in Chrome tab".
@@ -569,6 +764,54 @@ export default function TrendsPageContent() {
 
   return (
     <div className="space-y-10">
+      {/* Personalized "For You" section — shown above the manual category/
+          update toolbar whenever the user registered with a saved category. */}
+      {preferredCategory && (
+        <div className="space-y-6 pb-8 border-b border-edge">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="text-xl font-semibold text-white mb-1">{t("trendForYou")}</h2>
+              <p className="text-sm text-zinc-400">
+                {t("trendForYouSubtitle", { category: preferredCategory.label })}
+              </p>
+            </div>
+            <button
+              onClick={() => loadPersonalized(true)}
+              disabled={personalizedLoading}
+              className="text-xs rounded-lg px-3 py-1.5 border border-edge text-zinc-400 hover:text-white hover:border-edge2 disabled:opacity-40 whitespace-nowrap"
+            >
+              {personalizedLoading ? t("trendUpdating") : t("trendRefresh")}
+            </button>
+          </div>
+          {personalizedLoading && !personalizedData && (
+            <p className="text-sm text-yellow-400 animate-pulse">{t("trendUpdating")}</p>
+          )}
+          {personalizedError && <p className="text-sm text-red-400">{personalizedError}</p>}
+          {personalizedData && (
+            <>
+              <TrendSection
+                title={t("trendTopProducts")}
+                items={personalizedData.topProducts}
+                metric="views"
+                batchId={`foryou-products-${personalizedData.batch.id}`}
+                selectMode={false}
+                selected={EMPTY_SELECTION}
+                onToggleSelect={() => {}}
+              />
+              <TrendSection
+                title={t("trendTopByViews")}
+                items={personalizedData.batch.top_by_views}
+                metric="views"
+                batchId={`foryou-views-${personalizedData.batch.id}`}
+                selectMode={false}
+                selected={EMPTY_SELECTION}
+                onToggleSelect={() => {}}
+              />
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-xl font-semibold text-white mb-1">{t("trendPageHeading")}</h2>
@@ -658,9 +901,40 @@ export default function TrendsPageContent() {
         </div>
       </div>
 
-      {categories && !selectedCategory && (
-        <p className="text-[11px] text-zinc-500">{t("trendCategoryHint")}</p>
-      )}
+      <div className="space-y-1">
+        {categories && !selectedCategory && (
+          <p className="text-[11px] text-zinc-500">{t("trendCategoryHint")}</p>
+        )}
+        {/* Category-cleanup scan status + admin trigger. The button is shown to
+            everyone; non-admins just get the server's 403 error inline. */}
+        <div className="flex items-center gap-2 flex-wrap text-[11px] text-zinc-500">
+          {scanStatus?.status === "running" ? (
+            <span className="text-yellow-400 animate-pulse">
+              {t("trendCategoryScanRunning", { tested: scanStatus.tested, total: scanStatus.total || "?" })}
+            </span>
+          ) : (
+            <>
+              {scanInfo ? (
+                <span>
+                  {t("trendCategoryScanLastRun", {
+                    date: new Date(scanInfo.scannedAt).toISOString().slice(0, 16).replace("T", " "),
+                  })}
+                </span>
+              ) : (
+                <span>{t("trendCategoryScanNeverRun")}</span>
+              )}
+              <button
+                onClick={triggerScan}
+                className="text-brand-400 hover:text-brand-300 underline underline-offset-2"
+              >
+                {scanInfo ? t("trendCategoryScanRerun") : t("trendCategoryScanRun")}
+              </button>
+            </>
+          )}
+          {scanStatus?.status === "error" && <span className="text-red-400">{scanStatus.error}</span>}
+          {scanTriggerError && <span className="text-red-400">{scanTriggerError}</span>}
+        </div>
+      </div>
 
       {updateError && (
         <div className="flex items-start justify-between gap-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">

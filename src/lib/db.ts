@@ -60,6 +60,19 @@ interface Store {
   users: Record<string, User>;
   creationProjects: Record<string, CreationProject>;
   shopifyAccessToken?: string | null;
+  // Cached result of the last full FastMoss category-tree scan (see
+  // src/lib/fastmossCategoryScan.ts) — which category ids actually returned
+  // any trending videos, so the category picker on Trend Analysis can hide
+  // dead-end categories instead of the user discovering them by trial and
+  // error. Scanning the whole tree costs real paid API credits per node, so
+  // this is deliberately cached to disk rather than re-derived on every
+  // page load — only a fresh scan (user-triggered) updates it.
+  fastmossCategoryValidity?: {
+    validIds: string[];
+    scannedAt: string; // ISO timestamp
+    totalNodes: number; // how many category nodes existed in the tree at scan time
+    totalTested: number; // how many were actually successfully tested (may be < totalNodes if some errored/skipped)
+  } | null;
 }
 
 // Simple JSON-file-backed store. This app is a small internal team tool with
@@ -298,6 +311,21 @@ export function listTrendBatches(): TrendBatch[] {
   );
 }
 
+// Most-recently-created stored batch for a given FastMoss category_id, if
+// any — lets the personalized "For You" section on Trend Analysis reuse a
+// recent pull (see FRESH_MS in /api/trends/personalized) instead of hitting
+// FastMoss's paid API again every time a user with that saved category
+// visits the page. Any user (or the admin's manual "Update" button) that
+// already refreshed this exact category recently benefits everyone who has
+// it saved.
+export function getLatestTrendBatchByCategory(categoryId: string): TrendBatch | null {
+  const store = load();
+  const matches = Object.values(store.trendBatches)
+    .filter((b) => b.category_id === categoryId)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  return matches[0] || null;
+}
+
 // ---- Creator Tracker ----
 
 export function createTrackedCreator(id: string, handle: string, profileUrl: string) {
@@ -365,6 +393,24 @@ export function setShopifyToken(token: string) {
 export function getShopifyToken(): string | null {
   const store = load();
   return store.shopifyAccessToken || null;
+}
+
+// ---- FastMoss category-tree scan cache ----
+
+export function setFastmossCategoryValidity(data: {
+  validIds: string[];
+  scannedAt: string;
+  totalNodes: number;
+  totalTested: number;
+}) {
+  const store = load();
+  store.fastmossCategoryValidity = data;
+  persist();
+}
+
+export function getFastmossCategoryValidity() {
+  const store = load();
+  return store.fastmossCategoryValidity || null;
 }
 
 // ---- Users (multi-user login) ----
@@ -439,6 +485,24 @@ export function listCreationProjectsByOwner(ownerId: string): CreationProject[] 
   return Object.values(store.creationProjects)
     .filter((p) => p.ownerId === ownerId)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+// Every account's implicit "single canvas" — used both by the /creation
+// page redirect (members skip the project list entirely and land straight
+// on this) and by the trend-video "Add to Creation" import route. Reuses
+// whichever project the account already has (their most-recently-updated
+// one, since listCreationProjectsByOwner is sorted that way) so repeated
+// visits/imports keep landing in the same place instead of spawning a new
+// canvas every time; auto-creates one named "My Canvas" the very first time
+// an account has none yet. This is intentionally the same resolution logic
+// regardless of role — an admin calling this also just gets their own
+// most-recent project, same as anyone; admins still separately have the
+// full multi-project list UI for themselves, this helper is just for
+// "give me *a* canvas to act on" call sites like the trend importer.
+export function getOrCreateDefaultCreationProject(ownerId: string): CreationProject {
+  const existing = listCreationProjectsByOwner(ownerId);
+  if (existing.length > 0) return existing[0];
+  return createCreationProject(ownerId, "My Canvas");
 }
 
 // For the admin overview grid — every member who owns at least one project,

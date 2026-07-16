@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifySessionToken, SESSION_COOKIE_NAME } from "@/lib/auth";
 
 // Paths that don't require login.
-const PUBLIC_PATHS = ["/login", "/api/login", "/register", "/api/register"];
+// /api/trends/fastmoss-categories is included so the registration page's
+// category picker can load the list before the user has an account/session
+// — it's read-only public category metadata, nothing sensitive.
+const PUBLIC_PATHS = ["/login", "/api/login", "/register", "/api/register", "/api/trends/fastmoss-categories"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

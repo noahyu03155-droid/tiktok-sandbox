@@ -10,6 +10,11 @@ export interface User {
   passwordHash: string;
   role: UserRole;
   createdAt: string;
+  // Optional product category picked at registration (from the FastMoss
+  // category tree) — drives the personalized "For You" section on the
+  // Trend Analysis page. Both null/absent until the user picks one.
+  preferredCategoryId?: string | null;
+  preferredCategoryLabel?: string | null;
 }
 
 export interface VideoStats {

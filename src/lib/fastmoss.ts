@@ -80,6 +80,30 @@ export async function fetchFastMossCategories() {
   return fastmossPost("/product/v1/categoryInfo", {});
 }
 
+// Cheap probe: does this category actually have any trending video data at
+// all? Used by the full-tree category scan (src/lib/fastmossCategoryScan.ts)
+// to decide whether to keep or hide a category in the picker. pagesize:1
+// because we only need to know total > 0, not the actual videos — keeps
+// each probe as cheap as this endpoint allows. Uses a wide 90-day window
+// (the widest the Trend Analysis date-range selector offers) so a category
+// isn't wrongly marked dead just because nothing happened to post in the
+// last 7 days specifically.
+export async function categoryHasVideos(categoryId: string | number, region = "US"): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  const min = now - 90 * 86400;
+  const data = await fastmossPost<{ total: number; list: any[] }>("/video/v1/search", {
+    filter: {
+      region,
+      is_ecommerce: 1,
+      product_category_id: Number(categoryId),
+      create_time_range: { min, max: now },
+    },
+    page: 1,
+    pagesize: 1,
+  });
+  return (data.total || 0) > 0;
+}
+
 async function searchVideos(opts: {
   keywords?: string;
   orderField: "play_count" | "units_sold";
