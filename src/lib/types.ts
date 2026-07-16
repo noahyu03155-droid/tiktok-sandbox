@@ -250,6 +250,14 @@ export interface StoryboardNode {
   // then on, so it owns its own copy of the text.
   label: string;
   instruction: string;
+  // A separate, personal note field — the user's own editing/filming
+  // suggestions for this specific shot (pacing, framing, tone, whatever
+  // they want to remember). Deliberately kept apart from `instruction`
+  // (the script text, often pre-filled from an AI breakdown) so the two
+  // don't get mixed together. Not read by the render pipeline or any AI
+  // call in this pass — purely a personal scratch note, autosaved like
+  // everything else on the node.
+  editorNotes?: string;
   x: number;
   y: number;
   clip: StoryboardClip | null;

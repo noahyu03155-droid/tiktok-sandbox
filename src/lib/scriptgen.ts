@@ -33,7 +33,10 @@ Requirements:
 - The "script" field should be conversational and ready to read aloud, roughly the same length as the corresponding stage in the original video.
 - Selling points and pain points must come from our product's actual info — don't invent features the original video's product had but ours doesn't.
 - The "direction" field should be one short, actionable filming tip.
-- Write everything in English.`;
+- Write everything in English.
+- Target a natural total spoken duration across all 6 stages of roughly 40-50 seconds when read aloud (rarely more than 60) — pace each stage's script length accordingly; don't pad any stage just to fill time.
+- The "Reaction" stage's script should be a single sharp reactive beat, roughly 2-3 seconds when read aloud — a short exclamation or visible reaction, not an explanation.
+- The "Hook" stage should create a genuine curiosity gap or a bold/contrarian claim that makes someone stop scrolling — not a generic "check out this product" opener.`;
 
 interface ScriptGenInput {
   videoTitle: string;

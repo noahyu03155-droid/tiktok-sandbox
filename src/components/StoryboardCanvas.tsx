@@ -19,18 +19,28 @@ import ProductPicker from "./ProductPicker";
 // picked/paid for yet; explicitly out of scope for this pass).
 
 const NODE_W = 300;
-// +28 over the original 430 to make room for the "AI dub" row under the
-// clip box (reserved for every node, not just ones with a video clip
-// attached yet, so a card's height doesn't jump when a clip is added).
+// Card layout for a "normal" card (everything except the pending-TikTok
+// import preview below): header, then a Script box (the node's
+// `instruction` — pre-filled from an AI breakdown or typed manually),
+// then a separate Editing notes box (`editorNotes` — the user's own
+// filming/editing reminders, kept apart from the script on purpose), then
+// the clip preview at full natural 9:16 (not cropped down to a small
+// landscape strip like before — same aspect-ratio formula the pending-
+// TikTok preview already uses, so uploaded footage is fully visible), then
+// a reserved row for the "AI dub" controls (reserved for every node, not
+// just ones with a video clip attached yet, so a card's height doesn't
+// jump when a clip is added).
+const HEADER_H = 40;
+const SCRIPT_BOX_H = 110;
+const NOTES_BOX_H = 80;
+const CLIP_VIDEO_H = Math.round(NODE_W * (16 / 9));
 const DUB_ROW_H = 28;
-const NODE_H = 430 + DUB_ROW_H;
-const CLIP_H = 150;
+const NODE_H = HEADER_H + SCRIPT_BOX_H + NOTES_BOX_H + CLIP_VIDEO_H + DUB_ROW_H;
 const GAP_X = 70;
 // Layout for a freshly-pasted, not-yet-broken-down TikTok import card (see
-// the `isPendingTiktokBreakdown` check below) — shows the video at its
-// natural 9:16 portrait ratio instead of squished into the normal card's
-// 150px-tall landscape-ish clip box, since there's nothing to write yet
-// until the user runs Breakdown.
+// the `isPendingTiktokBreakdown` check below) — no text boxes yet, just the
+// video at its natural 9:16 portrait ratio plus the two action buttons,
+// since there's nothing to write until the user runs Breakdown.
 const TIKTOK_HEADER_H = 34;
 // Tall enough for the two stacked full-width actions (Breakdown + Generate
 // product script, ~32px each) plus the row's padding and gap — the card is
@@ -321,7 +331,7 @@ export default function StoryboardCanvas({
     }));
   }
 
-  function updateNodeText(nodeId: string, patch: Partial<Pick<StoryboardNode, "label" | "instruction">>) {
+  function updateNodeText(nodeId: string, patch: Partial<Pick<StoryboardNode, "label" | "instruction" | "editorNotes">>) {
     setBoard((b) => ({ ...b, nodes: b.nodes.map((n) => (n.id === nodeId ? { ...n, ...patch } : n)) }));
   }
 
@@ -1023,20 +1033,33 @@ export default function StoryboardCanvas({
                   </button>
                 </div>
 
-                <div className="px-3 py-2 overflow-y-auto" style={{ height: NODE_H - CLIP_H - 40 - DUB_ROW_H }}>
+                <div className="px-3 py-2 border-b border-edge shrink-0" style={{ height: SCRIPT_BOX_H }}>
+                  <label className="text-[9px] uppercase tracking-wide text-zinc-500 mb-1 block">Script</label>
                   <textarea
                     value={node.instruction}
                     onChange={(e) => updateNodeText(node.id, { instruction: e.target.value })}
                     onMouseDown={(e) => e.stopPropagation()}
                     placeholder="What happens in this shot? Dialogue, action, camera direction..."
-                    className="w-full h-full bg-transparent text-xs text-zinc-200 leading-relaxed outline-none resize-none placeholder:text-zinc-600"
+                    className="w-full bg-transparent text-xs text-zinc-200 leading-relaxed outline-none resize-none placeholder:text-zinc-600"
+                    style={{ height: SCRIPT_BOX_H - 22 }}
+                  />
+                </div>
+                <div className="px-3 py-2 border-b border-edge shrink-0" style={{ height: NOTES_BOX_H }}>
+                  <label className="text-[9px] uppercase tracking-wide text-zinc-500 mb-1 block">Your editing notes</label>
+                  <textarea
+                    value={node.editorNotes || ""}
+                    onChange={(e) => updateNodeText(node.id, { editorNotes: e.target.value })}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    placeholder="Notes for yourself when filming/editing this shot — pacing, framing, tone..."
+                    className="w-full bg-transparent text-xs text-zinc-400 leading-relaxed outline-none resize-none placeholder:text-zinc-600"
+                    style={{ height: NOTES_BOX_H - 22 }}
                   />
                 </div>
 
                 <div
                   onMouseDown={(e) => e.stopPropagation()}
-                  className="relative border-t border-edge shrink-0 bg-panel2"
-                  style={{ height: CLIP_H }}
+                  className="relative border-b border-edge shrink-0 bg-black"
+                  style={{ height: CLIP_VIDEO_H }}
                 >
                   {busy && (
                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
@@ -1044,22 +1067,22 @@ export default function StoryboardCanvas({
                     </div>
                   )}
                   {node.clip ? (
-                    <div className="relative w-full h-full group">
+                    <div className="relative w-full h-full">
                       {node.clip.kind === "video" ? (
                         // eslint-disable-next-line jsx-a11y/media-has-caption
                         <video
                           src={node.dub?.status === "done" && node.dub.url ? node.dub.url : node.clip.url}
                           controls
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-contain bg-black"
                         />
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={node.clip.url} alt="" className="w-full h-full object-cover" />
+                        <img src={node.clip.url} alt="" className="w-full h-full object-contain bg-black" />
                       )}
                       <button
                         onClick={() => setNodeClip(node.id, null)}
-                        title="Remove clip"
-                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100"
+                        title="Remove clip and re-upload"
+                        className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] flex items-center justify-center hover:bg-red-500/80 z-10"
                       >
                         ✕
                       </button>
@@ -1076,25 +1099,28 @@ export default function StoryboardCanvas({
                       </span>
                     </div>
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center gap-1.5 px-2">
-                      <button
-                        onClick={() => startUpload(node.id)}
-                        className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-300 hover:text-white hover:border-edge2"
-                      >
-                        📤 Upload
-                      </button>
-                      <button
-                        onClick={() => setPickerForNode(node.id)}
-                        className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-300 hover:text-white hover:border-edge2"
-                      >
-                        📚 Library
-                      </button>
-                      <button
-                        onClick={() => generateAiImage(node)}
-                        className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-300 hover:text-white hover:border-edge2"
-                      >
-                        ✨ AI
-                      </button>
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 px-4">
+                      <p className="text-[10px] text-zinc-500 text-center">Record this shot yourself, then upload it here (9:16)</p>
+                      <div className="w-full flex items-center justify-center gap-1.5">
+                        <button
+                          onClick={() => startUpload(node.id)}
+                          className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-300 hover:text-white hover:border-edge2"
+                        >
+                          📤 Upload
+                        </button>
+                        <button
+                          onClick={() => setPickerForNode(node.id)}
+                          className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-300 hover:text-white hover:border-edge2"
+                        >
+                          📚 Library
+                        </button>
+                        <button
+                          onClick={() => generateAiImage(node)}
+                          className="flex-1 h-8 rounded bg-panel border border-edge text-[10px] text-zinc-300 hover:text-white hover:border-edge2"
+                        >
+                          ✨ AI
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
