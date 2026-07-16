@@ -5,9 +5,29 @@ import HeaderBar from "@/components/HeaderBar";
 import RobotAssistant from "@/components/RobotAssistant";
 import { getCurrentUser } from "@/lib/session";
 
+// Core selling-point pitch, used both as the page <meta description> and as
+// the Open Graph title/description so link previews (iMessage, Messenger,
+// etc.) show COTORX's actual value prop instead of a generic tagline. Set
+// explicitly rather than relying on Next's OG auto-fallback so unfurls are
+// reliable across apps that only read the og: tags.
+const TAGLINE = "COTORX";
+const PITCH =
+  "Paste any viral TikTok, get an AI breakdown of its hook, structure, and selling points — then a new shoppable script and storyboard built around your own product.";
+
 export const metadata: Metadata = {
-  title: "COTORX",
-  description: "Paste a TikTok video link, get an instant video card and script breakdown",
+  title: TAGLINE,
+  description: PITCH,
+  openGraph: {
+    title: TAGLINE,
+    description: PITCH,
+    siteName: TAGLINE,
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: TAGLINE,
+    description: PITCH,
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
