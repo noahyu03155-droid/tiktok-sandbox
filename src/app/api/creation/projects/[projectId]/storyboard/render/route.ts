@@ -13,14 +13,13 @@ import type { StoryboardTransitionPreset } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 // Identical render pipeline to the Video Analysis storyboard's render
-// route (captions, Ken Burns, crossfades, smart trim, dub preference,
+// route (captions, Ken Burns, crossfades, smart trim,
 // reference-style profile) — just reading/writing a standalone
 // CreationProject's storyboard instead of a GeneratedScript's. See that
 // route's comments for the full reasoning behind each piece; not repeated
 // here to avoid the two copies drifting in their explanations.
 const W = 720;
 const H = 1280;
-const DUB_SAFETY_CAP_SEC = 30;
 const TRANSITION_SEC = 0.4;
 const FPS = 30;
 
@@ -155,8 +154,7 @@ export async function POST(_req: NextRequest, { params }: { params: { projectId:
       const node = usable[i];
       const text = (node.instruction || node.label || "").trim();
       const caption = captionFilter(tmpDir, i, text, captionStyle);
-      const useDub = node.dub?.status === "done" && node.dub.url;
-      const clip = useDub ? { kind: "video" as const, url: node.dub!.url! } : node.clip!;
+      const clip = node.clip!;
       const srcPath = mediaPathFromUrl(clip.url);
       if (!srcPath || !fs.existsSync(srcPath)) {
         skipped.push(`${node.label || "untitled shot"} (file missing)`);
@@ -167,52 +165,40 @@ export async function POST(_req: NextRequest, { params }: { params: { projectId:
       let intendedSec = 0;
 
       if (clip.kind === "video") {
-        if (useDub) {
-          intendedSec = DUB_SAFETY_CAP_SEC;
+        const targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));
+        intendedSec = targetSec;
+        const clipDurationSec = await probeDurationSec(srcPath);
+        const startSec =
+          clipDurationSec > targetSec
+            ? await pickBestSegment({
+                srcPath,
+                text: feedbackText ? `${text}\n\n(Overall note from the creator about this edit: ${feedbackText})` : text,
+                targetSec,
+                clipDurationSec,
+                tmpDir,
+                apiKey: openaiApiKey,
+              })
+            : 0;
+        const hasAudio = await probeHasAudio(srcPath);
+        if (hasAudio) {
           await runFfmpeg([
             "-y", "-i", srcPath,
             "-vf", withCaption(scalePad, caption),
             ...videoOut,
             ...AAC_OUT,
-            "-t", String(intendedSec),
+            "-ss", String(startSec), "-t", String(targetSec),
             segPath,
           ]);
         } else {
-          const targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));
-          intendedSec = targetSec;
-          const clipDurationSec = await probeDurationSec(srcPath);
-          const startSec =
-            clipDurationSec > targetSec
-              ? await pickBestSegment({
-                  srcPath,
-                  text: feedbackText ? `${text}\n\n(Overall note from the creator about this edit: ${feedbackText})` : text,
-                  targetSec,
-                  clipDurationSec,
-                  tmpDir,
-                  apiKey: openaiApiKey,
-                })
-              : 0;
-          const hasAudio = await probeHasAudio(srcPath);
-          if (hasAudio) {
-            await runFfmpeg([
-              "-y", "-i", srcPath,
-              "-vf", withCaption(scalePad, caption),
-              ...videoOut,
-              ...AAC_OUT,
-              "-ss", String(startSec), "-t", String(targetSec),
-              segPath,
-            ]);
-          } else {
-            await runFfmpeg([
-              "-y", "-i", srcPath, ...SILENT_AUDIO,
-              "-vf", withCaption(scalePad, caption),
-              "-map", "0:v:0", "-map", "1:a:0",
-              ...videoOut,
-              ...AAC_OUT,
-              "-ss", String(startSec), "-t", String(targetSec), "-shortest",
-              segPath,
-            ]);
-          }
+          await runFfmpeg([
+            "-y", "-i", srcPath, ...SILENT_AUDIO,
+            "-vf", withCaption(scalePad, caption),
+            "-map", "0:v:0", "-map", "1:a:0",
+            ...videoOut,
+            ...AAC_OUT,
+            "-ss", String(startSec), "-t", String(targetSec), "-shortest",
+            segPath,
+          ]);
         }
       } else {
         const targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));

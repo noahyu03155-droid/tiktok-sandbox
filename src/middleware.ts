@@ -11,11 +11,10 @@ export async function middleware(req: NextRequest) {
     PUBLIC_PATHS.some((p) => pathname === p) ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico" ||
-    // Media files need to be fetchable by external services without a
-    // login cookie — e.g. Sync.so's servers fetching a storyboard clip/
-    // voiceover URL for AI dub, or a browser directly opening/downloading
-    // a rendered MP4 link. URLs are unguessable UUIDs, same trust model as
-    // an "unlisted" link.
+    // Media files need to be fetchable without a login cookie — e.g. a
+    // browser directly opening/downloading a rendered MP4 link, or a video
+    // element loading a clip URL. URLs are unguessable UUIDs, same trust
+    // model as an "unlisted" link.
     pathname.startsWith("/api/media/");
 
   if (isPublic) return NextResponse.next();

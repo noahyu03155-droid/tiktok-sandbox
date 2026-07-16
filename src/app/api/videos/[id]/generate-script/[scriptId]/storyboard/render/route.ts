@@ -22,12 +22,10 @@ export const dynamic = "force-dynamic";
 // paying for a dedicated identity-preserving video-gen API).
 //
 // "Smart trim": uploaded clips are often much longer (~20s) than a shot
-// needs. Each non-dubbed clip gets trimmed to roughly how long its script
-// text takes to read aloud (src/lib/storyboardTrim.ts), and — when
-// OPENAI_API_KEY is set — a vision model picks which part of the clip to
-// keep instead of always assuming 0:00 is the right moment. AI-dubbed clips
-// skip this: Sync.so's "cut_off" sync mode already trimmed them to match
-// the new voiceover, so re-trimming would just risk cutting audio short.
+// needs. Each clip gets trimmed to roughly how long its script text takes
+// to read aloud (src/lib/storyboardTrim.ts), and — when OPENAI_API_KEY is
+// set — a vision model picks which part of the clip to keep instead of
+// always assuming 0:00 is the right moment.
 //
 // "Editing polish" (this pass): image shots get a slow Ken Burns zoom
 // instead of sitting static; every shot gets its script text burned in as a
@@ -36,7 +34,6 @@ export const dynamic = "force-dynamic";
 // time with plain ffmpeg filters — no external editing API involved.
 const W = 720;
 const H = 1280;
-const DUB_SAFETY_CAP_SEC = 30;
 const TRANSITION_SEC = 0.4;
 const FPS = 30;
 
@@ -193,13 +190,7 @@ export async function POST(
       const node = usable[i];
       const text = (node.instruction || node.label || "").trim();
       const caption = captionFilter(tmpDir, i, text, captionStyle);
-      // Prefer the AI-dubbed clip (new voiceover, lip-synced) over the
-      // original upload once Sync.so has finished it — it's always a real
-      // video with real matching audio, so it takes the same "video with
-      // audio" path below. Falls back to the original clip untouched if no
-      // dub has been run for this shot.
-      const useDub = node.dub?.status === "done" && node.dub.url;
-      const clip = useDub ? { kind: "video" as const, url: node.dub!.url! } : node.clip!;
+      const clip = node.clip!;
       const srcPath = mediaPathFromUrl(clip.url);
       if (!srcPath || !fs.existsSync(srcPath)) {
         skipped.push(`${node.label || "untitled shot"} (file missing)`);
@@ -213,54 +204,40 @@ export async function POST(
       let intendedSec = 0;
 
       if (clip.kind === "video") {
-        if (useDub) {
-          // Already trimmed to match the new voiceover by Sync.so — just a
-          // generous safety cap, not a real trim.
-          intendedSec = DUB_SAFETY_CAP_SEC;
+        const targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));
+        intendedSec = targetSec;
+        const clipDurationSec = await probeDurationSec(srcPath);
+        const startSec =
+          clipDurationSec > targetSec
+            ? await pickBestSegment({
+                srcPath,
+                text: feedbackText ? `${text}\n\n(Overall note from the creator about this edit: ${feedbackText})` : text,
+                targetSec,
+                clipDurationSec,
+                tmpDir,
+                apiKey: openaiApiKey,
+              })
+            : 0;
+        const hasAudio = await probeHasAudio(srcPath);
+        if (hasAudio) {
           await runFfmpeg([
             "-y", "-i", srcPath,
             "-vf", withCaption(scalePad, caption),
             ...videoOut,
             ...AAC_OUT,
-            "-t", String(intendedSec),
+            "-ss", String(startSec), "-t", String(targetSec),
             segPath,
           ]);
         } else {
-          const targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));
-          intendedSec = targetSec;
-          const clipDurationSec = await probeDurationSec(srcPath);
-          const startSec =
-            clipDurationSec > targetSec
-              ? await pickBestSegment({
-                  srcPath,
-                  text: feedbackText ? `${text}\n\n(Overall note from the creator about this edit: ${feedbackText})` : text,
-                  targetSec,
-                  clipDurationSec,
-                  tmpDir,
-                  apiKey: openaiApiKey,
-                })
-              : 0;
-          const hasAudio = await probeHasAudio(srcPath);
-          if (hasAudio) {
-            await runFfmpeg([
-              "-y", "-i", srcPath,
-              "-vf", withCaption(scalePad, caption),
-              ...videoOut,
-              ...AAC_OUT,
-              "-ss", String(startSec), "-t", String(targetSec),
-              segPath,
-            ]);
-          } else {
-            await runFfmpeg([
-              "-y", "-i", srcPath, ...SILENT_AUDIO,
-              "-vf", withCaption(scalePad, caption),
-              "-map", "0:v:0", "-map", "1:a:0",
-              ...videoOut,
-              ...AAC_OUT,
-              "-ss", String(startSec), "-t", String(targetSec), "-shortest",
-              segPath,
-            ]);
-          }
+          await runFfmpeg([
+            "-y", "-i", srcPath, ...SILENT_AUDIO,
+            "-vf", withCaption(scalePad, caption),
+            "-map", "0:v:0", "-map", "1:a:0",
+            ...videoOut,
+            ...AAC_OUT,
+            "-ss", String(startSec), "-t", String(targetSec), "-shortest",
+            segPath,
+          ]);
         }
       } else {
         const targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));

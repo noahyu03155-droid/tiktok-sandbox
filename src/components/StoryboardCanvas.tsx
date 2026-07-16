@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { FunnelStageKey, GeneratedScriptStage, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
 import { resolveStoryboardOrder, resolveChainTails, MIN_CHAIN_LENGTH_FOR_GENERATE, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
@@ -26,17 +26,15 @@ const NODE_W = 300;
 // filming/editing reminders, kept apart from the script on purpose), then
 // the clip preview at full natural 9:16 (not cropped down to a small
 // landscape strip like before — same aspect-ratio formula the pending-
-// TikTok preview already uses, so uploaded footage is fully visible), then
-// a reserved row for the "AI dub" controls (reserved for every node, not
-// just ones with a video clip attached yet, so a card's height doesn't
-// jump when a clip is added).
+// TikTok preview already uses, so uploaded footage is fully visible).
 const HEADER_H = 40;
 const SCRIPT_BOX_H = 110;
 const NOTES_BOX_H = 80;
 const CLIP_VIDEO_H = Math.round(NODE_W * (16 / 9));
-const DUB_ROW_H = 28;
-const NODE_H = HEADER_H + SCRIPT_BOX_H + NOTES_BOX_H + CLIP_VIDEO_H + DUB_ROW_H;
+const NODE_H = HEADER_H + SCRIPT_BOX_H + NOTES_BOX_H + CLIP_VIDEO_H;
 const GAP_X = 70;
+const STYLE_WIDGET_H = 34; // compact reference-style control shown above each chain-tail's Generate button
+const STYLE_WIDGET_GAP = 8;
 // Layout for a freshly-pasted, not-yet-broken-down TikTok import card (see
 // the `isPendingTiktokBreakdown` check below) — no text boxes yet, just the
 // video at its natural 9:16 portrait ratio plus the two action buttons,
@@ -101,8 +99,8 @@ export default function StoryboardCanvas({
   // Base path for every storyboard API call this component makes, e.g.
   // `/api/videos/${videoId}/generate-script/${scriptId}/storyboard` for the
   // original Video Analysis flow, or `/api/creation/projects/${projectId}/storyboard`
-  // for a standalone Creation project. All 7 sub-routes (save, upload,
-  // generate-image, dub/start, dub/status, render, style/analyze) are
+  // for a standalone Creation project. All 5 sub-routes (save, upload,
+  // generate-image, render, style/analyze) are
   // resolved as `${apiBase}/...` off of this.
   apiBase: string;
   initialStoryboard: StoryboardState | null;
@@ -160,27 +158,6 @@ export default function StoryboardCanvas({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadNodeIdRef = useRef<string | null>(null);
   const styleFileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // ---- AI dub (lip-sync): new voiceover from the shot's text, resynced to
-  // the clip's mouth via Sync.so. A generation takes a few minutes, so the
-  // start call just kicks off a job id and this polls a status route every
-  // 5s until it resolves — not held open as one long request.
-  const dubPollTimers = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({});
-  useEffect(
-    () => () => {
-      Object.values(dubPollTimers.current).forEach((t) => t && clearTimeout(t));
-    },
-    []
-  );
-  // Resume polling for any shot that still shows "generating" from a
-  // previous visit (job kept running server-side even if the canvas was
-  // closed).
-  useEffect(() => {
-    board.nodes.forEach((n) => {
-      if (n.dub?.status === "generating" && n.dub.jobId) pollDubStatus(n.id);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ---- autosave (debounced) ----
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -461,51 +438,6 @@ export default function StoryboardCanvas({
     }
   }
 
-  function updateNodeDub(nodeId: string, dub: StoryboardNode["dub"]) {
-    setBoard((b) => ({ ...b, nodes: b.nodes.map((n) => (n.id === nodeId ? { ...n, dub } : n)) }));
-  }
-
-  async function pollDubStatus(nodeId: string) {
-    try {
-      const res = await fetch(`${apiBase}/dub/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodeId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Status check failed");
-      if (data.status === "done") {
-        updateNodeDub(nodeId, { status: "done", url: data.url });
-        return;
-      }
-      if (data.status === "error") {
-        updateNodeDub(nodeId, { status: "error", error: data.error });
-        return;
-      }
-      dubPollTimers.current[nodeId] = setTimeout(() => pollDubStatus(nodeId), 5000);
-    } catch (err: any) {
-      updateNodeDub(nodeId, { status: "error", error: err.message || "Status check failed" });
-    }
-  }
-
-  async function startDub(node: StoryboardNode) {
-    clearNodeError(node.id);
-    updateNodeDub(node.id, { status: "generating" });
-    try {
-      const res = await fetch(`${apiBase}/dub/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodeId: node.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to start AI dub");
-      updateNodeDub(node.id, { status: "generating", jobId: data.jobId });
-      pollDubStatus(node.id);
-    } catch (err: any) {
-      updateNodeDub(node.id, { status: "error", error: err.message || "Failed to start AI dub" });
-    }
-  }
-
   // "Breakdown into 6 stages" — for a TikTok-imported clip, asks the server
   // to transcribe + run the same 6-stage funnel analysis used by Video
   // Analysis, then swaps this single card out for 6 new stage-tagged cards
@@ -627,6 +559,30 @@ export default function StoryboardCanvas({
   function clearStyleProfile() {
     setBoard((b) => ({ ...b, styleProfile: null }));
     setStyleError(null);
+  }
+
+  async function analyzeStyleFromUrl(url: string) {
+    setAnalyzingStyle(true);
+    setStyleError(null);
+    try {
+      const res = await fetch(`${apiBase}/style/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Style analysis failed");
+      setBoard((b) => ({ ...b, styleProfile: data.profile as StoryboardStyleProfile }));
+    } catch (err: any) {
+      setStyleError(err.message || "Style analysis failed");
+    } finally {
+      setAnalyzingStyle(false);
+    }
+  }
+
+  function promptForStyleUrl() {
+    const url = window.prompt("Paste a TikTok video link to use as the editing-style reference:");
+    if (url && url.trim()) analyzeStyleFromUrl(url.trim());
   }
 
   const nodeById = new Map(board.nodes.map((n) => [n.id, n] as const));
@@ -775,45 +731,6 @@ export default function StoryboardCanvas({
             </button>
           </div>
         )}
-      </div>
-
-      <div className="px-5 py-2.5 border-b border-edge bg-panel2 shrink-0 flex items-center gap-3 flex-wrap">
-        <span className="text-xs font-medium text-zinc-400 shrink-0">🎨 Reference video style</span>
-        {analyzingStyle ? (
-          <span className="text-xs text-yellow-400 animate-pulse">Analyzing cut pacing/transitions...</span>
-        ) : board.styleProfile ? (
-          <>
-            <span className="text-xs text-zinc-300">
-              <span className="text-green-400 font-medium">{board.styleProfile.pacing} pacing</span>
-              {" · "}
-              {board.styleProfile.transition === "hard_cut" ? "hard cuts" : `${board.styleProfile.transition} transitions`}
-              {" · "}
-              {board.styleProfile.captionStyle} captions
-              {" · ~"}
-              {board.styleProfile.avgShotSec.toFixed(1)}s/shot from "{board.styleProfile.sourceLabel}"
-            </span>
-            <span className="text-xs text-zinc-500 italic truncate max-w-md" title={board.styleProfile.notes}>
-              {board.styleProfile.notes}
-            </span>
-            <button onClick={startStyleUpload} className="ml-auto text-xs text-zinc-400 hover:text-white shrink-0">
-              ↺ Replace
-            </button>
-            <button onClick={clearStyleProfile} className="text-xs text-zinc-500 hover:text-red-400 shrink-0">
-              ✕ Clear
-            </button>
-          </>
-        ) : (
-          <>
-            <span className="text-xs text-zinc-500">Not set — render uses default pacing/transitions</span>
-            <button
-              onClick={startStyleUpload}
-              className="ml-auto px-2.5 py-1 rounded border border-dashed border-edge2 text-xs text-zinc-300 hover:text-white hover:border-brand-500 shrink-0"
-            >
-              📎 Upload a reference video to learn its editing style
-            </button>
-          </>
-        )}
-        {styleError && <span className="text-xs text-red-400 w-full">{styleError}</span>}
       </div>
 
       {(renderError || renderResult) && (
@@ -1088,7 +1005,7 @@ export default function StoryboardCanvas({
                       {node.clip.kind === "video" ? (
                         // eslint-disable-next-line jsx-a11y/media-has-caption
                         <video
-                          src={node.dub?.status === "done" && node.dub.url ? node.dub.url : node.clip.url}
+                          src={node.clip.url}
                           controls
                           className="w-full h-full object-contain bg-black"
                         />
@@ -1104,9 +1021,7 @@ export default function StoryboardCanvas({
                         ✕
                       </button>
                       <span className="absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded bg-black/70 text-zinc-300">
-                        {node.dub?.status === "done"
-                          ? "AI dubbed"
-                          : node.clip.source === "upload"
+                        {node.clip.source === "upload"
                           ? "Uploaded"
                           : node.clip.source === "ai"
                           ? "AI reference"
@@ -1142,37 +1057,6 @@ export default function StoryboardCanvas({
                   )}
                 </div>
 
-                {node.clip?.kind === "video" && (
-                  <div
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="px-2 py-1.5 border-t border-edge bg-panel flex items-center gap-2 text-[10px] shrink-0"
-                  >
-                    {!node.dub || node.dub.status === "error" ? (
-                      <>
-                        <button
-                          onClick={() => startDub(node)}
-                          className="px-2 py-1 rounded bg-panel2 border border-edge text-zinc-300 hover:text-white hover:border-brand-500"
-                        >
-                          🗣️ AI dub (lip-sync)
-                        </button>
-                        {node.dub?.status === "error" && (
-                          <span className="text-red-400 truncate" title={node.dub.error}>
-                            failed: {node.dub.error}
-                          </span>
-                        )}
-                      </>
-                    ) : node.dub.status === "generating" ? (
-                      <span className="text-yellow-400 animate-pulse">⏳ Dubbing... (can take a few min)</span>
-                    ) : (
-                      <>
-                        <span className="text-green-400">✓ Dubbed — preview above now plays the dub</span>
-                        <button onClick={() => startDub(node)} className="ml-auto text-zinc-500 hover:text-white">
-                          ↺ Redo
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
                 {err && <p className="px-2 py-1 text-[10px] text-red-400 bg-panel border-t border-edge">{err}</p>}
                   </>
                 )}
@@ -1205,29 +1089,65 @@ export default function StoryboardCanvas({
               button. Uses cardHeight(n), not a flat NODE_H, since a tail
               could in principle be a not-yet-broken-down TikTok import card
               (taller than a normal card). */}
-          {chainTails.map(({ node: n }) => (
-            <button
-              key={`generate-${n.id}`}
-              onClick={renderVideo}
-              disabled={rendering}
-              className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
-              style={{ left: n.x, top: n.y + cardHeight(n) + 16, width: NODE_W }}
-            >
-              {rendering ? "Rendering..." : "🎬 Generate video"}
-            </button>
-          ))}
+          {chainTails.map(({ node: n }) => {
+            const styleWidgetTop = n.y + cardHeight(n) + 16;
+            const generateButtonTop = styleWidgetTop + STYLE_WIDGET_H + STYLE_WIDGET_GAP;
+            return (
+              <Fragment key={`generate-group-${n.id}`}>
+                <div
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="absolute rounded-lg border border-dashed border-edge2 bg-panel px-2 flex items-center gap-1.5 text-[10px] overflow-hidden"
+                  style={{ left: n.x, top: styleWidgetTop, width: NODE_W, height: STYLE_WIDGET_H }}
+                >
+                  {analyzingStyle ? (
+                    <span className="text-yellow-400 animate-pulse">Analyzing reference video...</span>
+                  ) : board.styleProfile ? (
+                    <>
+                      <span
+                        className="text-zinc-300 truncate flex-1"
+                        title={`${board.styleProfile.pacing} pacing · ${board.styleProfile.transition === "hard_cut" ? "hard cuts" : `${board.styleProfile.transition} transitions`} · ${board.styleProfile.captionStyle} captions · ~${board.styleProfile.avgShotSec.toFixed(1)}s/shot · ${board.styleProfile.notes}`}
+                      >
+                        🎨 {board.styleProfile.pacing} · {board.styleProfile.sourceLabel}
+                      </span>
+                      <button onClick={startStyleUpload} title="Replace reference video" className="text-zinc-500 hover:text-white shrink-0">
+                        ↺
+                      </button>
+                      <button onClick={clearStyleProfile} title="Clear reference video" className="text-zinc-500 hover:text-red-400 shrink-0">
+                        ✕
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-zinc-500 shrink-0">🎨 Reference (optional):</span>
+                      <button onClick={startStyleUpload} className="text-zinc-300 hover:text-white shrink-0">
+                        📎 Upload
+                      </button>
+                      <button onClick={promptForStyleUrl} className="text-zinc-300 hover:text-white shrink-0">
+                        🔗 Link
+                      </button>
+                    </>
+                  )}
+                </div>
+                {styleError && (
+                  <p
+                    className="absolute text-[9px] text-red-400 leading-tight"
+                    style={{ left: n.x, top: styleWidgetTop + STYLE_WIDGET_H + 2, width: NODE_W }}
+                  >
+                    {styleError}
+                  </p>
+                )}
+                <button
+                  onClick={renderVideo}
+                  disabled={rendering}
+                  className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
+                  style={{ left: n.x, top: generateButtonTop, width: NODE_W }}
+                >
+                  {rendering ? "Rendering..." : "🎬 Generate video"}
+                </button>
+              </Fragment>
+            );
+          })}
         </div>
-      </div>
-
-      <div className="border-t border-edge bg-panel px-5 py-3 shrink-0">
-        <label className="text-xs text-zinc-500 mb-1 block">Overall editing direction (pacing, music, transitions, anything that applies to the whole cut)</label>
-        <textarea
-          value={board.direction}
-          onChange={(e) => setBoard((b) => ({ ...b, direction: e.target.value }))}
-          placeholder="e.g. fast cuts on the beat, quick zoom-ins on reactions, upbeat trending audio, keep total runtime under 45s..."
-          rows={2}
-          className="w-full px-3 py-2 rounded-lg bg-panel2 border border-edge text-sm text-zinc-100 outline-none focus:border-brand-500 resize-none"
-        />
       </div>
 
       {pickerForNode && (
