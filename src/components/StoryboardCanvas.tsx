@@ -68,6 +68,25 @@ const MAX_NODE_H = 900;
 
 const ACCENTS = ["#5cc4ee", "#f472b6", "#facc15", "#4ade80", "#a78bfa", "#fb923c"];
 
+// Rough, hand-tuned wait-time estimates (seconds) per async action kind —
+// shown next to the busy/spinner state so the user has a sense of how long
+// to expect instead of staring at a bare "Working...". Deliberately just
+// reasonable guesses based on each action's real cost (a plain file upload
+// vs. ffmpeg extraction + Whisper transcription + a Claude call), not
+// measured telemetry — see beginBusy/estimateLabel below for how they're
+// used.
+const ACTION_ESTIMATE_SEC: Record<string, number> = {
+  upload: 8,
+  aiImage: 15,
+  breakdown: 50, // ffmpeg trims + whisper transcript + Claude analysis + shooting guide
+  breakdownChain: 55, // same pipeline, plus matching onto an existing chain
+  shoppableScript: 20,
+  productScript: 50, // same transcribe+analyze pipeline as breakdown, plus one more Claude call
+  renderVideo: 30,
+  styleAnalyze: 20,
+  journalReply: 10,
+};
+
 // Pulls a TikTok URL out of arbitrary pasted text (share links usually come
 // with surrounding caption text), or null if there isn't one.
 function isTikTokUrl(text: string): string | null {
@@ -181,6 +200,23 @@ export default function StoryboardCanvas({
   const [productPickerNodeId, setProductPickerNodeId] = useState<string | null>(null);
   const [busyNodeId, setBusyNodeId] = useState<string | null>(null);
   const [nodeErrors, setNodeErrors] = useState<Record<string, string>>({});
+  // ---- "roughly how long will this take" wait-time estimate ----
+  // busyKind names which ACTION_ESTIMATE_SEC entry is running right now (set
+  // right before any async action's fetch, cleared in its finally — see
+  // beginBusy below); busyStartedAtRef timestamps when it began. `tick`
+  // exists purely to force a re-render once a second while something is
+  // busy, so estimateLabel's elapsed-time math stays current without a
+  // second copy of the clock in state.
+  const [busyKind, setBusyKind] = useState<string | null>(null);
+  const busyStartedAtRef = useRef<number>(0);
+  const [tick, setTick] = useState(0);
+  // Ref video staged on a chain-head card for "Breakdown chain" — keyed by
+  // that card's nodeId. Transient client-only state (not part of `board`,
+  // never autosaved): the uploaded file already lives on disk via the
+  // normal /upload route, this just remembers its URL long enough for the
+  // user to hit the Breakdown button. Cleared once the breakdown succeeds.
+  const [refVideoByNode, setRefVideoByNode] = useState<Record<string, { url: string; kind: "video" | "image" }>>({});
+  const [refUploadingNodeId, setRefUploadingNodeId] = useState<string | null>(null);
   // Click-to-connect (not drag-to-connect — the dots are small and dragging
   // precisely onto another one was fiddly). Click a dot to arm a connection
   // from that node; a dashed line then follows the cursor; click any dot on
@@ -279,6 +315,7 @@ export default function StoryboardCanvas({
     setJournalDraft("");
     setJournalEntries((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: text }]);
     setJournalSending(true);
+    beginBusy("journalReply");
     try {
       const res = await fetch("/api/journal", {
         method: "POST",
@@ -294,6 +331,7 @@ export default function StoryboardCanvas({
       // not core workflow (the entry itself is still saved server-side).
     } finally {
       setJournalSending(false);
+      setBusyKind(null);
     }
   }
 
@@ -301,6 +339,36 @@ export default function StoryboardCanvas({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadNodeIdRef = useRef<string | null>(null);
   const styleFileInputRef = useRef<HTMLInputElement | null>(null);
+  const refFileInputRef = useRef<HTMLInputElement | null>(null);
+  const refUploadNodeIdRef = useRef<string | null>(null);
+
+  // Marks an async action as "busy" for wait-time-estimate purposes — call
+  // right before starting the fetch, alongside whichever specific busy flag
+  // (busyNodeId/rendering/analyzingStyle/journalSending) that action already
+  // sets. `kind` must be a key of ACTION_ESTIMATE_SEC.
+  function beginBusy(kind: string) {
+    busyStartedAtRef.current = Date.now();
+    setBusyKind(kind);
+  }
+
+  // Ticks once a second while any action is busy, purely to force
+  // estimateLabel below to re-render with a fresh elapsed time.
+  useEffect(() => {
+    if (!busyKind) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [busyKind]);
+
+  // `_tick` isn't read — it's just the effect dependency that makes this
+  // recompute every second while busy.
+  function estimateLabel(fallback: string, _tick: number): string {
+    if (!busyKind) return fallback;
+    const estimate = ACTION_ESTIMATE_SEC[busyKind] ?? 20;
+    const elapsed = Math.max(0, Math.round((Date.now() - busyStartedAtRef.current) / 1000));
+    const remaining = estimate - elapsed;
+    if (remaining > 2) return `Working... (~${remaining}s left)`;
+    return "Almost done...";
+  }
 
   // ---- autosave (debounced) ----
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -670,6 +738,7 @@ export default function StoryboardCanvas({
     e.target.value = "";
     if (!file || !nodeId) return;
     setBusyNodeId(nodeId);
+    beginBusy("upload");
     clearNodeError(nodeId);
     try {
       const form = new FormData();
@@ -686,7 +755,55 @@ export default function StoryboardCanvas({
       setNodeErrors((prev) => ({ ...prev, [nodeId]: err.message || "Upload failed" }));
     } finally {
       setBusyNodeId(null);
+      setBusyKind(null);
     }
+  }
+
+  // "Import original video" on a chain-head card — a SEPARATE upload target
+  // from the card's own clip slot above (startUpload/handleFileChosen):
+  // reuses the same /upload route, but under a `${nodeId}__ref` filename so
+  // it lands as its own file rather than colliding with (or replacing) the
+  // card's own attached footage. The returned URL is kept in local state
+  // only (refVideoByNode) until the user hits "Breakdown chain".
+  function startRefUpload(nodeId: string) {
+    refUploadNodeIdRef.current = nodeId;
+    refFileInputRef.current?.click();
+  }
+
+  async function handleRefFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const nodeId = refUploadNodeIdRef.current;
+    e.target.value = "";
+    if (!file || !nodeId) return;
+    setRefUploadingNodeId(nodeId);
+    beginBusy("upload");
+    clearNodeError(nodeId);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("nodeId", `${nodeId}__ref`);
+      const res = await fetch(`${apiBase}/upload`, {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      if (data.kind !== "video") throw new Error("The reference file needs to be a video, not a photo.");
+      setRefVideoByNode((prev) => ({ ...prev, [nodeId]: { url: data.url, kind: data.kind } }));
+    } catch (err: any) {
+      setNodeErrors((prev) => ({ ...prev, [nodeId]: err.message || "Upload failed" }));
+    } finally {
+      setRefUploadingNodeId(null);
+      setBusyKind(null);
+    }
+  }
+
+  function removeRefVideo(nodeId: string) {
+    setRefVideoByNode((prev) => {
+      const next = { ...prev };
+      delete next[nodeId];
+      return next;
+    });
   }
 
   // "Paste a TikTok link anywhere" — creates a fresh card (placed the same
@@ -794,6 +911,7 @@ export default function StoryboardCanvas({
 
   async function generateAiImage(node: StoryboardNode) {
     setBusyNodeId(node.id);
+    beginBusy("aiImage");
     clearNodeError(node.id);
     try {
       const res = await fetch(`${apiBase}/generate-image`, {
@@ -808,6 +926,7 @@ export default function StoryboardCanvas({
       setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Generation failed" }));
     } finally {
       setBusyNodeId(null);
+      setBusyKind(null);
     }
   }
 
@@ -819,6 +938,7 @@ export default function StoryboardCanvas({
   async function startBreakdown(node: StoryboardNode) {
     if (!window.confirm("Break this TikTok clip down into 6 tagged stage cards? The original card will be replaced.")) return;
     setBusyNodeId(node.id);
+    beginBusy("breakdown");
     clearNodeError(node.id);
     try {
       const res = await fetch(`${apiBase}/breakdown`, {
@@ -837,6 +957,43 @@ export default function StoryboardCanvas({
       setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Breakdown failed" }));
     } finally {
       setBusyNodeId(null);
+      setBusyKind(null);
+    }
+  }
+
+  // "Breakdown chain" — the sibling of startBreakdown above, for a chain
+  // whose cards already exist (e.g. from "Insert template" or hand-wired):
+  // takes the reference video staged via startRefUpload on this chain-head
+  // card and asks the server to distribute the 6-stage analysis onto the
+  // EXISTING connected cards (matched by stageTag, positional fallback for
+  // untagged ones) instead of creating/replacing any node. See
+  // breakdown-chain/route.ts for the matching logic.
+  async function startBreakdownChain(node: StoryboardNode) {
+    const ref = refVideoByNode[node.id];
+    if (!ref) return;
+    if (!window.confirm("Break down this reference video and fill in the connected chain's script + shooting guide? Cards with no clip yet may get a reference clip trimmed in.")) return;
+    setBusyNodeId(node.id);
+    beginBusy("breakdownChain");
+    clearNodeError(node.id);
+    try {
+      const res = await fetch(`${apiBase}/breakdown-chain`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodeId: node.id, referenceVideoUrl: ref.url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Chain breakdown failed");
+      const updatedById = new Map<string, StoryboardNode>((data.updatedNodes as StoryboardNode[]).map((n) => [n.id, n]));
+      setBoard((b) => ({
+        ...b,
+        nodes: b.nodes.map((n) => updatedById.get(n.id) || n),
+      }));
+      removeRefVideo(node.id);
+    } catch (err: any) {
+      setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Chain breakdown failed" }));
+    } finally {
+      setBusyNodeId(null);
+      setBusyKind(null);
     }
   }
 
@@ -852,6 +1009,7 @@ export default function StoryboardCanvas({
   async function generateShoppableScript(node: StoryboardNode) {
     if (!window.confirm("Generate a new 6-stage shoppable script from the connected cards? The product card stays on the board, just disconnected.")) return;
     setBusyNodeId(node.id);
+    beginBusy("shoppableScript");
     clearNodeError(node.id);
     try {
       const res = await fetch(`${apiBase}/generate-shoppable-script`, {
@@ -870,6 +1028,7 @@ export default function StoryboardCanvas({
       setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Script generation failed" }));
     } finally {
       setBusyNodeId(null);
+      setBusyKind(null);
     }
   }
 
@@ -885,6 +1044,7 @@ export default function StoryboardCanvas({
     setProductPickerNodeId(null);
     if (!nodeId) return;
     setBusyNodeId(nodeId);
+    beginBusy("productScript");
     clearNodeError(nodeId);
     try {
       const res = await fetch(`${apiBase}/generate-product-script`, {
@@ -903,6 +1063,7 @@ export default function StoryboardCanvas({
       setNodeErrors((prev) => ({ ...prev, [nodeId]: err.message || "Script generation failed" }));
     } finally {
       setBusyNodeId(null);
+      setBusyKind(null);
     }
   }
 
@@ -919,6 +1080,7 @@ export default function StoryboardCanvas({
 
   async function renderVideo() {
     setRendering(true);
+    beginBusy("renderVideo");
     setRenderError(null);
     setRenderResult(null);
     try {
@@ -932,6 +1094,7 @@ export default function StoryboardCanvas({
       setRenderError(err.message || "Render failed");
     } finally {
       setRendering(false);
+      setBusyKind(null);
     }
   }
 
@@ -944,6 +1107,7 @@ export default function StoryboardCanvas({
     e.target.value = "";
     if (!file) return;
     setAnalyzingStyle(true);
+    beginBusy("styleAnalyze");
     setStyleError(null);
     try {
       const form = new FormData();
@@ -959,6 +1123,7 @@ export default function StoryboardCanvas({
       setStyleError(err.message || "Style analysis failed");
     } finally {
       setAnalyzingStyle(false);
+      setBusyKind(null);
     }
   }
 
@@ -969,6 +1134,7 @@ export default function StoryboardCanvas({
 
   async function analyzeStyleFromUrl(url: string) {
     setAnalyzingStyle(true);
+    beginBusy("styleAnalyze");
     setStyleError(null);
     try {
       const res = await fetch(`${apiBase}/style/analyze`, {
@@ -983,6 +1149,7 @@ export default function StoryboardCanvas({
       setStyleError(err.message || "Style analysis failed");
     } finally {
       setAnalyzingStyle(false);
+      setBusyKind(null);
     }
   }
 
@@ -1000,6 +1167,22 @@ export default function StoryboardCanvas({
   // stages tagged in CTA order, which was too rigid for freeform boards).
   const chainTails = resolveChainTails(board.nodes, board.connections).filter(
     (t) => t.chainLength >= MIN_CHAIN_LENGTH_FOR_GENERATE
+  );
+
+  // Chain HEADS — the mirror-image anchor point of chainTails above: a node
+  // with an outgoing connection but no incoming one, i.e. the start of a
+  // connected sequence. Renders the "import a reference video + Breakdown
+  // chain" widget below it (see startRefUpload/startBreakdownChain), same
+  // anchored-below-the-card placement pattern the tail's Generate button
+  // and the product card's Generate script button already use. Excludes the
+  // two special pending-card layouts, which already have their own
+  // breakdown-ish actions built into the card itself.
+  const chainHeads = board.nodes.filter(
+    (n) =>
+      !isPendingTiktokBreakdown(n) &&
+      !isPendingProductCard(n) &&
+      board.connections.some((c) => c.fromId === n.id) &&
+      !board.connections.some((c) => c.toId === n.id)
   );
 
   // One card can have any number of connections in and out — anchor side
@@ -1063,6 +1246,7 @@ export default function StoryboardCanvas({
     <div className="fixed inset-0 bg-panel2 z-50 flex flex-col">
       <input ref={fileInputRef} type="file" accept="video/*,image/*" className="hidden" onChange={handleFileChosen} />
       <input ref={styleFileInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" onChange={handleStyleFileChosen} />
+      <input ref={refFileInputRef} type="file" accept="video/*" className="hidden" onChange={handleRefFileChosen} />
 
       {/* Two rows: the button row never wraps its controls away from the
           Close button (shrink-0 all round), and the Generate-readiness
@@ -1073,7 +1257,7 @@ export default function StoryboardCanvas({
           <div className="min-w-0 flex-1">
             <h3 className="text-zinc-900 font-semibold text-sm truncate">Generate Video — Storyboard</h3>
             <p className="text-xs text-zinc-500 break-words">
-              Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok video link anywhere to add it as a new video card, or a TikTok product link to add a product card · Ctrl/Cmd+drag a card to move its whole connected chain together · Shift+drag empty space to box-select multiple cards.
+              Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok video link anywhere to add it as a new video card, or a TikTok product link to add a product card · Ctrl/Cmd+drag a card to move its whole connected chain together · Shift+drag empty space to box-select multiple cards · the head of any connected chain gets an "Import original video" widget below it — upload a reference video and hit Breakdown chain to auto-fill that chain's script + shooting guide.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
@@ -1165,7 +1349,7 @@ export default function StoryboardCanvas({
               {e.content}
             </div>
           ))}
-          {journalSending && <div className="self-start text-xs text-zinc-500 animate-pulse">...</div>}
+          {journalSending && <div className="self-start text-xs text-zinc-500 animate-pulse">{estimateLabel("...", tick)}</div>}
         </div>
         <form
           onSubmit={(e) => {
@@ -1378,7 +1562,7 @@ export default function StoryboardCanvas({
                     <div className="relative bg-black shrink-0" style={{ height: TIKTOK_PREVIEW_VIDEO_H }}>
                       {busy && (
                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
-                          <span className="text-[11px] text-white animate-pulse">Working...</span>
+                          <span className="text-[11px] text-white animate-pulse">{estimateLabel("Working...", tick)}</span>
                         </div>
                       )}
                       {node.clip && (
@@ -1435,7 +1619,7 @@ export default function StoryboardCanvas({
                     <div className="relative bg-black shrink-0" style={{ height: TIKTOK_PREVIEW_VIDEO_H }}>
                       {busy && (
                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
-                          <span className="text-[11px] text-white animate-pulse">Working...</span>
+                          <span className="text-[11px] text-white animate-pulse">{estimateLabel("Working...", tick)}</span>
                         </div>
                       )}
                       {node.productRef!.imageUrl ? (
@@ -1589,7 +1773,7 @@ export default function StoryboardCanvas({
                 >
                   {busy && (
                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
-                      <span className="text-[11px] text-white animate-pulse">Working...</span>
+                      <span className="text-[11px] text-white animate-pulse">{estimateLabel("Working...", tick)}</span>
                     </div>
                   )}
                   {node.clip ? (
@@ -1703,7 +1887,7 @@ export default function StoryboardCanvas({
                   style={{ left: n.x, top: styleWidgetTop, width: nodeWidth(n), height: STYLE_WIDGET_H }}
                 >
                   {analyzingStyle ? (
-                    <span className="text-yellow-600 animate-pulse">Analyzing reference video...</span>
+                    <span className="text-yellow-600 animate-pulse">{estimateLabel("Analyzing reference video...", tick)}</span>
                   ) : board.styleProfile ? (
                     <>
                       <span
@@ -1745,7 +1929,7 @@ export default function StoryboardCanvas({
                   className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
                   style={{ left: n.x, top: generateButtonTop, width: nodeWidth(n) }}
                 >
-                  {rendering ? "Rendering..." : "🎬 Generate video"}
+                  {rendering ? estimateLabel("Rendering...", tick) : "🎬 Generate video"}
                 </button>
               </Fragment>
             );
@@ -1772,9 +1956,56 @@ export default function StoryboardCanvas({
                 className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
                 style={{ left: n.x, top: n.y + cardHeight(n) + 16, width: nodeWidth(n) }}
               >
-                {busyNodeId === n.id ? "Generating script..." : "✨ Generate script"}
+                {busyNodeId === n.id ? estimateLabel("Generating script...", tick) : "✨ Generate script"}
               </button>
             ))}
+
+          {/* "Import original video" + "Breakdown chain" — lives under the
+              HEAD of any connected chain (see chainHeads above). Upload a
+              full reference video here and it gets transcribed + run
+              through the same 6-stage funnel analysis as the single-card
+              Breakdown action, then the results are matched onto this
+              chain's EXISTING cards (by stageTag, positional fallback for
+              untagged ones) — no new cards created, nothing deleted. */}
+          {chainHeads.map((n) => {
+            const ref = refVideoByNode[n.id];
+            const busy = busyNodeId === n.id;
+            return (
+              <div
+                key={`chainhead-${n.id}`}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="absolute rounded-lg border border-dashed border-edge2 bg-panel px-2 py-2 flex items-center gap-1.5 text-[10px] overflow-hidden"
+                style={{ left: n.x, top: n.y + cardHeight(n) + 16, width: nodeWidth(n) }}
+              >
+                {ref ? (
+                  <>
+                    <span className="flex-1 text-zinc-600 truncate">✅ Reference video ready</span>
+                    <button onClick={() => removeRefVideo(n.id)} title="Remove reference video" className="text-zinc-500 hover:text-red-400 shrink-0">
+                      ✕
+                    </button>
+                    <button
+                      onClick={() => startBreakdownChain(n)}
+                      disabled={busy}
+                      className="px-2.5 py-1.5 rounded bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[10px] font-medium shrink-0 whitespace-nowrap"
+                    >
+                      {busy ? estimateLabel("Breaking down...", tick) : "🎬 Breakdown chain"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-zinc-500 shrink-0">📥 Reference video:</span>
+                    <button
+                      onClick={() => startRefUpload(n.id)}
+                      disabled={refUploadingNodeId === n.id}
+                      className="text-zinc-600 hover:text-zinc-900 disabled:opacity-40 shrink-0"
+                    >
+                      {refUploadingNodeId === n.id ? estimateLabel("Uploading...", tick) : "Upload to auto-fill this chain"}
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
 
           {/* Shift+drag rubber-band selection rectangle — world-space, so it
               lives inside the pannable/zoomable div and scales with pan/zoom
