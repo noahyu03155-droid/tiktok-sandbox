@@ -813,14 +813,25 @@ export default function TrendsPageContent({
   const [personalizedLoading, setPersonalizedLoading] = useState(false);
   const [personalizedError, setPersonalizedError] = useState<string | null>(null);
 
-  // "Product" tab — Top 50 Selling Products for the user's own saved
-  // registration category (see /api/trends/top-products). Lazily loaded the
-  // first time the user switches to this tab, not on initial page load.
+  // "Product" tab — Top 50 Selling Products (see /api/trends/top-products).
+  // Defaults to the user's own saved registration category (if any) so a
+  // regular member immediately sees a "For You" recommendation, but a
+  // dropdown (own state, separate from the Video tab's category picker below)
+  // lets ANYONE — including a member — browse another category's top
+  // sellers too. Lazily loaded the first time the user switches to this tab
+  // or picks a different category, not on initial page load.
   const [topProducts, setTopProducts] = useState<EnrichedItem[] | null>(null);
   const [topProductsLoading, setTopProductsLoading] = useState(false);
   const [topProductsError, setTopProductsError] = useState<string | null>(null);
   const [topProductsFallback, setTopProductsFallback] = useState<string | null>(null);
-  const [topProductsLoaded, setTopProductsLoaded] = useState(false);
+  const [productCategory, setProductCategory] = useState<{ id: string; label: string } | null>(preferredCategory);
+  const [productCategoryQuery, setProductCategoryQuery] = useState("");
+  const [productCategoryDropdownOpen, setProductCategoryDropdownOpen] = useState(false);
+  const productCategoryDropdownRef = useRef<HTMLDivElement | null>(null);
+  // Which category id the current topProducts data was fetched for, so
+  // toggling back to this tab without changing the category doesn't
+  // re-fetch every time.
+  const lastTopProductsCategoryId = useRef<string | null>(null);
 
   // Category picker + date-range window for the Update pull.
   const [categories, setCategories] = useState<CategoryNode[] | null>(null);
@@ -867,11 +878,13 @@ export default function TrendsPageContent({
     }
   }
 
-  async function loadTopProducts() {
+  async function loadTopProducts(category: { id: string; label: string }) {
     setTopProductsLoading(true);
     setTopProductsError(null);
+    lastTopProductsCategoryId.current = category.id;
     try {
-      const res = await fetch("/api/trends/top-products", { cache: "no-store" });
+      const qs = new URLSearchParams({ categoryId: category.id, categoryLabel: category.label });
+      const res = await fetch(`/api/trends/top-products?${qs.toString()}`, { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Failed to load top products");
       setTopProducts(data.products || []);
@@ -880,7 +893,6 @@ export default function TrendsPageContent({
       setTopProductsError(err.message || "Failed to load top products");
     } finally {
       setTopProductsLoading(false);
-      setTopProductsLoaded(true);
     }
   }
 
@@ -891,14 +903,28 @@ export default function TrendsPageContent({
   }, []);
 
   // Fetch the Product tab's data the first time the user actually switches
-  // to it, not on initial page load — this is its own live FastMoss pull,
-  // no need to pay that cost for someone who never opens the tab.
+  // to it (or when they pick a different category via the dropdown) — this
+  // is its own live FastMoss pull, no need to pay that cost for someone who
+  // never opens the tab, or to re-pull every time they just toggle back.
   useEffect(() => {
-    if (viewMode === "product" && preferredCategory && !topProductsLoaded && !topProductsLoading) {
-      loadTopProducts();
-    }
+    if (viewMode !== "product" || !productCategory) return;
+    if (lastTopProductsCategoryId.current === productCategory.id) return;
+    loadTopProducts(productCategory);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode]);
+  }, [viewMode, productCategory]);
+
+  // Close the Product tab's category dropdown on any click outside it —
+  // mirrors the Video tab's categoryDropdownOpen effect below.
+  useEffect(() => {
+    if (!productCategoryDropdownOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (!productCategoryDropdownRef.current?.contains(e.target as Node)) {
+        setProductCategoryDropdownOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [productCategoryDropdownOpen]);
 
   // Fetch the FastMoss category tree once on mount (cheap, cached server-side).
   // Also do a single status poll (GET only — never triggers a scan) so that a
@@ -959,6 +985,15 @@ export default function TrendsPageContent({
     if (!q) return flatCategories.slice(0, 50); // cap the no-query list so it isn't 1000s of DOM nodes
     return flatCategories.filter((c) => c.label.toLowerCase().includes(q)).slice(0, 50);
   }, [flatCategories, categoryQuery]);
+
+  // Same flatCategories list, own query state — the Product tab's category
+  // dropdown is independent from the Video tab's (different open/closed
+  // state, different search text, different selection).
+  const productFilteredCategories = useMemo(() => {
+    const q = productCategoryQuery.trim().toLowerCase();
+    if (!q) return flatCategories.slice(0, 50);
+    return flatCategories.filter((c) => c.label.toLowerCase().includes(q)).slice(0, 50);
+  }, [flatCategories, productCategoryQuery]);
 
   useEffect(() => {
     const hasBusy = (batches || []).some((b) =>
@@ -1129,31 +1164,89 @@ export default function TrendsPageContent({
 
       {viewMode === "product" ? (
         <div className="space-y-6">
-          <div>
-            <h2 className="text-xl font-semibold text-zinc-900 mb-1">{t("trendTopSellingProducts")}</h2>
-            {preferredCategory && (
-              <p className="text-sm text-zinc-500">
-                {t("trendTopSellingProductsSubtitle", { category: preferredCategory.label })}
-              </p>
-            )}
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              {/* A member's DEFAULT selection (their own saved registration
+                  category) is framed as "For You" so they know this is the
+                  system recommending it, not a generic list — switches to a
+                  plain "Top 50 Selling Products" heading the moment they (or
+                  an admin with no saved category) pick something else via
+                  the dropdown below. */}
+              <h2 className="text-xl font-semibold text-zinc-900 mb-1">
+                {preferredCategory && productCategory?.id === preferredCategory.id
+                  ? t("trendForYou")
+                  : t("trendTopSellingProducts")}
+              </h2>
+              {productCategory && (
+                <p className="text-sm text-zinc-500">
+                  {preferredCategory && productCategory.id === preferredCategory.id
+                    ? t("trendForYouSubtitle", { category: productCategory.label })
+                    : t("trendTopSellingProductsSubtitle", { category: productCategory.label })}
+                </p>
+              )}
+            </div>
+            {/* Own dropdown (separate open/search state from the Video tab's,
+                see productCategoryDropdownOpen above) — lets anyone, member
+                or admin, browse any category's top sellers, not just their
+                own saved one. */}
+            <div className="relative" ref={productCategoryDropdownRef}>
+              <button
+                onClick={() => setProductCategoryDropdownOpen((v) => !v)}
+                className="text-xs rounded-lg px-3 py-1.5 border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 whitespace-nowrap max-w-[180px] truncate"
+                title={productCategory?.label || t("trendCategoryPlaceholder")}
+              >
+                {productCategory ? productCategory.label : t("trendCategoryPlaceholder")}
+              </button>
+              {productCategoryDropdownOpen && (
+                <div className="absolute z-20 top-full right-0 mt-1 w-72 rounded-lg border border-edge bg-panel shadow-xl p-2">
+                  <input
+                    autoFocus
+                    value={productCategoryQuery}
+                    onChange={(e) => setProductCategoryQuery(e.target.value)}
+                    placeholder={t("trendCategorySearchPlaceholder")}
+                    className="w-full px-2 py-1.5 rounded bg-panel2 border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 mb-2"
+                  />
+                  {categoriesError && <p className="text-[11px] text-red-400 px-1 pb-1">{categoriesError}</p>}
+                  <div className="max-h-64 overflow-y-auto space-y-0.5">
+                    {productFilteredCategories.length === 0 && (
+                      <p className="text-[11px] text-zinc-500 px-1 py-2">{t("trendCategoryNoMatches")}</p>
+                    )}
+                    {productFilteredCategories.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => {
+                          setProductCategory(c);
+                          setProductCategoryDropdownOpen(false);
+                          setProductCategoryQuery("");
+                        }}
+                        className="w-full text-left px-2 py-1.5 rounded text-xs text-zinc-600 hover:bg-panel2 hover:text-zinc-900 truncate"
+                        title={c.label}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-          {!preferredCategory && (
+          {!productCategory && (
             <p className="text-sm text-zinc-500">{t("trendNoCategoryForProducts")}</p>
           )}
           {topProductsLoading && !topProducts && (
             <p className="text-sm text-yellow-600 animate-pulse">{t("trendUpdating")}</p>
           )}
           {topProductsError && <p className="text-sm text-red-400">{topProductsError}</p>}
-          {preferredCategory && topProductsFallback && (
+          {productCategory && topProductsFallback && (
             <p className="text-xs text-zinc-500">
-              No data yet for "{preferredCategory.label}" specifically — showing the broader category "{topProductsFallback}" instead.
+              No data yet for "{productCategory.label}" specifically — showing the broader category "{topProductsFallback}" instead.
             </p>
           )}
-          {preferredCategory && topProducts && (
+          {productCategory && topProducts && (
             <>
               <div className="flex justify-end">
                 <button
-                  onClick={loadTopProducts}
+                  onClick={() => loadTopProducts(productCategory)}
                   disabled={topProductsLoading}
                   className="text-xs rounded-lg px-3 py-1.5 border border-edge text-zinc-500 hover:text-zinc-900 hover:border-edge2 disabled:opacity-40 whitespace-nowrap"
                 >

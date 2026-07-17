@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { getUserById, getVideo } from "@/lib/db";
 import { buildFastmossVideoUrl, fetchCategoryTrendVideos, fetchFastMossCategories, formatUsd, toCreatorInfo } from "@/lib/fastmoss";
@@ -73,13 +73,21 @@ function dedupeBySales(items: RawTrendItem[], limit: number): RawTrendItem[] {
     .slice(0, limit);
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const sessionUser = getCurrentUser();
   if (!sessionUser) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const user = getUserById(sessionUser.userId);
-  let categoryId = user?.preferredCategoryId || null;
-  let categoryLabel = user?.preferredCategoryLabel || null;
+  // The Product tab's own category dropdown (see TrendsPageContent.tsx) lets
+  // ANYONE browse any category's top sellers, not just their own saved one —
+  // an explicit ?categoryId always wins. Falls back to the user's saved
+  // registration category when the client doesn't pass one (its default
+  // selection), so this still "just works" the way it did before the
+  // dropdown existed.
+  const qsCategoryId = req.nextUrl.searchParams.get("categoryId");
+  const qsCategoryLabel = req.nextUrl.searchParams.get("categoryLabel");
+  let categoryId = qsCategoryId || user?.preferredCategoryId || null;
+  let categoryLabel = (qsCategoryId ? qsCategoryLabel : null) || user?.preferredCategoryLabel || null;
   if (!categoryId) {
     return NextResponse.json({ products: null, needsCategory: true });
   }
