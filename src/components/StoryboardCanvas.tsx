@@ -936,7 +936,7 @@ export default function StoryboardCanvas({
   // (one per funnel stage, each trimmed to that stage's time range and
   // pre-filled with the AI's summary/quote as a starting instruction).
   async function startBreakdown(node: StoryboardNode) {
-    if (!window.confirm("Break this TikTok clip down into 6 tagged stage cards? The original card will be replaced.")) return;
+    if (!window.confirm("Break this TikTok clip down into tagged stage cards (only the stages actually found in the video)? The original card will be replaced.")) return;
     setBusyNodeId(node.id);
     beginBusy("breakdown");
     clearNodeError(node.id);
@@ -1576,7 +1576,7 @@ export default function StoryboardCanvas({
                         disabled={busy}
                         className="w-full py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium"
                       >
-                        🔍 Breakdown into 6 stages
+                        🔍 Breakdown into stages
                       </button>
                       <button
                         onClick={() => setProductPickerNodeId(node.id)}

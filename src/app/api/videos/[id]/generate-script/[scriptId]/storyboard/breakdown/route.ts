@@ -11,16 +11,24 @@ import type { StoryboardNode, VideoStats } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-// "Breakdown into 6 stages" — for a card whose clip came from pasting a
+// "Breakdown into stages" — for a card whose clip came from pasting a
 // TikTok link (import-tiktok), runs the same Whisper transcription + Claude
 // 6-stage funnel analysis the standalone Video Analysis feature uses, then
-// splits the single clip into 6 new stage-tagged cards: one per funnel
-// stage (Reaction / Hook / Pain Point / Product Intro / Desired Outcome /
-// CTA), each trimmed to that stage's time range and pre-filled with the
-// AI's summary + quote as a starting instruction to rewrite. The original
-// big card is removed (replaced by the 6). Returns just the delta
-// ({newNodes, newConnections}) — the client applies it onto its own local
-// board state rather than replacing the whole board.
+// splits the single clip into new stage-tagged cards, each trimmed to that
+// stage's time range and pre-filled with the AI's summary + quote as a
+// starting instruction to rewrite. The original big card is removed
+// (replaced by the new ones). Returns just the delta ({newNodes,
+// newConnections}) — the client applies it onto its own local board state
+// rather than replacing the whole board.
+//
+// Two things NOT to assume here (see analyze.ts's blank-stage / no-forced-
+// order rules): (1) a stage the model genuinely couldn't find in this video
+// gets NO card at all — up to 6 cards come back, not always exactly 6; (2)
+// the resulting cards are laid out and connected in the order each stage
+// ACTUALLY occurs in the video (by its analyzed start_time), not the fixed
+// reaction→hook→pain_point→product_intro→desired_outcome→cta key order —
+// e.g. a testimonial-style video whose desired-outcome beat comes before
+// its product intro ends up with those two cards in that same real order.
 
 // Matches the canvas's card layout constants (NODE_W / GAP_X in
 // src/components/StoryboardCanvas.tsx) so the 6 new cards land in a row
@@ -171,9 +179,23 @@ export async function POST(
       console.error("deriveShootingGuide failed — continuing breakdown without a shooting guide:", guideErr);
     }
 
+    // Drop any stage the model left genuinely blank (see analyze.ts's
+    // blank-stage rule) — those get no card at all, rather than an empty
+    // one. Then order what's left by where it ACTUALLY happens in the
+    // video (start_time), not the fixed funnel key order — see the module
+    // comment above.
+    const presentStages = analysis.structure.filter((s) => s.summary.trim() !== "" || s.quote.trim() !== "");
+    if (presentStages.length === 0) {
+      return NextResponse.json(
+        { error: "Couldn't identify any of the funnel stages in this video — try a different clip." },
+        { status: 400 }
+      );
+    }
+    const orderedStages = [...presentStages].sort((a, b) => a.start_time - b.start_time);
+
     const newNodes: StoryboardNode[] = [];
-    for (let i = 0; i < analysis.structure.length; i++) {
-      const stage = analysis.structure[i];
+    for (let i = 0; i < orderedStages.length; i++) {
+      const stage = orderedStages[i];
       const stageSec = stage.end_time - stage.start_time;
       let clip: StoryboardNode["clip"] = null;
       if (stageSec >= MIN_STAGE_SEC) {
@@ -190,13 +212,9 @@ export async function POST(
         ]);
         clip = { source: "tiktok", url: `/api/media/storyboard/${params.scriptId}/${filename}`, kind: "video" };
       }
-      // Don't attach filming guidance for a stage the model left blank
-      // (genuinely not present in this video, per analyze.ts's blank-stage
-      // rule) — deriveShootingGuide still returns SOME text for every key
-      // regardless, so this guards against a guide that isn't actually
-      // grounded in anything real.
-      const stagePresent = stage.summary.trim() !== "" || stage.quote.trim() !== "";
-      const guide = stagePresent ? shootingGuides?.[stage.key] : undefined;
+      // orderedStages is already filtered to non-blank stages, so a guide
+      // lookup here is always for something real.
+      const guide = shootingGuides?.[stage.key];
       newNodes.push({
         id: crypto.randomUUID(),
         label: stage.label,
