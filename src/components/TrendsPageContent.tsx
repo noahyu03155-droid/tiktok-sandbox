@@ -580,29 +580,74 @@ function ProductCard({ item }: { item: EnrichedItem }) {
 
   const productTitle = item.product_name || item.fastmoss_title || "Untitled product";
 
+  // Click-through to the dedicated product detail page (src/app/trends/
+  // product/[productId]/page.tsx) — that page is entirely client-side with
+  // no server-side product lookup, so everything it needs to render
+  // immediately (title/image/price/rank/creator/category/score) is passed
+  // along as query params rather than re-fetched by product id.
+  const detailHref = item.product_id
+    ? `/trends/product/${encodeURIComponent(item.product_id)}?${new URLSearchParams({
+        title: productTitle,
+        ...(item.product_image ? { image: item.product_image } : {}),
+        ...(item.product_price ? { price: item.product_price } : {}),
+        rank: String(item.rank),
+        ...(item.creator_handle ? { creator: item.creator_handle } : {}),
+        ...(item.recommendationScore != null ? { score: String(item.recommendationScore) } : {}),
+      }).toString()}`
+    : null;
+
+  const imageBlock = (
+    <div className="relative aspect-square bg-panel2">
+      <span className="absolute top-2 left-2 z-10 flex items-center gap-0.5 text-[11px] font-bold text-white bg-black/80 rounded-full px-2 py-1 leading-none">
+        🔥 #{item.rank}
+      </span>
+      {item.product_image && !imgFailed ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={item.product_image}
+          alt={productTitle}
+          className="w-full h-full object-cover"
+          onError={() => setImgFailed(true)}
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-4xl">🛍</div>
+      )}
+    </div>
+  );
+
   return (
     <div className="rounded-xl overflow-hidden bg-panel border border-edge hover:border-brand-500 transition-colors">
-      <div className="relative aspect-square bg-panel2">
-        <span className="absolute top-2 left-2 z-10 flex items-center gap-0.5 text-[11px] font-bold text-white bg-black/80 rounded-full px-2 py-1 leading-none">
-          🔥 #{item.rank}
-        </span>
-        {item.product_image && !imgFailed ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={item.product_image}
-            alt={productTitle}
-            className="w-full h-full object-cover"
-            onError={() => setImgFailed(true)}
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-4xl">🛍</div>
-        )}
-      </div>
+      {detailHref ? <Link href={detailHref}>{imageBlock}</Link> : imageBlock}
       <div className="p-3">
-        <p className="text-sm text-zinc-900 line-clamp-2 min-h-[2.5rem]" title={productTitle}>
-          {productTitle}
-        </p>
+        {detailHref ? (
+          <Link href={detailHref} className="hover:text-brand-500">
+            <p className="text-sm text-zinc-900 line-clamp-2 min-h-[2.5rem]" title={productTitle}>
+              {productTitle}
+            </p>
+          </Link>
+        ) : (
+          <p className="text-sm text-zinc-900 line-clamp-2 min-h-[2.5rem]" title={productTitle}>
+            {productTitle}
+          </p>
+        )}
         {item.product_price && <p className="text-sm font-semibold text-brand-400 mt-1">{item.product_price}</p>}
+
+        {item.recommendationScore != null && (
+          <div
+            className="mt-1.5 flex items-center gap-1.5"
+            title={t("trendRecommendationScoreHint")}
+          >
+            <div className="flex-1 h-1 rounded-full bg-panel2 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-brand-500"
+                style={{ width: `${item.recommendationScore}%` }}
+              />
+            </div>
+            <span className="text-[10px] font-semibold text-zinc-600 whitespace-nowrap">
+              {t("trendRecommendationScore", { score: String(item.recommendationScore) })}
+            </span>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-edge text-[10px] text-zinc-500">
           {(item.gmv ?? item.gmv_28d) && (

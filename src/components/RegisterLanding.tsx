@@ -2,33 +2,27 @@
 
 // Register page redesign — styled after a reference SaaS landing page the
 // user liked: a floating pill navbar, a big bold headline with an italic
-// accent line + a fanned deck of real video thumbnails on the right, then a
-// dark "showcase" band with a horizontally auto-scrolling strip of more real
-// thumbnails, and finally the actual sign-up form. Since this account's job
-// eventually is to be sold as a paid subscription, the whole page is meant
-// to read as a proper marketing/landing page rather than a bare login box.
+// accent line + the actual sign-up form right in the hero (under a "Sign up
+// now" label, previously a fanned deck of thumbnails — replaced so a visitor
+// can register without scrolling), then a dark "showcase" band with a
+// horizontally auto-scrolling strip of real thumbnails. Since this account's
+// job eventually is to be sold as a paid subscription, the whole page is
+// meant to read as a proper marketing/landing page rather than a bare login
+// box. This is also now the app's default entry point for anyone without a
+// session — see middleware.ts, which sends unauthenticated visits here
+// instead of /login (still reachable via the navbar's "Log in" link).
 //
-// The thumbnails are REAL images already fetched/cached by this app's own
-// TikTok pipeline (see the server component in src/app/register/page.tsx,
-// which reads them via listVideos()) — not anything scraped from a
-// reference site. If the install is brand new and hasn't analyzed any
-// videos yet, both the deck and the strip fall back to plain gradient tiles
-// so the page never looks broken.
+// The showcase strip's thumbnails are REAL images already fetched/cached by
+// this app's own TikTok pipeline (see the server component in
+// src/app/register/page.tsx, which reads them via listVideos()) — not
+// anything scraped from a reference site. If the install is brand new and
+// hasn't analyzed any videos yet, it falls back to plain gradient tiles so
+// the page never looks broken.
 import { Suspense } from "react";
 import { useLocale } from "@/lib/i18n";
 import Logo from "@/components/Logo";
 import LanguageToggle from "@/components/LanguageToggle";
 import RegisterForm from "@/components/RegisterForm";
-
-// Fanned-deck placement for up to 5 cards — hand-tuned offsets/rotations so
-// they read as a loosely shuffled stack, same visual idea as the reference.
-const DECK_LAYOUT = [
-  { x: -40, y: 40, rotate: -8, z: 1 },
-  { x: 30, y: 70, rotate: 6, z: 2 },
-  { x: -10, y: 10, rotate: -3, z: 3 },
-  { x: 70, y: 20, rotate: 9, z: 2 },
-  { x: 10, y: -20, rotate: -12, z: 1 },
-];
 
 function ThumbCard({
   src,
@@ -62,12 +56,6 @@ function ThumbCard({
 
 export default function RegisterLanding({ thumbnails }: { thumbnails: string[] }) {
   const { t } = useLocale();
-
-  const deckImages = thumbnails.slice(0, 5);
-  // Pad the deck with nulls (renders a gradient placeholder tile) so the
-  // fanned layout always has 5 cards even on a fresh install with little/no
-  // cached video data yet.
-  while (deckImages.length < 5) deckImages.push(null as unknown as string);
 
   const stripSource = thumbnails.length > 0 ? thumbnails : new Array(10).fill(null);
   // Doubled so the CSS animation (translateX -50%) loops seamlessly.
@@ -111,23 +99,16 @@ export default function RegisterLanding({ thumbnails }: { thumbnails: string[] }
           </a>
         </div>
 
-        {/* Fanned deck of real analyzed-video thumbnails */}
-        <div className="relative h-[380px] sm:h-[440px] flex items-center justify-center lg:justify-end">
-          <div className="relative w-56 h-full">
-            {deckImages.map((src, i) => {
-              const layout = DECK_LAYOUT[i];
-              return (
-                <ThumbCard
-                  key={i}
-                  src={src}
-                  className="absolute w-36 sm:w-40 left-1/2 top-1/2"
-                  style={{
-                    zIndex: layout.z,
-                    transform: `translate(-50%, -50%) translate(${layout.x}px, ${layout.y}px) rotate(${layout.rotate}deg)`,
-                  }}
-                />
-              );
-            })}
+        {/* Sign-up form, right in the hero — replaces the old fanned thumbnail
+            deck so a visitor can register without scrolling at all. */}
+        <div id="register-form" className="flex items-center justify-center lg:justify-end scroll-mt-24">
+          <div className="w-full max-w-sm">
+            <p className="text-xs font-bold tracking-wide text-brand-500 uppercase mb-3 text-center lg:text-left">
+              {t("registerSignUpNowLabel")}
+            </p>
+            <Suspense fallback={null}>
+              <RegisterForm />
+            </Suspense>
           </div>
         </div>
       </div>
@@ -144,13 +125,6 @@ export default function RegisterLanding({ thumbnails }: { thumbnails: string[] }
             <ThumbCard key={i} src={src} className="w-28 sm:w-32" borderClassName="border-zinc-700" />
           ))}
         </div>
-      </div>
-
-      {/* Sign-up form */}
-      <div id="register-form" className="flex items-center justify-center px-4 py-20 scroll-mt-24">
-        <Suspense fallback={null}>
-          <RegisterForm />
-        </Suspense>
       </div>
     </div>
   );

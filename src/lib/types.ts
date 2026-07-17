@@ -493,6 +493,13 @@ export interface TrendItem {
   // 28-day GMV stats on demand alongside the product analysis, see
   // /api/trends/analyze-product.
   creator_handle: string | null;
+  // 1-100 "how well does this match what COTORX has learned about the
+  // requesting user" score, computed on-demand and per-request by
+  // /api/trends/top-products (see productRelevance.ts) — NOT persisted on
+  // the shared TrendBatch/TrendItem in db.json, since it's specific to
+  // whoever asked. Optional/undefined on every other TrendItem in the app;
+  // null when scoring was attempted but skipped (no user signal available).
+  recommendationScore?: number | null;
 }
 
 export interface TrendBatch {

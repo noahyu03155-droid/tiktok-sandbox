@@ -4,6 +4,7 @@ import { getUserById, getVideo } from "@/lib/db";
 import { buildFastmossVideoUrl, fetchCategoryTrendVideos, fetchFastMossCategories, formatUsd, toCreatorInfo } from "@/lib/fastmoss";
 import type { FastMossVideoResult } from "@/lib/fastmoss";
 import { ingestTrendBatch, type RawTrendItem } from "@/lib/trends";
+import { filterAndScoreProducts } from "@/lib/productRelevance";
 
 export const dynamic = "force-dynamic";
 
@@ -140,6 +141,39 @@ export async function GET(req: NextRequest) {
 
     const dedupedRaw = dedupeBySales(raw.map(toRawItem), 50).map((item, i) => ({ ...item, rank: i + 1 }));
 
+    // COTORX-side relevance filter + per-user recommendation scoring — see
+    // productRelevance.ts. FastMoss tags category on the VIDEO, not the
+    // product attached to it, so obviously off-category products (e.g. an
+    // eyelash serum under "Pet Supplies") can slip through even when
+    // FastMoss's own data is otherwise fine; this is COTORX filtering its
+    // own display, not a FastMoss bug workaround. Non-fatal — falls back to
+    // showing everything, unscored, if the AI call fails.
+    const candidates = dedupedRaw
+      .filter((item) => item.product_id && (item.product_name || item.fastmoss_title))
+      .map((item) => ({
+        product_id: item.product_id as string,
+        title: (item.product_name || item.fastmoss_title || "").toString(),
+      }));
+    const { keep, score } = await filterAndScoreProducts(
+      categoryLabel || String(categoryId),
+      candidates,
+      user
+        ? {
+            preferredCategoryLabel: user.preferredCategoryLabel,
+            insightTags: user.insightTags,
+            journalKeywords: user.journalKeywords,
+            interests: user.creatorProfile?.interests ?? null,
+          }
+        : null
+    );
+
+    let filteredRaw = dedupedRaw.filter((item) => !item.product_id || keep.get(item.product_id) !== false);
+    // Safety net: never let an AI hiccup wipe the whole list down to
+    // nothing — fall back to the unfiltered set rather than show an empty
+    // page.
+    if (filteredRaw.length === 0) filteredRaw = dedupedRaw;
+    filteredRaw = filteredRaw.map((item, i) => ({ ...item, rank: i + 1 }));
+
     // Reuses the shared ingest pipeline purely so each product gets the same
     // video hydration (video_id lookup/creation + transcribe queueing) that
     // powers the "Add to Creation" button on ProductCard — not because this
@@ -151,12 +185,13 @@ export async function GET(req: NextRequest) {
       date_to: new Date().toISOString().slice(0, 10),
       days,
       top_by_views: [],
-      top_by_sales: dedupedRaw,
+      top_by_sales: filteredRaw,
     });
 
     const products = batch.top_by_sales.map((item) => ({
       ...item,
       video: item.video_id ? getVideo(item.video_id) : null,
+      recommendationScore: item.product_id ? score.get(item.product_id) ?? null : null,
     }));
 
     return NextResponse.json({

@@ -29,9 +29,14 @@ export async function middleware(req: NextRequest) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "未登录" }, { status: 401 });
     }
-    const loginUrl = new URL("/login", req.url);
-    loginUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(loginUrl);
+    // Anyone without a session lands on the marketing/register page first
+    // (RegisterLanding.tsx), not the bare login form — it now has its own
+    // inline sign-up panel plus a "Log in" link for existing members. Same
+    // `next` param either page reads to forward back to where they were
+    // headed after auth.
+    const entryUrl = new URL("/register", req.url);
+    entryUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(entryUrl);
   }
 
   // Forward the decoded session onto the request as headers — route
