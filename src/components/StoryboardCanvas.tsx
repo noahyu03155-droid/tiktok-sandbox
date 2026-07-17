@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { FunnelStageKey, GeneratedScriptStage, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
-import { resolveStoryboardOrder, resolveChainTails, MIN_CHAIN_LENGTH_FOR_GENERATE, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
+import { resolveStoryboardOrder, resolveChainTails, resolveConnectedChain, MIN_CHAIN_LENGTH_FOR_GENERATE, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
 import ProductPicker from "./ProductPicker";
 
@@ -445,7 +445,8 @@ export default function StoryboardCanvas({
     setBoard((b) => ({ ...b, zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, b.zoom * factor)) }));
   }
 
-  // ---- dragging a node (or a whole multi-selection) ----
+  // ---- dragging a node (or a whole multi-selection, or its whole connected
+  // chain via Ctrl/Cmd+drag) ----
   function handleNodeMouseDown(e: React.MouseEvent, node: StoryboardNode) {
     e.stopPropagation();
     if (e.button !== 0) return;
@@ -453,14 +454,30 @@ export default function StoryboardCanvas({
     const startY = e.clientY;
     const originX = node.x;
     const originY = node.y;
-    // If the grabbed node is part of a multi-selection, capture every
-    // selected node's origin so the whole group moves by the same delta.
-    // A node outside the selection (or a 1-member selection) keeps the
-    // plain single-node drag below.
-    const groupOrigins =
-      selectedIds.has(node.id) && selectedIds.size > 1
-        ? new Map(board.nodes.filter((n) => selectedIds.has(n.id)).map((n) => [n.id, { x: n.x, y: n.y }] as const))
-        : null;
+    // Ctrl/Cmd+drag: grab this node's WHOLE connected chain (walking
+    // connections in either direction, via the same traversal the
+    // product-script "Generate script" flow uses server-side) and move it
+    // as one unit — the quick shortcut for "reposition this whole sequence"
+    // without having to marquee-select it first. Also lights the chain up
+    // via selectedIds so it's visually obvious what's about to move.
+    let groupOrigins: Map<string, { x: number; y: number }> | null = null;
+    if (e.metaKey || e.ctrlKey) {
+      const chainIds = new Set([node.id, ...resolveConnectedChain(node.id, board.nodes, board.connections).map((n) => n.id)]);
+      if (chainIds.size > 1) {
+        groupOrigins = new Map(board.nodes.filter((n) => chainIds.has(n.id)).map((n) => [n.id, { x: n.x, y: n.y }] as const));
+        setSelectedIds(chainIds);
+      }
+    }
+    // Otherwise, if the grabbed node is part of an existing multi-selection,
+    // capture every selected node's origin so the whole group moves by the
+    // same delta. A node outside the selection (or a 1-member selection)
+    // keeps the plain single-node drag below.
+    if (!groupOrigins) {
+      groupOrigins =
+        selectedIds.has(node.id) && selectedIds.size > 1
+          ? new Map(board.nodes.filter((n) => selectedIds.has(n.id)).map((n) => [n.id, { x: n.x, y: n.y }] as const))
+          : null;
+    }
     function onMove(ev: MouseEvent) {
       const dx = (ev.clientX - startX) / board.zoom;
       const dy = (ev.clientY - startY) / board.zoom;
@@ -1056,7 +1073,7 @@ export default function StoryboardCanvas({
           <div className="min-w-0 flex-1">
             <h3 className="text-zinc-900 font-semibold text-sm truncate">Generate Video — Storyboard</h3>
             <p className="text-xs text-zinc-500 break-words">
-              Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok video link anywhere to add it as a new video card, or a TikTok product link to add a product card.
+              Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok video link anywhere to add it as a new video card, or a TikTok product link to add a product card · Ctrl/Cmd+drag a card to move its whole connected chain together · Shift+drag empty space to box-select multiple cards.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
