@@ -11,5 +11,5 @@ export default function TrendsPage() {
     dbUser?.preferredCategoryId
       ? { id: dbUser.preferredCategoryId, label: dbUser.preferredCategoryLabel || dbUser.preferredCategoryId }
       : null;
-  return <TrendsPageContent preferredCategory={preferredCategory} />;
+  return <TrendsPageContent preferredCategory={preferredCategory} role={sessionUser?.role ?? "member"} />;
 }

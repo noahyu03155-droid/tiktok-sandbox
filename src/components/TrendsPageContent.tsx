@@ -781,13 +781,23 @@ const EMPTY_SELECTION = new Set<string>();
 
 export default function TrendsPageContent({
   preferredCategory = null,
+  role = "member",
 }: {
   // The logged-in user's saved registration category, if any — passed down
   // from the server component (src/app/trends/page.tsx). Optional so any
   // other call site without the prop still compiles.
   preferredCategory?: { id: string; label: string } | null;
+  // Gates the "Update" button (the manual, any-category, any-date-range
+  // FastMoss pull) to admins only — regular members can still see every
+  // trend/product view, they just can't trigger a fresh broad pull
+  // themselves. Defaults to "member" (most restrictive) if omitted.
+  role?: "admin" | "member";
 }) {
   const { t } = useLocale();
+  // Top-level Video/Product split (see the Product-tab state block below for
+  // its own data). Video = everything that already existed on this page
+  // (For You video section, manual category/date toolbar, batch lists).
+  const [viewMode, setViewMode] = useState<"video" | "product">("video");
   const [batches, setBatches] = useState<EnrichedBatch[] | null>(null);
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
@@ -802,6 +812,15 @@ export default function TrendsPageContent({
   const [personalizedData, setPersonalizedData] = useState<PersonalizedData | null>(null);
   const [personalizedLoading, setPersonalizedLoading] = useState(false);
   const [personalizedError, setPersonalizedError] = useState<string | null>(null);
+
+  // "Product" tab — Top 50 Selling Products for the user's own saved
+  // registration category (see /api/trends/top-products). Lazily loaded the
+  // first time the user switches to this tab, not on initial page load.
+  const [topProducts, setTopProducts] = useState<EnrichedItem[] | null>(null);
+  const [topProductsLoading, setTopProductsLoading] = useState(false);
+  const [topProductsError, setTopProductsError] = useState<string | null>(null);
+  const [topProductsFallback, setTopProductsFallback] = useState<string | null>(null);
+  const [topProductsLoaded, setTopProductsLoaded] = useState(false);
 
   // Category picker + date-range window for the Update pull.
   const [categories, setCategories] = useState<CategoryNode[] | null>(null);
@@ -848,11 +867,38 @@ export default function TrendsPageContent({
     }
   }
 
+  async function loadTopProducts() {
+    setTopProductsLoading(true);
+    setTopProductsError(null);
+    try {
+      const res = await fetch("/api/trends/top-products", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to load top products");
+      setTopProducts(data.products || []);
+      setTopProductsFallback(data.usedFallbackCategory || null);
+    } catch (err: any) {
+      setTopProductsError(err.message || "Failed to load top products");
+    } finally {
+      setTopProductsLoading(false);
+      setTopProductsLoaded(true);
+    }
+  }
+
   useEffect(() => {
     load();
     if (preferredCategory) loadPersonalized();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fetch the Product tab's data the first time the user actually switches
+  // to it, not on initial page load — this is its own live FastMoss pull,
+  // no need to pay that cost for someone who never opens the tab.
+  useEffect(() => {
+    if (viewMode === "product" && preferredCategory && !topProductsLoaded && !topProductsLoading) {
+      loadTopProducts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]);
 
   // Fetch the FastMoss category tree once on mount (cheap, cached server-side).
   // Also do a single status poll (GET only — never triggers a scan) so that a
@@ -1062,6 +1108,73 @@ export default function TrendsPageContent({
 
   return (
     <div className="space-y-10">
+      {/* Top-level Video/Product split. Video = everything that already
+          existed here (For You video section, manual category/date toolbar,
+          batch lists). Product = a dedicated Top 50 Selling Products view
+          for the user's own saved registration category (see
+          /api/trends/top-products), lazily fetched on first switch. */}
+      <div className="flex items-center rounded-lg border border-edge overflow-hidden w-fit">
+        {(["video", "product"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setViewMode(m)}
+            className={`text-sm px-4 py-2 whitespace-nowrap ${
+              viewMode === m ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-900"
+            }`}
+          >
+            {m === "video" ? t("trendTabVideo") : t("trendTabProduct")}
+          </button>
+        ))}
+      </div>
+
+      {viewMode === "product" ? (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold text-zinc-900 mb-1">{t("trendTopSellingProducts")}</h2>
+            {preferredCategory && (
+              <p className="text-sm text-zinc-500">
+                {t("trendTopSellingProductsSubtitle", { category: preferredCategory.label })}
+              </p>
+            )}
+          </div>
+          {!preferredCategory && (
+            <p className="text-sm text-zinc-500">{t("trendNoCategoryForProducts")}</p>
+          )}
+          {topProductsLoading && !topProducts && (
+            <p className="text-sm text-yellow-600 animate-pulse">{t("trendUpdating")}</p>
+          )}
+          {topProductsError && <p className="text-sm text-red-400">{topProductsError}</p>}
+          {preferredCategory && topProductsFallback && (
+            <p className="text-xs text-zinc-500">
+              No data yet for "{preferredCategory.label}" specifically — showing the broader category "{topProductsFallback}" instead.
+            </p>
+          )}
+          {preferredCategory && topProducts && (
+            <>
+              <div className="flex justify-end">
+                <button
+                  onClick={loadTopProducts}
+                  disabled={topProductsLoading}
+                  className="text-xs rounded-lg px-3 py-1.5 border border-edge text-zinc-500 hover:text-zinc-900 hover:border-edge2 disabled:opacity-40 whitespace-nowrap"
+                >
+                  {topProductsLoading ? t("trendUpdating") : t("trendRefresh")}
+                </button>
+              </div>
+              <TrendSection
+                title={t("trendTopSellingProducts")}
+                items={topProducts}
+                metric="sales"
+                batchId="top-products"
+                selectMode={false}
+                selected={EMPTY_SELECTION}
+                onToggleSelect={() => {}}
+                variant="product"
+              />
+            </>
+          )}
+        </div>
+      ) : (
+        <>
       {/* Personalized "For You" section — shown above the manual category/
           update toolbar whenever the user registered with a saved category. */}
       {preferredCategory && (
@@ -1091,27 +1204,15 @@ export default function TrendsPageContent({
             </p>
           )}
           {personalizedData && (
-            <>
-              <TrendSection
-                title={t("trendTopProducts")}
-                items={personalizedData.topProducts}
-                metric="views"
-                batchId={`foryou-products-${personalizedData.batch.id}`}
-                selectMode={false}
-                selected={EMPTY_SELECTION}
-                onToggleSelect={() => {}}
-                variant="product"
-              />
-              <TrendSection
-                title={t("trendTopByViews")}
-                items={personalizedData.batch.top_by_views}
-                metric="views"
-                batchId={`foryou-views-${personalizedData.batch.id}`}
-                selectMode={false}
-                selected={EMPTY_SELECTION}
-                onToggleSelect={() => {}}
-              />
-            </>
+            <TrendSection
+              title={t("trendTopByViews")}
+              items={personalizedData.batch.top_by_views}
+              metric="views"
+              batchId={`foryou-views-${personalizedData.batch.id}`}
+              selectMode={false}
+              selected={EMPTY_SELECTION}
+              onToggleSelect={() => {}}
+            />
           )}
         </div>
       )}
@@ -1195,13 +1296,18 @@ export default function TrendsPageContent({
               </button>
             ))}
           </div>
-          <button
-            onClick={handleUpdate}
-            disabled={updating}
-            className="px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-sm font-medium whitespace-nowrap"
-          >
-            {updating ? t("trendUpdating") : t("trendUpdateButton")}
-          </button>
+          {/* Manual, any-category, any-date-range pull — admin-only. Regular
+              members still see every trend/product view on this page, they
+              just can't trigger a fresh broad FastMoss pull themselves. */}
+          {role === "admin" && (
+            <button
+              onClick={handleUpdate}
+              disabled={updating}
+              className="px-4 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-sm font-medium whitespace-nowrap"
+            >
+              {updating ? t("trendUpdating") : t("trendUpdateButton")}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1293,6 +1399,8 @@ export default function TrendsPageContent({
           />
         </div>
       ))}
+        </>
+      )}
     </div>
   );
 }
