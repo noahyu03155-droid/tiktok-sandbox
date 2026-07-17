@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { LocaleProvider } from "@/lib/i18n";
 import HeaderBar from "@/components/HeaderBar";
+import MainShell from "@/components/MainShell";
 import { getCurrentUser } from "@/lib/session";
 
 // Core selling-point pitch, used both as the page <meta description> and as
@@ -43,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <LocaleProvider>
           <div className="min-h-screen bg-ink">
             <HeaderBar role={user?.role ?? null} />
-            <main className="max-w-6xl mx-auto px-6 py-8">{children}</main>
+            <MainShell>{children}</MainShell>
           </div>
         </LocaleProvider>
       </body>

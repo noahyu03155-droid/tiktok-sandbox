@@ -102,6 +102,16 @@ export const translations = {
     registering: "Creating account...",
     usernameHint: "3-32 characters, letters/numbers/underscore/hyphen only",
 
+    // Register-page marketing hero + showcase strip (RegisterLanding.tsx).
+    registerLoginNav: "Log in",
+    registerHeroHeadline1: "Break down what's already working,",
+    registerHeroHeadline2: "and make it yours.",
+    registerHeroSubtitle:
+      "Paste any viral TikTok Shop video and get an AI breakdown of its hook, structure, and selling points — then a new shoppable script and storyboard built around your own product.",
+    registerHeroCta: "Get started",
+    registerShowcaseHeadline: "Every viral video — broken down and ready to reuse",
+    registerShowcaseSubtitle: "Real TikTok Shop videos already analyzed on COTORX",
+
     navCreation: "Creation",
     creationHeading: "Your creation space",
     creationNewProjectPlaceholder: "New project title",
@@ -439,6 +449,16 @@ export const translations = {
     registerButton: "创建账号",
     registering: "创建中...",
     usernameHint: "3-32 个字符，仅限字母/数字/下划线/横杠",
+
+    // 注册页营销 hero + 展示条 (RegisterLanding.tsx)。
+    registerLoginNav: "登录",
+    registerHeroHeadline1: "拆解别人已经跑通的爆款，",
+    registerHeroHeadline2: "变成你自己的。",
+    registerHeroSubtitle:
+      "粘贴任意一条爆款 TikTok Shop 视频，AI 帮你拆解它的钩子、结构和卖点——再生成一份围绕你自己产品的可购物脚本和分镜。",
+    registerHeroCta: "开始使用",
+    registerShowcaseHeadline: "每一条爆款视频，都已拆解完毕，随时可复用",
+    registerShowcaseSubtitle: "COTORX 上已经分析过的真实 TikTok Shop 视频",
 
     navCreation: "创作",
     creationHeading: "你的创作空间",

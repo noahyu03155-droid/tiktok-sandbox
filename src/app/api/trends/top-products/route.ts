@@ -100,7 +100,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const days = 7;
+    // Same 7/28/90 choices as the Video tab's own day-range buttons —
+    // defaults to 7 if missing/invalid.
+    const qsDays = Number(req.nextUrl.searchParams.get("days"));
+    const days = qsDays === 28 || qsDays === 90 ? qsDays : 7;
     let raw = await fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit: 50, categoryId });
     let usedFallbackCategory: string | null = null;
 

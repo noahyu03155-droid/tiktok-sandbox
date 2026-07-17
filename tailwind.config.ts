@@ -49,6 +49,20 @@ const config: Config = {
           600: "#db2777",
         },
       },
+      // Seamless horizontal scroll for the register page's "showcase" strip
+      // of real analyzed-video thumbnails (RegisterLanding.tsx) — the strip
+      // renders its thumbnail list twice back-to-back, then this animation
+      // slides the whole doubled-width row left by exactly half its width,
+      // so the loop point is invisible.
+      keyframes: {
+        marquee: {
+          "0%": { transform: "translateX(0)" },
+          "100%": { transform: "translateX(-50%)" },
+        },
+      },
+      animation: {
+        marquee: "marquee 32s linear infinite",
+      },
     },
   },
   plugins: [],
