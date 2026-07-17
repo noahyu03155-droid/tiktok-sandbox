@@ -288,7 +288,7 @@ export default function StoryboardCanvas({
   // canvas viewport (no toggle button anymore) — starts at a compact height
   // that fits the input row plus roughly one line of hint text, and the
   // user drags its bottom-edge handle to resize it taller/shorter.
-  const [journalHeight, setJournalHeight] = useState(112);
+  const [journalHeight, setJournalHeight] = useState(150);
   const [journalEntries, setJournalEntries] = useState<{ id: string; role: "user" | "ai"; content: string }[]>([]);
   const [journalDraft, setJournalDraft] = useState("");
   const [journalLoading, setJournalLoading] = useState(false);
@@ -930,13 +930,15 @@ export default function StoryboardCanvas({
     }
   }
 
-  // "Breakdown into 6 stages" — for a TikTok-imported clip, asks the server
+  // "Breakdown into stages" — for a TikTok-imported clip, asks the server
   // to transcribe + run the same 6-stage funnel analysis used by Video
-  // Analysis, then swaps this single card out for 6 new stage-tagged cards
-  // (one per funnel stage, each trimmed to that stage's time range and
-  // pre-filled with the AI's summary/quote as a starting instruction).
+  // Analysis, then adds new stage-tagged cards (one per funnel stage
+  // actually found, each trimmed to that stage's time range and pre-filled
+  // with the AI's summary/quote as a starting instruction) in a new row
+  // BELOW the original card. The original card is kept, untouched, so the
+  // user can compare it against the breakdown — see breakdown/route.ts.
   async function startBreakdown(node: StoryboardNode) {
-    if (!window.confirm("Break this TikTok clip down into tagged stage cards (only the stages actually found in the video)? The original card will be replaced.")) return;
+    if (!window.confirm("Break this TikTok clip down into tagged stage cards (only the stages actually found in the video)? The original video stays on the board so you can compare it against the new cards.")) return;
     setBusyNodeId(node.id);
     beginBusy("breakdown");
     clearNodeError(node.id);
@@ -948,10 +950,13 @@ export default function StoryboardCanvas({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Breakdown failed");
+      // The original card is NOT filtered out here — the server keeps it
+      // (and its existing connections) untouched; we just add the new
+      // stage cards on top of the current board state.
       setBoard((b) => ({
         ...b,
-        nodes: [...b.nodes.filter((n) => n.id !== node.id), ...data.newNodes],
-        connections: [...b.connections.filter((c) => c.fromId !== node.id && c.toId !== node.id), ...data.newConnections],
+        nodes: [...b.nodes, ...data.newNodes],
+        connections: [...b.connections, ...data.newConnections],
       }));
     } catch (err: any) {
       setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Breakdown failed" }));
@@ -1331,45 +1336,82 @@ export default function StoryboardCanvas({
       </div>
 
       {/* Always-docked journal panel — compact by default, drag the thin
-          handle on its bottom edge to resize (down = taller, up = shorter). */}
-      <div className="border-b border-edge bg-panel shrink-0 w-full flex flex-col overflow-hidden" style={{ height: journalHeight }}>
-        <div ref={journalScrollRef} className="flex-1 overflow-y-auto px-5 py-3 flex flex-col gap-2.5 min-h-0">
-          {journalEntries.length === 0 && !journalLoading && (
-            <p className="text-xs text-zinc-500">
-              Write like you're journaling to a friend — how's today going, what are you working on, what's on your mind?
+          handle on its bottom edge to resize (down = taller, up = shorter).
+          Given a header + tinted background + avatar bubbles so it reads as
+          a live chat with a creative partner rather than a stray text strip. */}
+      <div
+        className="border-b border-edge bg-gradient-to-b from-brand-50 to-panel shrink-0 w-full flex flex-col overflow-hidden"
+        style={{ height: journalHeight }}
+      >
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-brand-100 shrink-0">
+          <span className="w-6 h-6 rounded-full bg-brand-500 text-white flex items-center justify-center text-xs shrink-0">
+            💬
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-zinc-800 leading-tight">Journal with your AI partner</p>
+            <p className="text-[10px] text-zinc-500 leading-tight truncate">
+              Tell it what you're working on — it'll help you think it through
             </p>
+          </div>
+        </div>
+        <div ref={journalScrollRef} className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2.5 min-h-0">
+          {journalEntries.length === 0 && !journalLoading && (
+            <div className="flex-1 flex flex-col items-center justify-center text-center gap-1.5 py-2">
+              <span className="text-2xl">📝</span>
+              <p className="text-xs text-zinc-600 max-w-[280px]">
+                Write like you're journaling to a friend — how's today going, what are you working on, what's on your mind?
+              </p>
+            </div>
           )}
           {journalEntries.map((e) => (
             <div
               key={e.id}
-              className={`max-w-[75%] px-3 py-2 rounded-2xl text-xs leading-relaxed ${
-                e.role === "user" ? "self-end bg-brand-500 text-white" : "self-start bg-panel2 text-zinc-800"
-              }`}
+              className={`flex items-end gap-1.5 ${e.role === "user" ? "self-end flex-row-reverse" : "self-start"}`}
             >
-              {e.content}
+              {e.role === "ai" && (
+                <span className="w-5 h-5 rounded-full bg-brand-500 text-white flex items-center justify-center text-[10px] shrink-0">
+                  🤖
+                </span>
+              )}
+              <div
+                className={`max-w-[260px] px-3 py-2 rounded-2xl text-xs leading-relaxed shadow-sm ${
+                  e.role === "user" ? "bg-brand-500 text-white" : "bg-white text-zinc-800 border border-edge"
+                }`}
+              >
+                {e.content}
+              </div>
             </div>
           ))}
-          {journalSending && <div className="self-start text-xs text-zinc-500 animate-pulse">{estimateLabel("...", tick)}</div>}
+          {journalSending && (
+            <div className="self-start flex items-end gap-1.5">
+              <span className="w-5 h-5 rounded-full bg-brand-500 text-white flex items-center justify-center text-[10px] shrink-0">
+                🤖
+              </span>
+              <div className="px-3 py-2 rounded-2xl text-xs bg-white border border-edge text-zinc-500 animate-pulse">
+                {estimateLabel("...", tick)}
+              </div>
+            </div>
+          )}
         </div>
         <form
           onSubmit={(e) => {
             e.preventDefault();
             sendJournalMessage();
           }}
-          className="border-t border-edge px-3 py-2 flex items-center gap-2 shrink-0"
+          className="border-t border-brand-100 bg-white/60 px-3 py-2 flex items-center gap-2 shrink-0"
         >
           <input
             value={journalDraft}
             onChange={(e) => setJournalDraft(e.target.value)}
             placeholder="Today was..."
-            className="flex-1 h-8 px-3 rounded-full bg-panel2 border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 placeholder:text-zinc-400"
+            className="flex-1 h-9 px-3.5 rounded-full bg-white border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 placeholder:text-zinc-400 shadow-sm transition-shadow"
           />
           <button
             type="submit"
             disabled={!journalDraft.trim() || journalSending}
-            className="h-8 px-3 rounded-full bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium shrink-0"
+            className="h-9 px-4 rounded-full bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium shrink-0 shadow-sm transition-colors flex items-center gap-1"
           >
-            Send
+            Send <span aria-hidden>➤</span>
           </button>
         </form>
         {/* bottom-edge drag handle — dragging DOWN increases clientY, which
@@ -1381,7 +1423,7 @@ export default function StoryboardCanvas({
             const startY = e.clientY;
             const originH = journalHeight;
             function onMove(ev: MouseEvent) {
-              const next = Math.min(420, Math.max(56, originH + (ev.clientY - startY)));
+              const next = Math.min(420, Math.max(104, originH + (ev.clientY - startY)));
               setJournalHeight(next);
             }
             function onUp() {

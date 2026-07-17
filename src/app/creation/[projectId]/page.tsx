@@ -13,5 +13,5 @@ export default function CreationProjectPage({ params }: { params: { projectId: s
   if (!project) notFound();
   if (project.ownerId !== user.userId && user.role !== "admin") notFound();
 
-  return <CreationCanvasClient project={project} />;
+  return <CreationCanvasClient project={project} role={user.role} />;
 }

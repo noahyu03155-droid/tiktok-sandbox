@@ -16,10 +16,14 @@ export const dynamic = "force-dynamic";
 // 6-stage funnel analysis the standalone Video Analysis feature uses, then
 // splits the single clip into new stage-tagged cards, each trimmed to that
 // stage's time range and pre-filled with the AI's summary + quote as a
-// starting instruction to rewrite. The original big card is removed
-// (replaced by the new ones). Returns just the delta ({newNodes,
-// newConnections}) — the client applies it onto its own local board state
-// rather than replacing the whole board.
+// starting instruction to rewrite. The ORIGINAL card is kept as-is (not
+// removed, not modified, connections untouched) — the new stage cards are
+// laid out in a new row underneath it so the user can compare the source
+// clip against the breakdown side by side. Returns just the delta
+// ({newNodes, newConnections}) for the client to ADD onto its local board
+// state — see the matching client-side change in StoryboardCanvas.tsx's
+// startBreakdown, which used to filter the original node out and no longer
+// does.
 //
 // Two things NOT to assume here (see analyze.ts's blank-stage / no-forced-
 // order rules): (1) a stage the model genuinely couldn't find in this video
@@ -31,11 +35,17 @@ export const dynamic = "force-dynamic";
 // its product intro ends up with those two cards in that same real order.
 
 // Matches the canvas's card layout constants (NODE_W / GAP_X in
-// src/components/StoryboardCanvas.tsx) so the 6 new cards land in a row
+// src/components/StoryboardCanvas.tsx) so the new cards land in a row
 // with the same spacing addNode uses. Plain literals here — the canvas is
 // a client component and this is a server route.
 const NODE_W = 300;
 const GAP_X = 70;
+// Height of the pending-TikTok-import card the original stays rendered as
+// (see isPendingTiktokBreakdown / TIKTOK_PREVIEW_H in StoryboardCanvas.tsx:
+// TIKTOK_HEADER_H 34 + TIKTOK_PREVIEW_VIDEO_H 533 + TIKTOK_BUTTON_ROW_H 96),
+// plus a gap — used to drop the new stage row below the original card
+// instead of on top of it.
+const ORIGINAL_CARD_ROW_GAP_Y = 663 + 60;
 
 // A stage the AI marked as effectively absent (e.g. "no standalone
 // reaction beat" comes back as start=end=0) still gets its card — just
@@ -220,7 +230,7 @@ export async function POST(
         label: stage.label,
         instruction: [stage.summary, stage.quote ? `"${stage.quote}"` : ""].filter(Boolean).join("\n\n"),
         x: node.x + i * (NODE_W + GAP_X),
-        y: node.y,
+        y: node.y + ORIGINAL_CARD_ROW_GAP_Y,
         clip,
         stageTag: stage.key,
         // Coerced defensively — the guide comes straight from a JSON.parse
@@ -238,10 +248,12 @@ export async function POST(
       toId: newNodes[i + 1].id,
     }));
 
+    // Original card + its existing connections are kept untouched (see the
+    // module comment) — just append the new stage row on top.
     const newBoard = {
       ...board,
-      nodes: board.nodes.filter((n) => n.id !== nodeId).concat(newNodes),
-      connections: board.connections.filter((c) => c.fromId !== nodeId && c.toId !== nodeId).concat(newConnections),
+      nodes: board.nodes.concat(newNodes),
+      connections: board.connections.concat(newConnections),
     };
     updateVideoRecord(params.id, {
       generated_scripts: video.generated_scripts.map((s, i) => (i === scriptIdx ? { ...s, storyboard: newBoard } : s)),
