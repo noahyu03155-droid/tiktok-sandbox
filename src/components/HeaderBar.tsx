@@ -23,7 +23,13 @@ export default function HeaderBar({ role = null }: { role?: UserRole | null }) {
   ];
 
   return (
-    <header className="border-b border-edge bg-ink/90 backdrop-blur sticky top-0 z-20">
+    // Phase 39: thicker black bottom border + a black-outlined (not just
+    // gray-filled) pill nav track, matching the bolder/"framed" chrome the
+    // user liked on the register page (image2 in chat) — this header shows
+    // on every logged-in page, so it's the single highest-leverage place to
+    // carry that look across the whole app without redesigning every
+    // individual page's internals.
+    <header className="border-b-2 border-zinc-900 bg-ink sticky top-0 z-20">
       <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-4">
         <Link href="/" className="shrink-0">
           <Logo />
@@ -32,7 +38,7 @@ export default function HeaderBar({ role = null }: { role?: UserRole | null }) {
         {/* Pill/capsule nav, matching the reference design — a rounded-full
             track holding rounded-full items, the active one filled solid
             black with white text, inactive ones plain dark-gray text. */}
-        <nav className="flex items-center gap-0.5 bg-zinc-100 rounded-full p-1 ml-1">
+        <nav className="flex items-center gap-0.5 bg-white border-2 border-zinc-900 rounded-full p-1 ml-1">
           {navItems.map((item) => {
             const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (

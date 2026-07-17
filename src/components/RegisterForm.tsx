@@ -123,7 +123,7 @@ export default function RegisterForm() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="w-full max-w-sm bg-panel border border-edge rounded-2xl shadow-xl shadow-zinc-900/5 p-6"
+      className="w-full max-w-sm bg-panel border-2 border-zinc-900 rounded-2xl p-6"
     >
       <div className="mb-6">
         <Logo />
@@ -212,7 +212,7 @@ export default function RegisterForm() {
       <button
         type="submit"
         disabled={loading}
-        className="w-full py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-sm font-medium transition-colors"
+        className="w-full py-2 rounded-lg bg-zinc-900 hover:bg-black disabled:opacity-40 text-white text-sm font-medium transition-colors"
       >
         {loading ? t("registering") : t("registerButton")}
       </button>

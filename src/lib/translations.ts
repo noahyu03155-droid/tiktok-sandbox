@@ -104,10 +104,10 @@ export const translations = {
 
     // Register-page marketing hero + showcase strip (RegisterLanding.tsx).
     registerLoginNav: "Log in",
-    registerHeroHeadline1: "Break down what's already working,",
-    registerHeroHeadline2: "and make it yours.",
+    registerHeroHeadline1: "Turn winning products into",
+    registerHeroHeadline2: "high-converting content.",
     registerHeroSubtitle:
-      "Paste any viral TikTok Shop video and get an AI breakdown of its hook, structure, and selling points — then a new shoppable script and storyboard built around your own product.",
+      "Discover trending products, generate scripts, edit videos, and start earning — all with AI.",
     registerHeroCta: "Get started",
     registerSignUpNowLabel: "Sign up now",
     registerShowcaseHeadline: "Every viral video — broken down and ready to reuse",
@@ -466,10 +466,10 @@ export const translations = {
 
     // 注册页营销 hero + 展示条 (RegisterLanding.tsx)。
     registerLoginNav: "登录",
-    registerHeroHeadline1: "拆解别人已经跑通的爆款，",
-    registerHeroHeadline2: "变成你自己的。",
+    registerHeroHeadline1: "把爆款产品，",
+    registerHeroHeadline2: "变成高转化内容。",
     registerHeroSubtitle:
-      "粘贴任意一条爆款 TikTok Shop 视频，AI 帮你拆解它的钩子、结构和卖点——再生成一份围绕你自己产品的可购物脚本和分镜。",
+      "发现热门产品、生成脚本、剪辑视频、开始赚钱——全部交给 AI 完成。",
     registerHeroCta: "开始使用",
     registerSignUpNowLabel: "立即注册",
     registerShowcaseHeadline: "每一条爆款视频，都已拆解完毕，随时可复用",

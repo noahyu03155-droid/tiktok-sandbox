@@ -37,10 +37,20 @@ const config: Config = {
         // rather than Tailwind's nested `bg-panel-2` — matches what's
         // actually used across the components.
         panel2: "#eeeef0",
+        // Phase 39: darkened from a near-invisible light gray (#e4e4e7) so
+        // every card/panel/dropdown across the app (they all already use
+        // border-edge/border-edge2 — see ProductCard, TrendCard,
+        // CreatorDetailClient, etc.) reads with more defined, "outlined"
+        // borders site-wide, matching a bolder reference look the user
+        // liked (image2 in chat) — a single token change here ripples
+        // everywhere without touching every component file individually.
+        // Stopped short of full black (#18181b) since that would be too
+        // heavy across hundreds of thin dividers on dense screens like the
+        // Creation storyboard canvas or Trends tables.
         edge: {
-          DEFAULT: "#e4e4e7",
+          DEFAULT: "#a1a1aa",
         },
-        edge2: "#d4d4d8",
+        edge2: "#71717a",
         // Retired with the old pink "PAWmart" wordmark (see Logo.tsx, now
         // COTORX) — kept defined in case anything still references it.
         pawpink: {
