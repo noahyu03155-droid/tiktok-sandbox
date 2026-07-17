@@ -4,10 +4,11 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { requireProjectAccess } from "@/lib/creationAuth";
-import { getMediaDir, updateCreationProject } from "@/lib/db";
+import { getMediaDir, updateCreationProject, getUserById, updateUser } from "@/lib/db";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
 import { deriveShootingGuide, type ShootingGuideEntry } from "@/lib/shootingGuide";
+import { inferActionInsightTags, mergeInsightTags } from "@/lib/personalityInsights";
 import type { StoryboardNode, VideoStats } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -182,6 +183,25 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
       shootingGuides = await deriveShootingGuide(analysis.structure);
     } catch (guideErr) {
       console.error("deriveShootingGuide failed — continuing breakdown without a shooting guide:", guideErr);
+    }
+
+    // Best-effort personality/preference signal for the admin User Data
+    // graph (src/lib/personalityInsights.ts): this action just revealed what
+    // kind of video this member analyzes. Same non-fatal treatment as the
+    // shooting guide above — never lets a failure here break the breakdown.
+    try {
+      const insightTags = await inferActionInsightTags(
+        `A creator broke down a TikTok video to reuse its structure for their own content.\n` +
+          `Video title: ${meta.title}\nDescription: ${meta.description}\nHashtags: ${meta.hashtags.join(", ") || "(none)"}\n` +
+          `AI summary of the video: ${analysis.summary}\n` +
+          `Product claims mentioned in it: ${analysis.selling_points.product_claims.join("; ") || "(none)"}`
+      );
+      if (insightTags.length > 0) {
+        const owner = getUserById(access.project.ownerId);
+        updateUser(access.project.ownerId, { insightTags: mergeInsightTags(owner?.insightTags, insightTags) });
+      }
+    } catch (insightErr) {
+      console.error("inferActionInsightTags failed — continuing breakdown without updating insight tags:", insightErr);
     }
 
     // Drop any stage the model left genuinely blank (see analyze.ts's

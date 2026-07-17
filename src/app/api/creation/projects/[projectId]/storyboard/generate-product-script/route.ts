@@ -3,12 +3,13 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { requireProjectAccess } from "@/lib/creationAuth";
-import { getMediaDir, updateCreationProject } from "@/lib/db";
+import { getMediaDir, updateCreationProject, getUserById, updateUser } from "@/lib/db";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
 import { getShopifyProduct } from "@/lib/shopify";
 import { generateScriptForProduct } from "@/lib/scriptgen";
 import { REQUIRED_STAGE_SEQUENCE } from "@/lib/storyboard";
+import { inferActionInsightTags, mergeInsightTags } from "@/lib/personalityInsights";
 import type { StoryboardNode, VideoStats } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -146,6 +147,26 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
       analysis,
       product,
     });
+
+    // Best-effort personality/preference signal for the admin User Data
+    // graph (src/lib/personalityInsights.ts) — richer than the plain
+    // breakdown routes since we know the actual PRODUCT this member is
+    // building a script around, not just the reference video. Same
+    // non-fatal treatment — see breakdown/route.ts for the sibling call.
+    try {
+      const insightTags = await inferActionInsightTags(
+        `A creator generated a shoppable video script adapting a reference video's structure to one of their own products.\n` +
+          `Reference video summary: ${analysis.summary}\n` +
+          `Product: ${product.title}\nProduct type: ${product.productType || "(none)"}\nProduct tags: ${product.tags.join(", ") || "(none)"}\n` +
+          `Product description: ${product.description.slice(0, 500)}`
+      );
+      if (insightTags.length > 0) {
+        const owner = getUserById(access.project.ownerId);
+        updateUser(access.project.ownerId, { insightTags: mergeInsightTags(owner?.insightTags, insightTags) });
+      }
+    } catch (insightErr) {
+      console.error("inferActionInsightTags failed — continuing script generation without updating insight tags:", insightErr);
+    }
 
     // generateScriptForProduct always returns the 6 stages in the fixed
     // funnel order (by construction of its prompt) but without a stage key

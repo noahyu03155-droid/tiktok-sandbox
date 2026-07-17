@@ -3,10 +3,11 @@ import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import { requireProjectAccess } from "@/lib/creationAuth";
-import { getMediaDir, updateCreationProject } from "@/lib/db";
+import { getMediaDir, updateCreationProject, getUserById, updateUser } from "@/lib/db";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
 import { deriveShootingGuide, type ShootingGuideEntry } from "@/lib/shootingGuide";
+import { inferActionInsightTags, mergeInsightTags } from "@/lib/personalityInsights";
 import { resolveStoryboardOrder, resolveConnectedChain } from "@/lib/storyboard";
 import type { StoryboardNode, FunnelStageKey } from "@/lib/types";
 
@@ -135,6 +136,23 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
       shootingGuides = await deriveShootingGuide(analysis.structure);
     } catch (guideErr) {
       console.error("deriveShootingGuide failed — continuing chain breakdown without a shooting guide:", guideErr);
+    }
+
+    // Best-effort personality/preference signal for the admin User Data
+    // graph (src/lib/personalityInsights.ts) — same non-fatal treatment as
+    // the shooting guide above, see breakdown/route.ts for the sibling call.
+    try {
+      const insightTags = await inferActionInsightTags(
+        `A creator imported a full reference video and broke it down to fill in an existing storyboard chain.\n` +
+          `AI summary of the video: ${analysis.summary}\n` +
+          `Product claims mentioned in it: ${analysis.selling_points.product_claims.join("; ") || "(none)"}`
+      );
+      if (insightTags.length > 0) {
+        const owner = getUserById(access.project.ownerId);
+        updateUser(access.project.ownerId, { insightTags: mergeInsightTags(owner?.insightTags, insightTags) });
+      }
+    } catch (insightErr) {
+      console.error("inferActionInsightTags failed — continuing chain breakdown without updating insight tags:", insightErr);
     }
 
     // A stage the model genuinely couldn't find in this video comes back

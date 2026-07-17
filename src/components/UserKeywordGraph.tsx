@@ -24,6 +24,7 @@ const BRANCH_COLOR: Record<ProfileBranchKind, string> = {
   experience: "#34d399",
   style: "#fb923c",
   journal: "#5cc4ee",
+  insights: "#8b5cf6",
 };
 
 const BRANCH_LABEL_KEY: Record<ProfileBranchKind, TranslationKey> = {
@@ -34,6 +35,7 @@ const BRANCH_LABEL_KEY: Record<ProfileBranchKind, TranslationKey> = {
   experience: "userDataBranchExperience",
   style: "userDataBranchStyle",
   journal: "userDataBranchJournal",
+  insights: "userDataBranchInsights",
 };
 
 // Custom (admin-typed) tags get a fixed neutral gray — they're manual

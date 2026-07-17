@@ -39,6 +39,17 @@ export interface User {
   // journal.ts for the merge/dedupe logic. undefined/[] until they've
   // journaled at least once.
   journalKeywords?: string[];
+  // Short ENGLISH tags the AI has inferred over time from this member's
+  // on-platform ACTIONS (breaking down a reference video, generating a
+  // product script, etc. — see src/lib/personalityInsights.ts) rather than
+  // anything they wrote directly. Unlike journalKeywords (kept in whatever
+  // language the user journaled in, since those are an extraction of their
+  // own words), these are the AI's own inference and are always English.
+  // Shown as an "insights" branch on the User Data keyword graph
+  // (src/components/UserKeywordGraph.tsx). Capped, see
+  // mergeInsightTags in personalityInsights.ts. undefined/[] until the
+  // first action that produces enough signal to infer anything.
+  insightTags?: string[];
   // Admin-added freeform tags on this member's User Data keyword graph
   // (src/app/user-data) — a manual observation an admin typed in that the
   // automated signals (registration category, onboarding answers, journal

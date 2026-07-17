@@ -1,6 +1,6 @@
 import type { User } from "./types";
 
-export type ProfileBranchKind = "category" | "age" | "occupation" | "interests" | "experience" | "style" | "journal";
+export type ProfileBranchKind = "category" | "age" | "occupation" | "interests" | "experience" | "style" | "journal" | "insights";
 
 export interface ProfileBranch {
   kind: ProfileBranchKind;
@@ -48,6 +48,13 @@ export function buildProfileBranches(user: User): ProfileBranch[] {
   if (p?.contentStyle) branches.push({ kind: "style", values: [p.contentStyle] });
   if (user.journalKeywords && user.journalKeywords.length > 0) {
     branches.push({ kind: "journal", values: user.journalKeywords.slice(0, 12) });
+  }
+  // AI-inferred, always-English tags from on-platform ACTIONS (breaking
+  // down a reference video, generating a product script, etc.) — see
+  // src/lib/personalityInsights.ts. Distinct from the "journal" branch
+  // above, which comes from what the user explicitly wrote.
+  if (user.insightTags && user.insightTags.length > 0) {
+    branches.push({ kind: "insights", values: user.insightTags.slice(0, 12) });
   }
 
   return branches;
