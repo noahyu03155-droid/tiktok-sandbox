@@ -52,7 +52,11 @@ const TIKTOK_PREVIEW_H = TIKTOK_HEADER_H + TIKTOK_PREVIEW_VIDEO_H + TIKTOK_BUTTO
 // fields area. Its "Generate script" button lives BELOW the card (like the
 // chain-tail Generate button), not inside it, since it only appears once
 // the card is connected to something.
-const PRODUCT_FIELDS_H = 170;
+// Sized for title + description + price plus the rating/reviews/store rows
+// (all best-effort scraped, all hand-editable) without crushing the
+// flex-1 description textarea — the card is overflow-hidden, so an
+// undersized fields area would clip the bottom inputs.
+const PRODUCT_FIELDS_H = 240;
 const PRODUCT_CARD_H = TIKTOK_HEADER_H + TIKTOK_PREVIEW_VIDEO_H + PRODUCT_FIELDS_H;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2;
@@ -184,6 +188,14 @@ export default function StoryboardCanvas({
   // or press Escape to cancel.
   const [connStart, setConnStart] = useState<string | null>(null);
   const [connDraft, setConnDraft] = useState<{ x: number; y: number } | null>(null);
+  // ---- multi-select ----
+  // Shift+drag on empty background draws a rubber-band marquee (world-space
+  // coords, same coordinate system as node.x/y); on mouseup every node whose
+  // bounding box intersects it becomes selected. Dragging any node that's
+  // part of a multi-selection then moves the whole group together (see
+  // handleNodeMouseDown). A plain click on empty background clears it.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   useEffect(() => {
     if (!connStart) return;
@@ -204,6 +216,23 @@ export default function StoryboardCanvas({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connStart]);
+
+  // Escape also clears the multi-selection (and any in-progress marquee —
+  // the marquee gesture additionally has its own gesture-local Escape
+  // handler that tears down its move/up listeners, see
+  // handleBackgroundMouseDown). Kept separate from the connStart effect
+  // above, which only listens while a connection draft is armed.
+  useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape") {
+        setSelectedIds(new Set());
+        setMarquee(null);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [rendering, setRendering] = useState(false);
   const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null>(null);
@@ -219,25 +248,26 @@ export default function StoryboardCanvas({
 
   // ---- daily journal chat ("write like a diary, AI replies like a friend").
   // Per-USER, not per-project — always talks to the fixed /api/journal
-  // route, never `${apiBase}/...`. Toggled from the top toolbar; renders as
-  // a slide-down panel between the header and the canvas viewport.
-  const [journalOpen, setJournalOpen] = useState(false);
+  // route, never `${apiBase}/...`. Always docked between the header and the
+  // canvas viewport (no toggle button anymore) — starts at a compact height
+  // that fits the input row plus roughly one line of hint text, and the
+  // user drags its bottom-edge handle to resize it taller/shorter.
+  const [journalHeight, setJournalHeight] = useState(112);
   const [journalEntries, setJournalEntries] = useState<{ id: string; role: "user" | "ai"; content: string }[]>([]);
   const [journalDraft, setJournalDraft] = useState("");
   const [journalLoading, setJournalLoading] = useState(false);
   const [journalSending, setJournalSending] = useState(false);
   const journalScrollRef = useRef<HTMLDivElement>(null);
 
+  // The panel is always visible now, so load the entries once on mount.
   useEffect(() => {
-    if (!journalOpen || journalEntries.length > 0) return;
     setJournalLoading(true);
     fetch("/api/journal")
       .then((r) => r.json())
       .then((data) => setJournalEntries(data.entries || []))
       .catch(() => {})
       .finally(() => setJournalLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [journalOpen]);
+  }, []);
 
   useEffect(() => {
     journalScrollRef.current?.scrollTo({ top: journalScrollRef.current.scrollHeight });
@@ -311,7 +341,7 @@ export default function StoryboardCanvas({
     };
   }
 
-  // ---- panning the background ----
+  // ---- panning the background (plain drag) / marquee-select (Shift+drag) ----
   function handleBackgroundMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return;
     if (connStart) {
@@ -319,15 +349,63 @@ export default function StoryboardCanvas({
       setConnDraft(null);
       return;
     }
+
+    if (e.shiftKey) {
+      // Shift+drag: rubber-band selection instead of panning. Pan/zoom
+      // don't change during the gesture, so toWorld (which closes over the
+      // current board.pan/board.zoom) stays valid throughout.
+      const start = toWorld(e.clientX, e.clientY);
+      setMarquee({ x0: start.x, y0: start.y, x1: start.x, y1: start.y });
+      function onMarqueeMove(ev: MouseEvent) {
+        const p = toWorld(ev.clientX, ev.clientY);
+        setMarquee({ x0: start.x, y0: start.y, x1: p.x, y1: p.y });
+      }
+      function teardown() {
+        window.removeEventListener("mousemove", onMarqueeMove);
+        window.removeEventListener("mouseup", onMarqueeUp);
+        window.removeEventListener("keydown", onMarqueeKey);
+      }
+      function onMarqueeUp(ev: MouseEvent) {
+        teardown();
+        const p = toWorld(ev.clientX, ev.clientY);
+        const minX = Math.min(start.x, p.x);
+        const maxX = Math.max(start.x, p.x);
+        const minY = Math.min(start.y, p.y);
+        const maxY = Math.max(start.y, p.y);
+        // Every node whose bounding box intersects the marquee rect.
+        const matched = board.nodes
+          .filter((n) => n.x < maxX && n.x + nodeWidth(n) > minX && n.y < maxY && n.y + cardHeight(n) > minY)
+          .map((n) => n.id);
+        setSelectedIds(new Set(matched));
+        setMarquee(null);
+      }
+      function onMarqueeKey(ev: KeyboardEvent) {
+        if (ev.key === "Escape") {
+          teardown();
+          setMarquee(null);
+        }
+      }
+      window.addEventListener("mousemove", onMarqueeMove);
+      window.addEventListener("mouseup", onMarqueeUp);
+      window.addEventListener("keydown", onMarqueeKey);
+      return;
+    }
+
     const startX = e.clientX;
     const startY = e.clientY;
     const originPan = board.pan;
+    // Total mouse travel during the gesture — if it stays under ~4px this
+    // was a plain click (clear the selection), not a pan (leave the
+    // selection alone; the user was just navigating).
+    let maxTravel = 0;
     function onMove(ev: MouseEvent) {
+      maxTravel = Math.max(maxTravel, Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY));
       setBoard((b) => ({ ...b, pan: { x: originPan.x + (ev.clientX - startX), y: originPan.y + (ev.clientY - startY) } }));
     }
     function onUp() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      if (maxTravel < 4) setSelectedIds(new Set());
     }
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -367,7 +445,7 @@ export default function StoryboardCanvas({
     setBoard((b) => ({ ...b, zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, b.zoom * factor)) }));
   }
 
-  // ---- dragging a node ----
+  // ---- dragging a node (or a whole multi-selection) ----
   function handleNodeMouseDown(e: React.MouseEvent, node: StoryboardNode) {
     e.stopPropagation();
     if (e.button !== 0) return;
@@ -375,9 +453,27 @@ export default function StoryboardCanvas({
     const startY = e.clientY;
     const originX = node.x;
     const originY = node.y;
+    // If the grabbed node is part of a multi-selection, capture every
+    // selected node's origin so the whole group moves by the same delta.
+    // A node outside the selection (or a 1-member selection) keeps the
+    // plain single-node drag below.
+    const groupOrigins =
+      selectedIds.has(node.id) && selectedIds.size > 1
+        ? new Map(board.nodes.filter((n) => selectedIds.has(n.id)).map((n) => [n.id, { x: n.x, y: n.y }] as const))
+        : null;
     function onMove(ev: MouseEvent) {
       const dx = (ev.clientX - startX) / board.zoom;
       const dy = (ev.clientY - startY) / board.zoom;
+      if (groupOrigins) {
+        setBoard((b) => ({
+          ...b,
+          nodes: b.nodes.map((n) => {
+            const origin = groupOrigins.get(n.id);
+            return origin ? { ...n, x: origin.x + dx, y: origin.y + dy } : n;
+          }),
+        }));
+        return;
+      }
       setBoard((b) => ({
         ...b,
         nodes: b.nodes.map((n) => (n.id === node.id ? { ...n, x: originX + dx, y: originY + dy } : n)),
@@ -460,6 +556,36 @@ export default function StoryboardCanvas({
       clip: null,
     };
     setBoard((b) => ({ ...b, nodes: [...b.nodes, node] }));
+  }
+
+  // "Insert template" — instantly drops 6 blank funnel-stage cards (one per
+  // REQUIRED_STAGE_SEQUENCE entry, pre-tagged and auto-connected in order),
+  // purely client-side: no API call, no AI. Placed as a horizontal row using
+  // the same rightmost + NODE_W + GAP_X convention addNode uses, so the row
+  // lands next to the existing cards; persists via the normal autosave.
+  function insertTemplate() {
+    const rightmost = board.nodes.reduce((max, n) => Math.max(max, n.x), 0);
+    const startX = board.nodes.length === 0 ? 60 : rightmost + NODE_W + GAP_X;
+    const newNodes: StoryboardNode[] = REQUIRED_STAGE_SEQUENCE.map((key, i) => ({
+      id: crypto.randomUUID(),
+      label: STAGE_TAG_LABELS[key],
+      instruction: "",
+      editorNotes: "",
+      x: startX + i * (NODE_W + GAP_X),
+      y: 120,
+      clip: null,
+      stageTag: key,
+    }));
+    const newConnections = newNodes.slice(0, -1).map((n, i) => ({
+      id: crypto.randomUUID(),
+      fromId: n.id,
+      toId: newNodes[i + 1].id,
+    }));
+    setBoard((b) => ({
+      ...b,
+      nodes: [...b.nodes, ...newNodes],
+      connections: [...b.connections, ...newConnections],
+    }));
   }
 
   function deleteNode(nodeId: string) {
@@ -592,7 +718,7 @@ export default function StoryboardCanvas({
       x: board.nodes.length === 0 ? 60 : rightmost + NODE_W + GAP_X,
       y: 120,
       clip: null,
-      productRef: { sourceUrl: url, title: "", description: "", imageUrl: null, price: null, scrapeFailed: false },
+      productRef: { sourceUrl: url, title: "", description: "", imageUrl: null, price: null, rating: null, soldOrReviews: null, storeName: null, scrapeFailed: false },
     };
     setBoard((b) => ({ ...b, nodes: [...b.nodes, node] }));
     setBusyNodeId(node.id);
@@ -701,10 +827,13 @@ export default function StoryboardCanvas({
   // chain of already-broken-down cards this product card is wired to (their
   // CURRENT script text, not a fresh re-analysis) and synthesizes a new
   // 6-stage shoppable script for this product, preserving the chain's core
-  // viral structure. Replaces this product card with the 6 new stage-tagged
-  // text-only cards, applied with the same delta pattern as startBreakdown.
+  // viral structure. Adds the 6 new stage-tagged text-only cards; the
+  // product card itself SURVIVES but has its connections stripped (mirrors
+  // the server route exactly — the local apply must keep the node too, or
+  // the next autosave would overwrite the server's kept copy), ending up as
+  // a free-floating, reusable card.
   async function generateShoppableScript(node: StoryboardNode) {
-    if (!window.confirm("Generate a new 6-stage shoppable script from the connected cards? This product card will be replaced.")) return;
+    if (!window.confirm("Generate a new 6-stage shoppable script from the connected cards? The product card stays on the board, just disconnected.")) return;
     setBusyNodeId(node.id);
     clearNodeError(node.id);
     try {
@@ -717,7 +846,7 @@ export default function StoryboardCanvas({
       if (!res.ok) throw new Error(data.error || "Script generation failed");
       setBoard((b) => ({
         ...b,
-        nodes: [...b.nodes.filter((n) => n.id !== node.id), ...data.newNodes],
+        nodes: [...b.nodes, ...data.newNodes],
         connections: [...b.connections.filter((c) => c.fromId !== node.id && c.toId !== node.id), ...data.newConnections],
       }));
     } catch (err: any) {
@@ -951,10 +1080,11 @@ export default function StoryboardCanvas({
               + Add shot
             </button>
             <button
-              onClick={() => setJournalOpen((v) => !v)}
+              onClick={insertTemplate}
+              title="Drop 6 blank funnel-stage cards (Reaction → CTA), pre-connected in order"
               className="px-2.5 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs"
             >
-              📔 Journal
+              📋 Insert template
             </button>
             <button onClick={() => zoomBy(1.2)} className="w-7 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-sm">
               +
@@ -999,49 +1129,71 @@ export default function StoryboardCanvas({
         )}
       </div>
 
-      {journalOpen && (
-        <div className="border-b border-edge bg-panel shrink-0 w-full max-h-72 flex flex-col">
-          <div ref={journalScrollRef} className="flex-1 overflow-y-auto px-5 py-3 flex flex-col gap-2.5 min-h-0">
-            {journalEntries.length === 0 && !journalLoading && (
-              <p className="text-xs text-zinc-500">
-                Write like you're journaling to a friend — how's today going, what are you working on, what's on your mind?
-              </p>
-            )}
-            {journalEntries.map((e) => (
-              <div
-                key={e.id}
-                className={`max-w-[75%] px-3 py-2 rounded-2xl text-xs leading-relaxed ${
-                  e.role === "user" ? "self-end bg-brand-500 text-white" : "self-start bg-panel2 text-zinc-800"
-                }`}
-              >
-                {e.content}
-              </div>
-            ))}
-            {journalSending && <div className="self-start text-xs text-zinc-500 animate-pulse">...</div>}
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              sendJournalMessage();
-            }}
-            className="border-t border-edge px-3 py-2 flex items-center gap-2 shrink-0"
-          >
-            <input
-              value={journalDraft}
-              onChange={(e) => setJournalDraft(e.target.value)}
-              placeholder="Today was..."
-              className="flex-1 h-8 px-3 rounded-full bg-panel2 border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 placeholder:text-zinc-400"
-            />
-            <button
-              type="submit"
-              disabled={!journalDraft.trim() || journalSending}
-              className="h-8 px-3 rounded-full bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium shrink-0"
+      {/* Always-docked journal panel — compact by default, drag the thin
+          handle on its bottom edge to resize (down = taller, up = shorter). */}
+      <div className="border-b border-edge bg-panel shrink-0 w-full flex flex-col overflow-hidden" style={{ height: journalHeight }}>
+        <div ref={journalScrollRef} className="flex-1 overflow-y-auto px-5 py-3 flex flex-col gap-2.5 min-h-0">
+          {journalEntries.length === 0 && !journalLoading && (
+            <p className="text-xs text-zinc-500">
+              Write like you're journaling to a friend — how's today going, what are you working on, what's on your mind?
+            </p>
+          )}
+          {journalEntries.map((e) => (
+            <div
+              key={e.id}
+              className={`max-w-[75%] px-3 py-2 rounded-2xl text-xs leading-relaxed ${
+                e.role === "user" ? "self-end bg-brand-500 text-white" : "self-start bg-panel2 text-zinc-800"
+              }`}
             >
-              Send
-            </button>
-          </form>
+              {e.content}
+            </div>
+          ))}
+          {journalSending && <div className="self-start text-xs text-zinc-500 animate-pulse">...</div>}
         </div>
-      )}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            sendJournalMessage();
+          }}
+          className="border-t border-edge px-3 py-2 flex items-center gap-2 shrink-0"
+        >
+          <input
+            value={journalDraft}
+            onChange={(e) => setJournalDraft(e.target.value)}
+            placeholder="Today was..."
+            className="flex-1 h-8 px-3 rounded-full bg-panel2 border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 placeholder:text-zinc-400"
+          />
+          <button
+            type="submit"
+            disabled={!journalDraft.trim() || journalSending}
+            className="h-8 px-3 rounded-full bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium shrink-0"
+          >
+            Send
+          </button>
+        </form>
+        {/* bottom-edge drag handle — dragging DOWN increases clientY, which
+            makes the panel taller; clamped so it can't collapse below the
+            input row or swallow the whole canvas. */}
+        <div
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const startY = e.clientY;
+            const originH = journalHeight;
+            function onMove(ev: MouseEvent) {
+              const next = Math.min(420, Math.max(56, originH + (ev.clientY - startY)));
+              setJournalHeight(next);
+            }
+            function onUp() {
+              window.removeEventListener("mousemove", onMove);
+              window.removeEventListener("mouseup", onUp);
+            }
+            window.addEventListener("mousemove", onMove);
+            window.addEventListener("mouseup", onUp);
+          }}
+          className="h-1.5 cursor-ns-resize bg-edge hover:bg-brand-500 transition-colors shrink-0"
+          title="Drag to resize"
+        />
+      </div>
 
       {(renderError || renderResult) && (
         <div className="px-5 py-3 border-b border-edge bg-panel2 shrink-0 flex flex-col gap-2.5">
@@ -1178,7 +1330,9 @@ export default function StoryboardCanvas({
             return (
               <div
                 key={node.id}
-                className="absolute bg-panel border border-edge rounded-xl shadow-xl flex flex-col overflow-hidden"
+                className={`group absolute bg-panel border rounded-xl shadow-xl flex flex-col overflow-hidden ${
+                  selectedIds.has(node.id) ? "border-brand-500 ring-2 ring-brand-500" : "border-edge"
+                }`}
                 style={{ left: node.x, top: node.y, width: nodeWidth(node), height: cardHeight(node) }}
               >
                 {isPendingTiktokBreakdown(node) ? (
@@ -1297,6 +1451,27 @@ export default function StoryboardCanvas({
                         onChange={(e) => updateNodeProductRef(node.id, { price: e.target.value || null })}
                         placeholder="Price (e.g. $19.99)"
                         className="w-full bg-transparent text-[11px] text-zinc-700 outline-none placeholder:text-zinc-400 border-t border-edge pt-1"
+                      />
+                      {/* Rating / reviews / store — best-effort scraped (often
+                          empty for TikTok Shop's JS-rendered pages), always
+                          freely editable, same as the fields above. */}
+                      <input
+                        value={node.productRef!.rating || ""}
+                        onChange={(e) => updateNodeProductRef(node.id, { rating: e.target.value || null })}
+                        placeholder="Rating (e.g. 4.6★)"
+                        className="w-full bg-transparent text-[11px] text-zinc-700 outline-none placeholder:text-zinc-400"
+                      />
+                      <input
+                        value={node.productRef!.soldOrReviews || ""}
+                        onChange={(e) => updateNodeProductRef(node.id, { soldOrReviews: e.target.value || null })}
+                        placeholder="Reviews (e.g. 5.7K reviews)"
+                        className="w-full bg-transparent text-[11px] text-zinc-700 outline-none placeholder:text-zinc-400"
+                      />
+                      <input
+                        value={node.productRef!.storeName || ""}
+                        onChange={(e) => updateNodeProductRef(node.id, { storeName: e.target.value || null })}
+                        placeholder="Store name"
+                        className="w-full bg-transparent text-[11px] text-zinc-700 outline-none placeholder:text-zinc-400"
                       />
                       {err && <p className="text-[10px] text-red-400">{err}</p>}
                     </div>
@@ -1483,7 +1658,7 @@ export default function StoryboardCanvas({
                   <div
                     onMouseDown={(e) => handleResizeMouseDown(e, node)}
                     title="Drag to resize"
-                    className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize opacity-40 hover:opacity-100 transition-opacity"
+                    className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
                     style={{
                       backgroundImage:
                         "linear-gradient(135deg, transparent 0%, transparent 45%, #71717a 45%, #71717a 55%, transparent 55%, transparent 100%)",
@@ -1583,6 +1758,21 @@ export default function StoryboardCanvas({
                 {busyNodeId === n.id ? "Generating script..." : "✨ Generate script"}
               </button>
             ))}
+
+          {/* Shift+drag rubber-band selection rectangle — world-space, so it
+              lives inside the pannable/zoomable div and scales with pan/zoom
+              automatically. */}
+          {marquee && (
+            <div
+              className="absolute border border-dashed border-brand-500 bg-brand-500/10 pointer-events-none"
+              style={{
+                left: Math.min(marquee.x0, marquee.x1),
+                top: Math.min(marquee.y0, marquee.y1),
+                width: Math.abs(marquee.x1 - marquee.x0),
+                height: Math.abs(marquee.y1 - marquee.y0),
+              }}
+            />
+          )}
         </div>
       </div>
 

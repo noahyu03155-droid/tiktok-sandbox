@@ -347,6 +347,16 @@ export interface StoryboardNode {
     description: string;
     imageUrl: string | null;
     price: string | null;
+    // Three more best-effort scraped fields (JSON-LD aggregateRating /
+    // brand, see src/lib/tiktokProduct.ts) — null/absent when nothing
+    // structured was found, which is the common case for TikTok Shop's
+    // JS-rendered pages. soldOrReviews is deliberately generic: a true
+    // "sold count" is essentially never scrapeable, so when present this is
+    // really an aggregate review-count proxy. All three are plain editable
+    // text in the UI, same "user has final say" model as the fields above.
+    rating?: string | null;
+    soldOrReviews?: string | null;
+    storeName?: string | null;
     // True if the best-effort scrape (generic Open Graph meta tags — TikTok
     // Shop has no public product API we have access to, and its product
     // pages are frequently JS-rendered, so this often comes back empty) found

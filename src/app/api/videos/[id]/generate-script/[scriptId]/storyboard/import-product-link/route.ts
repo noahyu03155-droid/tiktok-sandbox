@@ -30,6 +30,9 @@ export async function POST(
       description: scraped?.description || "",
       imageUrl: scraped?.imageUrl || null,
       price: scraped?.price || null,
+      rating: scraped?.rating || null,
+      soldOrReviews: scraped?.soldOrReviews || null,
+      storeName: scraped?.storeName || null,
       scrapeFailed: !scraped,
     },
   });

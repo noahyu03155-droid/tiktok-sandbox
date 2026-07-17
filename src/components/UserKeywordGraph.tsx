@@ -288,6 +288,48 @@ export default function UserKeywordGraph({
     setPan(DEFAULT_PAN);
   }
 
+  // ---- cursor-centered wheel/pinch zoom (same fix StoryboardCanvas
+  // already has) ----
+  // zoom/pan live in two separate useState hooks here (unlike
+  // StoryboardCanvas's single board object with a functional updater), and
+  // the listener is bound exactly once — so the handler reads the CURRENT
+  // values through refs instead of closing over stale state.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const panRef = useRef(pan);
+  panRef.current = pan;
+
+  function handleWheel(e: WheelEvent) {
+    e.preventDefault();
+    const rect = viewportRef.current?.getBoundingClientRect();
+    const mouseX = e.clientX - (rect?.left ?? 0);
+    const mouseY = e.clientY - (rect?.top ?? 0);
+    const z = zoomRef.current;
+    const p = panRef.current;
+    const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * (e.deltaY > 0 ? 0.9 : 1.1)));
+    const worldX = (mouseX - p.x) / z;
+    const worldY = (mouseY - p.y) / z;
+    setZoom(nextZoom);
+    setPan({ x: mouseX - worldX * nextZoom, y: mouseY - worldY * nextZoom });
+  }
+
+  // Bound as a native, non-passive listener rather than via React's
+  // onWheel prop. React 17+ registers onWheel (and onTouchMove/onTouchStart)
+  // as passive listeners for scroll performance, which silently ignores
+  // e.preventDefault() — so a JSX onWheel handler alone can't stop the
+  // browser's own pinch-zoom/ctrl+scroll page zoom from also firing.
+  // Attaching it manually with { passive: false } is the only way
+  // preventDefault() actually takes effect, so a trackpad two-finger pinch
+  // (or ctrl+scroll) over the graph zooms the graph only, without also
+  // zooming the whole page. (Same pattern as StoryboardCanvas.tsx.)
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ---- dragging a node (also doubles as the reconnect-completion click
   // target: clicking any node's body while a reconnect is armed reassigns
   // the armed node's parent to the clicked node instead of starting a drag) ----

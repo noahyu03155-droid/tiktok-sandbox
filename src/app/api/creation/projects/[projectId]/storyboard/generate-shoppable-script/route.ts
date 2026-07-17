@@ -15,8 +15,11 @@ export const dynamic = "force-dynamic";
 // possibly hand-edited, script text), gathered via resolveConnectedChain
 // (undirected, so it works whichever way the connection was drawn). One
 // Claude call (generateShoppableScriptFromChain) preserves that chain's
-// core viral structure while swapping in the product's info. The product
-// card is replaced by 6 stage-tagged, text-only cards; the reference chain
+// core viral structure while swapping in the product's info. 6 new
+// stage-tagged, text-only cards are added; the product card itself SURVIVES
+// (kept as a freely-repositionable/reusable card) but is disconnected —
+// its connections are stripped so it doesn't participate in the
+// render-chain / Generate-video topology downstream. The reference chain
 // itself is left untouched. Returns just the delta
 // ({newNodes, newConnections}) for the client to apply onto its local
 // board state, same as breakdown/generate-product-script.
@@ -103,9 +106,14 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
       toId: newNodes[i + 1].id,
     }));
 
+    // Keep the product node (it stays on the board as a reusable card) but
+    // still strip any connections involving it — after generating it ends
+    // up unconnected, so it can't accidentally count toward the
+    // render-chain / Generate-video-button logic, which assumes connected
+    // nodes are real script/video content.
     const newBoard = {
       ...board,
-      nodes: board.nodes.filter((n) => n.id !== nodeId).concat(newNodes),
+      nodes: board.nodes.concat(newNodes),
       connections: board.connections.filter((c) => c.fromId !== nodeId && c.toId !== nodeId).concat(newConnections),
     };
     updateCreationProject(params.projectId, { storyboard: newBoard });
