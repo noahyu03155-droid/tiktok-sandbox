@@ -45,7 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="min-h-screen bg-ink">
             <HeaderBar role={user?.role ?? null} />
             <main className="max-w-6xl mx-auto px-6 py-8">{children}</main>
-            <RobotAssistant />
+            <RobotAssistant loggedIn={!!user} userId={user?.userId ?? null} />
           </div>
         </LocaleProvider>
       </body>

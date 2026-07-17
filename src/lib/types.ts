@@ -74,6 +74,18 @@ export interface JournalEntry {
   createdAt: string; // ISO
 }
 
+// One turn in the floating robot assistant's site-help chat (see
+// src/components/RobotAssistant.tsx, src/lib/assistantChat.ts,
+// /api/assistant) — a separate log from JournalEntry above: this is
+// "how do I use this site" Q&A, not the personal diary.
+export interface AssistantMessage {
+  id: string;
+  userId: string;
+  role: "user" | "ai";
+  content: string;
+  createdAt: string; // ISO
+}
+
 export interface VideoStats {
   play_count: number | null;
   digg_count: number | null;
