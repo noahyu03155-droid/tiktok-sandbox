@@ -25,6 +25,8 @@ export interface RawTrendItem {
   fastmoss_title?: string;
   product_name?: string;
   product_id?: string;
+  product_image?: string | null;
+  product_price?: string | null;
   views?: number;
   likes?: number;
   comments?: number;
@@ -91,6 +93,8 @@ export function ingestTrendBatch(input: IngestTrendBatchInput): TrendBatch {
       fastmoss_title: raw.fastmoss_title ?? null,
       product_name: raw.product_name ?? null,
       product_id: raw.product_id ?? null,
+      product_image: raw.product_image ?? null,
+      product_price: raw.product_price ?? null,
       views: typeof raw.views === "number" ? raw.views : null,
       likes: typeof raw.likes === "number" ? raw.likes : null,
       comments: typeof raw.comments === "number" ? raw.comments : null,

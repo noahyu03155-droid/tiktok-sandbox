@@ -190,7 +190,13 @@ export async function POST(
         ]);
         clip = { source: "tiktok", url: `/api/media/storyboard/${params.scriptId}/${filename}`, kind: "video" };
       }
-      const guide = shootingGuides?.[stage.key];
+      // Don't attach filming guidance for a stage the model left blank
+      // (genuinely not present in this video, per analyze.ts's blank-stage
+      // rule) — deriveShootingGuide still returns SOME text for every key
+      // regardless, so this guards against a guide that isn't actually
+      // grounded in anything real.
+      const stagePresent = stage.summary.trim() !== "" || stage.quote.trim() !== "";
+      const guide = stagePresent ? shootingGuides?.[stage.key] : undefined;
       newNodes.push({
         id: crypto.randomUUID(),
         label: stage.label,

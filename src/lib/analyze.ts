@@ -39,7 +39,7 @@ Analyze it carefully, then output ONLY a single JSON object (no text outside the
       "label": "Reaction",
       "start_time": 0,
       "end_time": 1.5,
-      "summary": "Is there a reaction-style/emotional beat at the very start to grab attention (e.g. a surprised expression, an exclamatory reaction line)? If the video has no distinct reaction beat, merge it with the hook stage — set start_time=end_time=0 and note in summary that 'no standalone reaction beat was used'",
+      "summary": "Is there a reaction-style/emotional beat at the very start to grab attention (e.g. a surprised expression, an exclamatory reaction line)? If the video genuinely has no distinct reaction beat, leave this blank — see the blank-stage rule below.",
       "quote": "The matching transcript line, or empty string if none"
     },
     {
@@ -47,7 +47,7 @@ Analyze it carefully, then output ONLY a single JSON object (no text outside the
       "label": "Hook",
       "start_time": 0,
       "end_time": 3,
-      "summary": "What the golden-opening hook says and how it grabs attention",
+      "summary": "What the golden-opening hook says and how it grabs attention. Leave blank if not present.",
       "quote": "The matching transcript line"
     },
     {
@@ -55,7 +55,7 @@ Analyze it carefully, then output ONLY a single JSON object (no text outside the
       "label": "Pain Point / Old Solution",
       "start_time": 3,
       "end_time": 10,
-      "summary": "How the video surfaces the viewer's pain point/frustration, and why the old approach/competitor it mentions falls short",
+      "summary": "How the video surfaces the viewer's pain point/frustration, and why the old approach/competitor it mentions falls short. Leave blank if not present.",
       "quote": "The matching transcript line"
     },
     {
@@ -63,7 +63,7 @@ Analyze it carefully, then output ONLY a single JSON object (no text outside the
       "label": "Product Intro",
       "start_time": 10,
       "end_time": 18,
-      "summary": "How the product is introduced, and which features/usage are shown",
+      "summary": "How the product is introduced, and which features/usage are shown. Leave blank if not present.",
       "quote": "The matching transcript line"
     },
     {
@@ -71,7 +71,7 @@ Analyze it carefully, then output ONLY a single JSON object (no text outside the
       "label": "Desired Outcome",
       "start_time": 18,
       "end_time": 25,
-      "summary": "The ideal result/transformation after using the product, and how the video paints that picture",
+      "summary": "The ideal result/transformation after using the product, and how the video paints that picture. Leave blank if not present.",
       "quote": "The matching transcript line"
     },
     {
@@ -79,7 +79,7 @@ Analyze it carefully, then output ONLY a single JSON object (no text outside the
       "label": "CTA",
       "start_time": 25,
       "end_time": 30,
-      "summary": "How the closing call-to-action is phrased, and what urgency/persuasion technique it uses",
+      "summary": "How the closing call-to-action is phrased, and what urgency/persuasion technique it uses. Leave blank if not present.",
       "quote": "The matching transcript line"
     }
   ],
@@ -93,12 +93,13 @@ Analyze it carefully, then output ONLY a single JSON object (no text outside the
 }
 
 Requirements:
-- The "structure" array must contain exactly these 6 stages in this order (keys: reaction, hook, pain_point, product_intro, desired_outcome, cta). Don't add, remove, or reorder them — even if a stage isn't clearly present in the video, give your best-effort judgment and note in the summary that "this stage isn't distinct / overlaps with another stage."
-- The 6 stages' timestamps should follow the video's actual chronological order start to finish, ideally with each stage's end_time roughly matching the next stage's start_time.
+- The "structure" array must always contain exactly these 6 entries, in this fixed key order (reaction, hook, pain_point, product_intro, desired_outcome, cta) — this is just a stable slot for each stage type, not a claim about where that content falls in the video. Don't add or remove entries.
+- BLANK-STAGE RULE — this is important, read carefully: only fill in a stage if you can point to real, specific content in the transcript/description for it. If a stage genuinely isn't present in this particular video (skipped entirely, or too thin/generic to honestly call out), leave it blank: "summary": "", "quote": "", "start_time": 0, "end_time": 0. Do NOT stretch a neutral or unrelated moment to fill a stage, do NOT invent content, and do NOT force every video into all 6 stages just because the schema lists them — plenty of real videos genuinely skip a pain-point beat, or never state an explicit CTA, or fold the reaction into the hook. A half-accurate forced guess is worse than an honest blank.
+- NO FORCED CHRONOLOGICAL ORDER — this is also important: real videos don't always follow the reaction→hook→pain_point→product_intro→desired_outcome→cta sequence. For example, a testimonial/results-first video might show the desired outcome BEFORE introducing the product, or open directly on the product with no separate hook. Timestamp each stage according to where that content ACTUALLY occurs in the video's real timeline — start_time values across the 6 stages do NOT need to increase monotonically in the reaction→...→cta order above. Identify each stage by what it IS (content/purpose), not by assuming it must appear in canonical funnel position.
 - Be specific and actionable, never generic — back up claims with a direct transcript quote in the "quote" field wherever possible. If a stage has no clean matching line, leave quote as an empty string.
 - Write all analysis text (summary, hook.why_it_works, structure summaries, selling_points) in English, regardless of what language the transcript itself is in. Quotes should stay in the transcript's original language/wording, unchanged.
-- If the transcript is missing or very short, do your best based on the title/description, and note the limited information in the summary.
-- "Reaction" stage specifically: this should be the single moment of peak emotional/reactive expression in the video (a genuine surprised look, an exclamation, a visible reaction) — real reaction beats are almost always 3 seconds or less. Don't stretch a neutral moment to fill more time than that; if nothing in the video is genuinely reactive, the existing "merge with hook" fallback above still applies.
+- If the transcript is missing or very short, do your best based on the title/description, but if there's genuinely not enough signal for a given stage, leave it blank per the rule above rather than guessing — and note the limited information in the top-level "summary".
+- "Reaction" stage specifically: this should be the single moment of peak emotional/reactive expression in the video (a genuine surprised look, an exclamation, a visible reaction) — real reaction beats are almost always 3 seconds or less. Don't stretch a neutral moment to fill more time than that; if nothing in the video is genuinely reactive, leave it blank.
 - "Hook" stage specifically: pick out whichever specific line or moment is most likely to make a scrolling viewer stop and keep watching — a curiosity gap, a bold/contrarian claim, an unexpected visual — not simply "whatever comes first chronologically."
 - General pacing awareness: well-performing short-form e-commerce videos are usually about 40-50 seconds total, rarely more than 60 — keep that norm in mind as a sanity check when judging how much of the video's actual runtime each stage should occupy (this doesn't change the video's real length, which you can't alter — it's a prior for how to interpret pacing/tightness when writing each stage's summary).`;
 

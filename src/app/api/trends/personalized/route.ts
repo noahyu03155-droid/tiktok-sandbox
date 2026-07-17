@@ -24,6 +24,8 @@ function toRawItem(v: FastMossVideoResult, index: number): RawTrendItem {
     fastmoss_title: v.desc || undefined,
     product_name: v.product_info?.[0]?.title || undefined,
     product_id: v.product_info?.[0]?.product_id || undefined,
+    product_image: v.product_info?.[0]?.cover || undefined,
+    product_price: v.product_info?.[0]?.price || undefined,
     views: v.play_count ?? undefined,
     likes: v.digg_count ?? undefined,
     comments: v.comment_count ?? undefined,

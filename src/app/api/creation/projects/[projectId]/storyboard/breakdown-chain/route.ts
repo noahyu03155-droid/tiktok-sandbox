@@ -137,6 +137,14 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
       console.error("deriveShootingGuide failed — continuing chain breakdown without a shooting guide:", guideErr);
     }
 
+    // A stage the model genuinely couldn't find in this video comes back
+    // blank (empty summary AND quote, per analyze.ts's blank-stage rule) —
+    // those are dropped here entirely rather than assigned to any card, so
+    // that card is simply left untouched (keeps whatever it already had,
+    // including any text the user typed in themselves) instead of being
+    // overwritten with an empty/forced instruction.
+    const presentStages = analysis.structure.filter((s) => s.summary.trim() !== "" || s.quote.trim() !== "");
+
     // Pass 1: direct stageTag matches, regardless of position in the chain.
     const byStageTag = new Map<FunnelStageKey, StoryboardNode>();
     for (const n of orderedChain) {
@@ -144,7 +152,7 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
     }
     const assignments: { node: StoryboardNode; stage: (typeof analysis.structure)[number] }[] = [];
     const usedNodeIds = new Set<string>();
-    for (const stage of analysis.structure) {
+    for (const stage of presentStages) {
       const tagged = byStageTag.get(stage.key);
       if (tagged) {
         assignments.push({ node: tagged, stage });
@@ -154,7 +162,7 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
     // Pass 2: leftover stages (no node claimed that tag) go to leftover
     // untagged chain nodes, positionally, in resolved shot order.
     const assignedStageKeys = new Set(assignments.map((a) => a.stage.key));
-    const remainingStages = analysis.structure.filter((s) => !assignedStageKeys.has(s.key));
+    const remainingStages = presentStages.filter((s) => !assignedStageKeys.has(s.key));
     const remainingNodes = orderedChain.filter((n) => !usedNodeIds.has(n.id));
     for (let i = 0; i < Math.min(remainingNodes.length, remainingStages.length); i++) {
       assignments.push({ node: remainingNodes[i], stage: remainingStages[i] });

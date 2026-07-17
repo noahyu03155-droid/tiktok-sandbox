@@ -463,6 +463,14 @@ export interface TrendItem {
   // look up a real sales-trend chart / saturation count on demand, see
   // /api/trends/analyze-product.
   product_id: string | null;
+  // Product cover image + display price, straight from FastMoss's
+  // product_info block (see FastMossProductInfo in fastmoss.ts) — used to
+  // render an actual PRODUCT card (image + name + price) for the "Top 20
+  // Viral Products" section, instead of reusing the video-card layout.
+  // Hotlinked straight from FastMoss/TikTok's own CDN (not cached locally
+  // like video thumbnails), so the UI must tolerate it 404ing/expiring.
+  product_image: string | null;
+  product_price: string | null;
   views: number | null;
   likes: number | null;
   comments: number | null;

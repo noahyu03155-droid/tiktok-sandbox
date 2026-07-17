@@ -508,6 +508,211 @@ function TrendCard({
   );
 }
 
+// A real PRODUCT card (image + name + price + GMV/units-sold), for the "Top
+// 20 Viral Products" section — deliberately NOT the video-card layout
+// TrendCard above renders (thumbnail/caption/creator), since this section
+// is about the PRODUCT, not any one specific video promoting it. Reuses the
+// same on-demand "AI Analysis" panel (SalesTrendChart/SaturationBar), just
+// with its own copy of the open/loading/error state rather than sharing
+// TrendCard's, to keep the two card types independent and simple.
+function ProductCard({ item }: { item: EnrichedItem }) {
+  const { t } = useLocale();
+
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<ProductAnalysis | null>(null);
+
+  const [addState, setAddState] = useState<"idle" | "adding" | "added" | "error">("idle");
+  const [addedProjectId, setAddedProjectId] = useState<string | null>(null);
+  // A product image straight off FastMoss/TikTok's own CDN, not cached
+  // locally like video thumbnails — those links can 404/expire, so this
+  // just falls back to a plain placeholder rather than showing a broken
+  // image icon.
+  const [imgFailed, setImgFailed] = useState(false);
+
+  async function handleAddToCreation() {
+    if (!item.video || addState === "adding" || addState === "added") return;
+    setAddState("adding");
+    try {
+      const res = await fetch("/api/creation/import-trend-video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoRecordId: item.video.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.projectId) throw new Error(data.error || "Import failed");
+      setAddedProjectId(data.projectId);
+      setAddState("added");
+    } catch {
+      setAddState("error");
+    }
+  }
+
+  async function toggleAnalysis() {
+    if (analysisOpen) {
+      setAnalysisOpen(false);
+      return;
+    }
+    setAnalysisOpen(true);
+    if (analysis || analysisLoading) return;
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try {
+      const res = await fetch("/api/trends/analyze-product", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product_id: item.product_id,
+          creator_handle: item.creator_handle || undefined,
+          days: 28,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Analysis failed");
+      setAnalysis(data);
+    } catch (err: any) {
+      setAnalysisError(err.message || "Analysis failed");
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }
+
+  const productTitle = item.product_name || item.fastmoss_title || "Untitled product";
+
+  return (
+    <div className="rounded-xl overflow-hidden bg-panel border border-edge hover:border-brand-500 transition-colors">
+      <div className="relative aspect-square bg-panel2">
+        <span className="absolute top-2 left-2 z-10 flex items-center gap-0.5 text-[11px] font-bold text-white bg-black/80 rounded-full px-2 py-1 leading-none">
+          🔥 #{item.rank}
+        </span>
+        {item.product_image && !imgFailed ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={item.product_image}
+            alt={productTitle}
+            className="w-full h-full object-cover"
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-4xl">🛍</div>
+        )}
+      </div>
+      <div className="p-3">
+        <p className="text-sm text-zinc-900 line-clamp-2 min-h-[2.5rem]" title={productTitle}>
+          {productTitle}
+        </p>
+        {item.product_price && <p className="text-sm font-semibold text-brand-400 mt-1">{item.product_price}</p>}
+
+        <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-edge text-[10px] text-zinc-500">
+          {(item.gmv ?? item.gmv_28d) && (
+            <span>
+              {t("trendGMV")}
+              <br />
+              <span className="text-zinc-800 font-medium">{item.gmv ?? item.gmv_28d}</span>
+            </span>
+          )}
+          {item.sales != null && (
+            <span>
+              {t("trendSales")}
+              <br />
+              <span className="text-zinc-800 font-medium">{item.sales}</span>
+            </span>
+          )}
+        </div>
+
+        {item.product_id && (
+          <button
+            onClick={toggleAnalysis}
+            className="mt-2 w-full text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-500 hover:text-zinc-900 hover:border-brand-500"
+          >
+            {analysisOpen ? `▲ ${t("trendHideAnalysis")}` : `🔍 ${t("trendShowAnalysis")}`}
+          </button>
+        )}
+        {item.product_id && analysisOpen && (
+          <div className="mt-2 pt-2 border-t border-edge space-y-3">
+            {analysisLoading && <p className="text-[11px] text-yellow-600 animate-pulse">{t("trendAnalysisLoading")}</p>}
+            {analysisError && <p className="text-[11px] text-red-400">{analysisError}</p>}
+            {analysis && (
+              <>
+                {analysis.creatorStats && analysis.creatorStats.day28_gmv != null && (
+                  <div className="pb-2 border-b border-edge">
+                    <p className="text-[9px] text-zinc-500 uppercase tracking-wide">{t("trendCreatorGmv28d")}</p>
+                    <p className="text-sm font-semibold text-zinc-900">
+                      ${analysis.creatorStats.day28_gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </p>
+                  </div>
+                )}
+                <p className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wide">
+                  {t("trendProductAnalytics")}
+                </p>
+                <div>
+                  <p className="text-[9px] text-zinc-500 uppercase tracking-wide mb-1">
+                    {t("trendSaturationLabel")} · {t("trendSaturation7d")}
+                  </p>
+                  <SaturationBar count={analysis.saturation7d} />
+                </div>
+                <div>
+                  <p className="text-[9px] text-zinc-500 uppercase tracking-wide mb-1">{t("trendRevenueLabel")}</p>
+                  <SalesTrendChart points={analysis.salesTrend.list} />
+                </div>
+                <div className="grid grid-cols-3 gap-x-2 gap-y-1 text-[10px] text-zinc-500 pt-1 border-t border-edge">
+                  <span>
+                    {t("trendRelatedCreators")}
+                    <br />
+                    <span className="text-zinc-800 font-medium">
+                      {formatCompactNumber(analysis.salesTrend.overview.creator_count)}
+                    </span>
+                  </span>
+                  <span>
+                    {t("trendRelatedVideos")}
+                    <br />
+                    <span className="text-zinc-800 font-medium">
+                      {formatCompactNumber(analysis.salesTrend.overview.aweme_count)}
+                    </span>
+                  </span>
+                  <span>
+                    {t("trendRelatedLives")}
+                    <br />
+                    <span className="text-zinc-800 font-medium">
+                      {formatCompactNumber(analysis.salesTrend.overview.live_count)}
+                    </span>
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {item.video && (
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              onClick={handleAddToCreation}
+              disabled={addState === "adding"}
+              className="flex-1 text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-500 hover:text-zinc-900 hover:border-brand-500 disabled:opacity-40"
+            >
+              {addState === "adding"
+                ? t("trendAddingToCreation")
+                : addState === "added"
+                ? `✓ ${t("trendAddedToCreation")}`
+                : `🎬 ${t("trendAddToCreation")}`}
+            </button>
+            {addState === "added" && addedProjectId && (
+              <a
+                href={`/creation/${addedProjectId}`}
+                className="text-[10px] text-brand-400 hover:text-brand-300 underline underline-offset-2 whitespace-nowrap"
+              >
+                {t("trendViewInCreation")}
+              </a>
+            )}
+          </div>
+        )}
+        {addState === "error" && <p className="text-[10px] text-red-400 mt-1">{t("trendAddToCreationError")}</p>}
+      </div>
+    </div>
+  );
+}
+
 function TrendSection({
   title,
   items,
@@ -516,6 +721,7 @@ function TrendSection({
   selectMode,
   selected,
   onToggleSelect,
+  variant = "video",
 }: {
   title: string;
   items: EnrichedItem[];
@@ -524,25 +730,30 @@ function TrendSection({
   selectMode: boolean;
   selected: Set<string>;
   onToggleSelect: (key: string) => void;
+  // "product" renders ProductCard (image/name/price — for the "Top 20 Viral
+  // Products" section) instead of the default video-card layout. Select
+  // mode isn't supported for product cards (that section never enables it).
+  variant?: "video" | "product";
 }) {
   if (items.length === 0) return null;
   return (
     <div className="space-y-3">
       <h3 className="text-sm font-semibold text-zinc-900">{title}</h3>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        {items.map((item) => {
-          const key = selKey(batchId, metric, item.rank);
-          return (
+        {items.map((item) =>
+          variant === "product" ? (
+            <ProductCard key={`${metric}-${item.rank}-product-${item.product_id || item.fastmoss_url}`} item={item} />
+          ) : (
             <TrendCard
               key={`${metric}-${item.rank}-${item.fastmoss_url}`}
               item={item}
               metric={metric}
               selectMode={selectMode}
-              selected={selected.has(key)}
-              onToggleSelect={() => onToggleSelect(key)}
+              selected={selected.has(selKey(batchId, metric, item.rank))}
+              onToggleSelect={() => onToggleSelect(selKey(batchId, metric, item.rank))}
             />
-          );
-        })}
+          )
+        )}
       </div>
     </div>
   );
@@ -889,6 +1100,7 @@ export default function TrendsPageContent({
                 selectMode={false}
                 selected={EMPTY_SELECTION}
                 onToggleSelect={() => {}}
+                variant="product"
               />
               <TrendSection
                 title={t("trendTopByViews")}
