@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { LocaleProvider } from "@/lib/i18n";
 import HeaderBar from "@/components/HeaderBar";
-import RobotAssistant from "@/components/RobotAssistant";
 import { getCurrentUser } from "@/lib/session";
 
 // Core selling-point pitch, used both as the page <meta description> and as
@@ -45,7 +44,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="min-h-screen bg-ink">
             <HeaderBar role={user?.role ?? null} />
             <main className="max-w-6xl mx-auto px-6 py-8">{children}</main>
-            <RobotAssistant loggedIn={!!user} userId={user?.userId ?? null} />
           </div>
         </LocaleProvider>
       </body>

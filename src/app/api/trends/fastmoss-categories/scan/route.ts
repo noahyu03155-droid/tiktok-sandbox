@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export async function POST() {
   const user = getCurrentUser();
   if (!user || user.role !== "admin") {
-    return NextResponse.json({ error: "仅管理员可以触发类目扫描" }, { status: 403 });
+    return NextResponse.json({ error: "Only admins can trigger a category scan" }, { status: 403 });
   }
   if (!process.env.FASTMOSS_API_KEY) {
     return NextResponse.json({ error: "FASTMOSS_API_KEY isn't set — see README." }, { status: 400 });

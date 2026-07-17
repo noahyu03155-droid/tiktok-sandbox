@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
-import type { VideoRecord, TrendBatch, CreatorInfo, TrackedCreator, User, UserRole, CreationProject, JournalEntry, AssistantMessage } from "./types";
+import type { VideoRecord, TrendBatch, CreatorInfo, TrackedCreator, User, UserRole, CreationProject, JournalEntry } from "./types";
 import { hashPassword } from "./password";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -62,11 +62,6 @@ interface Store {
   // Per-user daily journal chat log ("write like a diary, AI replies like a
   // friend" — see src/lib/journal.ts and /api/journal), keyed by userId.
   journalEntries: Record<string, JournalEntry[]>;
-  // Per-user "how do I use this site" chat log with the floating robot
-  // assistant (see src/lib/assistantChat.ts and /api/assistant), keyed by
-  // userId — separate from journalEntries above, which is the personal
-  // diary log, not site-help Q&A.
-  assistantMessages: Record<string, AssistantMessage[]>;
   shopifyAccessToken?: string | null;
   // Cached result of the last full FastMoss category-tree scan (see
   // src/lib/fastmossCategoryScan.ts) — which category ids actually returned
@@ -99,7 +94,6 @@ function load(): Store {
       if (!cache!.users) cache!.users = {};
       if (!cache!.creationProjects) cache!.creationProjects = {};
       if (!cache!.journalEntries) cache!.journalEntries = {};
-      if (!cache!.assistantMessages) cache!.assistantMessages = {};
     } catch (err) {
       // db.json exists but couldn't be parsed — this must never happen
       // silently. Back up the unreadable file (its bytes might still be
@@ -121,10 +115,10 @@ function load(): Store {
           backupErr
         );
       }
-      cache = { videos: {}, trendBatches: {}, creators: {}, users: {}, creationProjects: {}, journalEntries: {}, assistantMessages: {} };
+      cache = { videos: {}, trendBatches: {}, creators: {}, users: {}, creationProjects: {}, journalEntries: {} };
     }
   } else {
-    cache = { videos: {}, trendBatches: {}, creators: {}, users: {}, creationProjects: {}, journalEntries: {}, assistantMessages: {} };
+    cache = { videos: {}, trendBatches: {}, creators: {}, users: {}, creationProjects: {}, journalEntries: {} };
   }
   seedAdminUser(cache as Store);
   return cache as Store;
@@ -477,22 +471,6 @@ export function addJournalEntry(userId: string, entry: JournalEntry) {
 export function listJournalEntries(userId: string, limit = 100): JournalEntry[] {
   const store = load();
   const entries = store.journalEntries[userId] || [];
-  return entries.slice(-limit);
-}
-
-// ---- Robot assistant chat (per-user "how do I use this site" Q&A, see /api/assistant) ----
-
-export function addAssistantMessage(userId: string, entry: AssistantMessage) {
-  const store = load();
-  if (!store.assistantMessages[userId]) store.assistantMessages[userId] = [];
-  store.assistantMessages[userId].push(entry);
-  persist();
-  return entry;
-}
-
-export function listAssistantMessages(userId: string, limit = 100): AssistantMessage[] {
-  const store = load();
-  const entries = store.assistantMessages[userId] || [];
   return entries.slice(-limit);
 }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { getUserById, getVideo, getLatestTrendBatchByCategory } from "@/lib/db";
-import { buildFastmossVideoUrl, fetchCategoryTrendVideos, formatUsd, toCreatorInfo } from "@/lib/fastmoss";
+import { buildFastmossVideoUrl, fetchCategoryTrendVideos, fetchFastMossCategories, formatUsd, toCreatorInfo } from "@/lib/fastmoss";
 import type { FastMossVideoResult } from "@/lib/fastmoss";
 import { ingestTrendBatch, type RawTrendItem } from "@/lib/trends";
 import type { TrendBatch, TrendItem } from "@/lib/types";
@@ -55,6 +55,30 @@ function deriveTopProducts(items: TrendItem[], limit: number): TrendItem[] {
     .slice(0, limit);
 }
 
+interface FastMossCategoryNode {
+  c_code: string;
+  c_name: string;
+  sub?: FastMossCategoryNode[];
+}
+
+// A saved preferredCategoryId is picked at registration from a flattened
+// (up to) 2-level list — see src/app/register/page.tsx's flatCategories —
+// so a "no data for this exact category" case is almost always a narrow
+// leaf category (e.g. "Dog & Cat Food") whose own product_category_id
+// wasn't confirmed to have video-search results at scan time, even though
+// its broader parent ("Pet Supplies") does. Walks the category tree one
+// level to find that direct parent, if any; returns null if categoryId is
+// already top-level (or isn't found in the tree at all, e.g. the tree
+// changed since the user picked it).
+function findParentCategory(tree: FastMossCategoryNode[], categoryId: string): { id: string; name: string } | null {
+  for (const l1 of tree) {
+    for (const l2 of l1.sub || []) {
+      if (l2.c_code === categoryId) return { id: l1.c_code, name: l1.c_name };
+    }
+  }
+  return null;
+}
+
 // Powers the "For You" section on the Trend Analysis page — reads the
 // logged-in user's saved preferredCategoryId (set at registration, see
 // /api/register) and returns Top 20 viral videos (by views, by sales) plus
@@ -65,18 +89,22 @@ export async function GET(req: NextRequest) {
   if (!sessionUser) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const user = getUserById(sessionUser.userId);
-  const categoryId = user?.preferredCategoryId || null;
-  const categoryLabel = user?.preferredCategoryLabel || null;
+  let categoryId = user?.preferredCategoryId || null;
+  let categoryLabel = user?.preferredCategoryLabel || null;
   if (!categoryId) {
     return NextResponse.json({ batch: null, needsCategory: true });
   }
 
   const forceRefresh = req.nextUrl.searchParams.get("refresh") === "1";
-  const cached = getLatestTrendBatchByCategory(categoryId);
-  const isFresh = !!cached && Date.now() - new Date(cached.created_at).getTime() < FRESH_MS;
+  let cached = getLatestTrendBatchByCategory(categoryId);
+  let isFresh = !!cached && Date.now() - new Date(cached.created_at).getTime() < FRESH_MS;
 
   let batch: TrendBatch | null = cached;
-  const shouldFetchLive = forceRefresh || !batch || !isFresh;
+  let shouldFetchLive = forceRefresh || !batch || !isFresh;
+  // Set once a fallback to the broader parent category actually happens, so
+  // the client can show a small "showing results for the broader category"
+  // note instead of silently swapping categories on the user.
+  let usedFallbackCategory: string | null = null;
 
   if (shouldFetchLive && process.env.FASTMOSS_API_KEY) {
     try {
@@ -97,9 +125,51 @@ export async function GET(req: NextRequest) {
           top_by_views: byViews.map(toRawItem),
           top_by_sales: bySales.map(toRawItem),
         });
+      } else {
+        // The exact saved category came back empty (a common case for a
+        // narrow leaf category, e.g. "Dog & Cat Food" under "Pet
+        // Supplies") — walk up to its direct parent category and retry
+        // once there before giving up. Falls through to the `!batch`
+        // English error below if the parent has nothing either.
+        try {
+          const tree = (await fetchFastMossCategories()) as FastMossCategoryNode[];
+          const parent = findParentCategory(tree || [], categoryId);
+          if (parent) {
+            const parentCached = getLatestTrendBatchByCategory(parent.id);
+            const parentIsFresh = !!parentCached && Date.now() - new Date(parentCached.created_at).getTime() < FRESH_MS;
+            let parentBatch = parentCached;
+            if (!parentBatch || !parentIsFresh) {
+              const [parentByViews, parentBySales] = await Promise.all([
+                fetchCategoryTrendVideos("play_count", { days, region: REGION, limit: 20, categoryId: Number(parent.id) }),
+                fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit: 20, categoryId: Number(parent.id) }),
+              ]);
+              if (parentByViews.length > 0 || parentBySales.length > 0) {
+                parentBatch = ingestTrendBatch({
+                  category: parent.name,
+                  category_id: parent.id,
+                  date_from: from.toISOString().slice(0, 10),
+                  date_to: now.toISOString().slice(0, 10),
+                  days,
+                  top_by_views: parentByViews.map(toRawItem),
+                  top_by_sales: parentBySales.map(toRawItem),
+                });
+              }
+            }
+            if (parentBatch) {
+              batch = parentBatch;
+              categoryId = parent.id;
+              categoryLabel = parent.name;
+              usedFallbackCategory = parent.name;
+            }
+          }
+        } catch {
+          // Parent lookup/retry failed — fall through to the cached/error
+          // handling below exactly as if no fallback had been attempted.
+        }
       }
-      // If FastMoss returned nothing, fall through and keep using `cached`
-      // (if any) rather than clobbering it with an empty result.
+      // If FastMoss returned nothing even after the fallback above, fall
+      // through and keep using `cached` (if any) rather than clobbering it
+      // with an empty result.
     } catch {
       // Live pull failed (rate limit, network, etc.) — fall back to
       // whatever cached batch we have, if any (handled below).
@@ -109,7 +179,7 @@ export async function GET(req: NextRequest) {
   if (!batch) {
     return NextResponse.json(
       {
-        error: `你选择的类目（${categoryLabel || categoryId}）暂时还没有数据，稍后再来看看。`,
+        error: `No trend data yet for your saved category (${categoryLabel || categoryId}) — check back later.`,
         needsCategory: false,
       },
       { status: 502 }
@@ -122,6 +192,7 @@ export async function GET(req: NextRequest) {
   const topProducts = deriveTopProducts([...batch.top_by_views, ...batch.top_by_sales], 20).map(enrichItem);
 
   return NextResponse.json({
+    usedFallbackCategory,
     batch: { ...batch, top_by_views: topByViews, top_by_sales: topBySales },
     topProducts,
     categoryId,

@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "还没配置 FASTMOSS_API_KEY。去 developers.fastmoss.com 注册账号、在控制台生成一个 API Key，填进 .env（或 Railway 的 Variables）里就能用了。",
+          "FASTMOSS_API_KEY isn't set yet. Sign up at developers.fastmoss.com, generate an API Key in the dashboard, then add it to .env (or Railway's Variables).",
       },
       { status: 400 }
     );
@@ -67,8 +67,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error: categoryId
-            ? `FastMoss 没返回任何符合条件的视频（类目：${categoryLabel}，${days} 天）—— 可能是这个时间窗口/类目确实没有数据，换个类目或时间范围试试。`
-            : "FastMoss 没返回任何符合条件的宠物类视频 —— 可能是这周确实没有数据，也可能是 FASTMOSS_PET_CATEGORY_ID 设置得太窄。可以先不设这个变量，让它用关键词兜底搜索。",
+            ? `FastMoss returned no matching videos (category: ${categoryLabel}, ${days} days) — this time window/category may genuinely have no data. Try a different category or date range.`
+            : "FastMoss returned no matching pet videos — this week may genuinely have no data, or FASTMOSS_PET_CATEGORY_ID may be set too narrowly. Try unsetting that variable to fall back to keyword search.",
         },
         { status: 502 }
       );
@@ -86,6 +86,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ batch });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "FastMoss 更新失败，请稍后重试。" }, { status: 500 });
+    return NextResponse.json({ error: e?.message || "FastMoss update failed — try again in a moment." }, { status: 500 });
   }
 }

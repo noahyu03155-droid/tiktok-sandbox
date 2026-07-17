@@ -63,10 +63,14 @@ function selKey(batchId: string, metric: Metric, rank: number) {
   return `${batchId}:${metric}:${rank}`;
 }
 
-// Dependency-free inline SVG sparkline for the on-demand product sales trend
-// (daily GMV). Stroke color = brand-400 (#5cc4ee), same accent used for
-// connection lines in StoryboardCanvas.tsx.
+// Dependency-free inline SVG area chart for the on-demand product sales
+// trend (daily GMV) — filled gradient under the line, same accent (brand-400
+// #5cc4ee) used for connection lines in StoryboardCanvas.tsx. Redesigned
+// (was a bare polyline) to read at a glance the way a real analytics
+// dashboard's revenue chart does: a filled area, plus a big total-with-%-
+// change header above it, rather than just a thin trend line.
 function SalesTrendChart({ points }: { points: { dt: string; units_sold: number; gmv: number }[] }) {
+  const { t } = useLocale();
   if (points.length === 0) return null;
   const w = 240;
   const h = 48;
@@ -78,16 +82,78 @@ function SalesTrendChart({ points }: { points: { dt: string; units_sold: number;
   const coords = points.map((p, i) => {
     const x = i * stepX;
     const y = h - ((p.gmv - min) / range) * h;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
+    return { x, y };
   });
+  const linePoints = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+  const areaPoints = `0,${h} ${linePoints} ${w},${h}`;
+
+  const total = values.reduce((sum, v) => sum + v, 0);
+  // % change: last week vs. the week before it when there's enough history,
+  // otherwise just last point vs. first point — same "is this trending up
+  // or down" signal either way, just the sharpest window available.
+  let pctChange: number | null = null;
+  if (values.length >= 14) {
+    const prevWeek = values.slice(-14, -7).reduce((s, v) => s + v, 0);
+    const lastWeek = values.slice(-7).reduce((s, v) => s + v, 0);
+    if (prevWeek > 0) pctChange = ((lastWeek - prevWeek) / prevWeek) * 100;
+  } else if (values.length >= 2 && values[0] > 0) {
+    pctChange = ((values[values.length - 1] - values[0]) / values[0]) * 100;
+  }
+
   return (
     <div>
+      <div className="flex items-baseline gap-2 mb-1">
+        <span className="text-sm font-semibold text-zinc-900">
+          ${total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+        </span>
+        {pctChange != null && (
+          <span className={`text-[10px] font-medium ${pctChange >= 0 ? "text-green-600" : "text-red-500"}`}>
+            {pctChange >= 0 ? "▲" : "▼"} {Math.abs(pctChange).toFixed(1)}%
+          </span>
+        )}
+      </div>
       <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none" className="block">
-        <polyline points={coords.join(" ")} fill="none" stroke="#5cc4ee" strokeWidth={1.5} />
+        <defs>
+          <linearGradient id="trendRevenueFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#5cc4ee" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#5cc4ee" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <polygon points={areaPoints} fill="url(#trendRevenueFill)" stroke="none" />
+        <polyline points={linePoints} fill="none" stroke="#5cc4ee" strokeWidth={1.5} />
       </svg>
       <div className="flex items-center justify-between text-[9px] text-zinc-500 mt-0.5">
         <span>{points[0]?.dt}</span>
         <span>{points[points.length - 1]?.dt}</span>
+      </div>
+    </div>
+  );
+}
+
+// Horizontal "how saturated is this product right now" gauge — turns the
+// bare saturation7d count (videos posted promoting this product in the last
+// 7 days) into a filled bar plus a plain-language low/moderate/high read,
+// instead of just a number. Scale is a soft cap at 40 posts/week (rare to
+// see more than that even for a very hot product), clamped so an
+// exceptionally saturated product still shows a full bar rather than
+// overflowing.
+function SaturationBar({ count }: { count: number }) {
+  const { t } = useLocale();
+  const pct = Math.min(100, Math.round((count / 40) * 100));
+  const level = count <= 10 ? "low" : count <= 25 ? "medium" : "high";
+  const color = level === "low" ? "#22c55e" : level === "medium" ? "#f59e0b" : "#ef4444";
+  const levelLabel =
+    level === "low" ? t("trendSaturationLow") : level === "medium" ? t("trendSaturationMedium") : t("trendSaturationHigh");
+  return (
+    <div>
+      <div className="flex items-baseline gap-2 mb-1">
+        <span className="text-sm font-semibold text-zinc-900">{count}</span>
+        <span className="text-[10px] font-medium" style={{ color }}>
+          {levelLabel}
+        </span>
+      </div>
+      <div className="h-1.5 rounded-full bg-panel2 overflow-hidden">
+        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
       </div>
     </div>
   );
@@ -336,43 +402,59 @@ function TrendCard({
           </button>
         )}
         {item.product_id && analysisOpen && (
-          <div className="mt-2 pt-2 border-t border-edge space-y-2" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="mt-2 pt-2 border-t border-edge space-y-3" onMouseDown={(e) => e.stopPropagation()}>
             {analysisLoading && <p className="text-[11px] text-yellow-600 animate-pulse">{t("trendAnalysisLoading")}</p>}
             {analysisError && <p className="text-[11px] text-red-400">{analysisError}</p>}
             {analysis && (
               <>
-                <SalesTrendChart points={analysis.salesTrend.list} />
-                <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-zinc-500">
+                {analysis.creatorStats && analysis.creatorStats.day28_gmv != null && (
+                  <div className="pb-2 border-b border-edge">
+                    <p className="text-[9px] text-zinc-500 uppercase tracking-wide">{t("trendCreatorGmv28d")}</p>
+                    <p className="text-sm font-semibold text-zinc-900">
+                      ${analysis.creatorStats.day28_gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </p>
+                  </div>
+                )}
+
+                <p className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wide">
+                  {t("trendProductAnalytics")}
+                </p>
+
+                <div>
+                  <p className="text-[9px] text-zinc-500 uppercase tracking-wide mb-1">
+                    {t("trendSaturationLabel")} · {t("trendSaturation7d")}
+                  </p>
+                  <SaturationBar count={analysis.saturation7d} />
+                </div>
+
+                <div>
+                  <p className="text-[9px] text-zinc-500 uppercase tracking-wide mb-1">{t("trendRevenueLabel")}</p>
+                  <SalesTrendChart points={analysis.salesTrend.list} />
+                </div>
+
+                <div className="grid grid-cols-3 gap-x-2 gap-y-1 text-[10px] text-zinc-500 pt-1 border-t border-edge">
                   <span>
-                    {t("trendSaturation7d")}: <span className="text-zinc-800 font-medium">{analysis.saturation7d}</span>
-                  </span>
-                  <span>
-                    {t("trendRelatedCreators")}:{" "}
+                    {t("trendRelatedCreators")}
+                    <br />
                     <span className="text-zinc-800 font-medium">
                       {formatCompactNumber(analysis.salesTrend.overview.creator_count)}
                     </span>
                   </span>
                   <span>
-                    {t("trendRelatedVideos")}:{" "}
+                    {t("trendRelatedVideos")}
+                    <br />
                     <span className="text-zinc-800 font-medium">
                       {formatCompactNumber(analysis.salesTrend.overview.aweme_count)}
                     </span>
                   </span>
                   <span>
-                    {t("trendRelatedLives")}:{" "}
+                    {t("trendRelatedLives")}
+                    <br />
                     <span className="text-zinc-800 font-medium">
                       {formatCompactNumber(analysis.salesTrend.overview.live_count)}
                     </span>
                   </span>
                 </div>
-                {analysis.creatorStats && analysis.creatorStats.day28_gmv != null && (
-                  <p className="text-[10px] text-zinc-500">
-                    {t("trendCreatorGmv28d")}:{" "}
-                    <span className="text-brand-400 font-medium">
-                      ${analysis.creatorStats.day28_gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </span>
-                  </p>
-                )}
               </>
             )}
           </div>
@@ -473,6 +555,11 @@ interface PersonalizedData {
   topProducts: EnrichedItem[];
   categoryId: string;
   categoryLabel: string;
+  // Set by the server when the user's exact saved category had no data and
+  // it fell back to showing the broader parent category instead (see
+  // /api/trends/personalized) — the name of that broader category, or
+  // null/absent if no fallback happened.
+  usedFallbackCategory?: string | null;
 }
 
 // The personalized "For You" section deliberately doesn't participate in
@@ -787,6 +874,11 @@ export default function TrendsPageContent({
             <p className="text-sm text-yellow-600 animate-pulse">{t("trendUpdating")}</p>
           )}
           {personalizedError && <p className="text-sm text-red-400">{personalizedError}</p>}
+          {personalizedData?.usedFallbackCategory && (
+            <p className="text-xs text-zinc-500">
+              No data yet for "{preferredCategory.label}" specifically — showing the broader category "{personalizedData.usedFallbackCategory}" instead.
+            </p>
+          )}
           {personalizedData && (
             <>
               <TrendSection
