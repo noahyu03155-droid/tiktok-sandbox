@@ -10,17 +10,25 @@ function formatDate(iso: string): string {
 }
 
 export default function UserKeywordGraphPageContent({
+  userId,
   username,
   joinedAt,
   projectCount,
   lastActiveAt,
   branches,
+  customTags,
+  graphPositions,
+  graphParentOverrides,
 }: {
+  userId: string;
   username: string;
   joinedAt: string;
   projectCount: number;
   lastActiveAt: string | null;
   branches: ProfileBranch[];
+  customTags: { id: string; label: string; createdAt: string }[];
+  graphPositions: Record<string, { x: number; y: number }>;
+  graphParentOverrides: Record<string, string>;
 }) {
   const { t } = useLocale();
   return (
@@ -40,7 +48,14 @@ export default function UserKeywordGraphPageContent({
           </>
         )}
       </p>
-      <UserKeywordGraph username={username} branches={branches} />
+      <UserKeywordGraph
+        userId={userId}
+        username={username}
+        branches={branches}
+        customTags={customTags}
+        graphPositions={graphPositions}
+        graphParentOverrides={graphParentOverrides}
+      />
     </div>
   );
 }

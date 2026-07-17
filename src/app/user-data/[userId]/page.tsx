@@ -24,11 +24,15 @@ export default function UserDataDetailPage({ params }: { params: { userId: strin
 
   return (
     <UserKeywordGraphPageContent
+      userId={target.id}
       username={target.username}
       joinedAt={target.createdAt}
       projectCount={projects.length}
       lastActiveAt={lastActiveAt}
       branches={branches}
+      customTags={target.customTags || []}
+      graphPositions={target.graphPositions || {}}
+      graphParentOverrides={target.graphParentOverrides || {}}
     />
   );
 }

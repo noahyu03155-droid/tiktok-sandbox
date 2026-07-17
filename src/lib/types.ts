@@ -39,6 +39,28 @@ export interface User {
   // journal.ts for the merge/dedupe logic. undefined/[] until they've
   // journaled at least once.
   journalKeywords?: string[];
+  // Admin-added freeform tags on this member's User Data keyword graph
+  // (src/app/user-data) — a manual observation an admin typed in that the
+  // automated signals (registration category, onboarding answers, journal
+  // keywords) missed. Rendered as its own node the admin can drag to attach
+  // under whichever branch fits (see graphParentOverrides). Unlike the other
+  // profile-derived branches, these are pure admin curation with no AI
+  // involvement in their content.
+  customTags?: { id: string; label: string; createdAt: string }[];
+  // Manually-dragged node positions on the User Data keyword-graph canvas
+  // (src/components/UserKeywordGraph.tsx), keyed by that component's stable
+  // per-node id scheme ("root", "branch:<kind>", "leaf:<kind>:<index>",
+  // "custom:<tagId>"). Missing keys fall back to the deterministic radial
+  // layout. Persisted per VIEWED user (this describes how THEIR graph looks,
+  // independent of which admin is looking at it).
+  graphPositions?: Record<string, { x: number; y: number }>;
+  // Per-node parent overrides for the same graph, same id scheme as above —
+  // lets an admin correct a node that looks miscategorized, or attach a new
+  // custom tag to a specific branch, by dragging its connector onto a
+  // different node. Missing entry = default parent (a leaf's own branch node;
+  // a custom tag defaults to "root" until reassigned; branch nodes are always
+  // fixed to "root" and are never reconnectable — see UserKeywordGraph.tsx).
+  graphParentOverrides?: Record<string, string>;
 }
 
 // ---- Daily journal chat ("write like a diary, AI replies like a friend") ----
