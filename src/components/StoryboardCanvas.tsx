@@ -46,6 +46,14 @@ const TIKTOK_HEADER_H = 34;
 const TIKTOK_BUTTON_ROW_H = 96;
 const TIKTOK_PREVIEW_VIDEO_H = Math.round(NODE_W * (16 / 9));
 const TIKTOK_PREVIEW_H = TIKTOK_HEADER_H + TIKTOK_PREVIEW_VIDEO_H + TIKTOK_BUTTON_ROW_H;
+// Layout for a pasted TikTok PRODUCT-link card (see isPendingProductCard
+// below) — header + product image in the same 9:16 box the pending-TikTok
+// video preview uses, then a compact editable title/description/price
+// fields area. Its "Generate script" button lives BELOW the card (like the
+// chain-tail Generate button), not inside it, since it only appears once
+// the card is connected to something.
+const PRODUCT_FIELDS_H = 170;
+const PRODUCT_CARD_H = TIKTOK_HEADER_H + TIKTOK_PREVIEW_VIDEO_H + PRODUCT_FIELDS_H;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2;
 // Free per-card resize (bottom-right grip) clamps — see handleResizeMouseDown.
@@ -63,12 +71,29 @@ function isTikTokUrl(text: string): string | null {
   return match ? match[0] : null;
 }
 
+// A TikTok Shop / product-page link (best-effort — matches common
+// product-page URL shapes; see src/lib/tiktokProduct.ts for the
+// (also best-effort) scraper). Checked BEFORE isTikTokUrl in the paste
+// handler since a product URL might also loosely match a generic
+// tiktok.com pattern.
+function isTikTokProductUrl(text: string): string | null {
+  const match = text.match(/https?:\/\/\S*(?:shop\.tiktok\.com|tiktok\.com\/shop|tiktok\.com\/view\/product)\S*/i);
+  return match ? match[0] : null;
+}
+
 // A raw TikTok import that hasn't been broken down (or manually tagged)
 // yet gets a taller card so its 9:16 video shows at natural size — see
 // TIKTOK_PREVIEW_H above. Every other card (including the 6 cards Breakdown
 // produces, which always have a stageTag set) uses the normal NODE_H.
 function isPendingTiktokBreakdown(node: StoryboardNode): boolean {
   return node.clip?.source === "tiktok" && !node.stageTag;
+}
+// A card sourced from pasting a TikTok PRODUCT link (node.productRef, see
+// src/lib/types.ts) that hasn't been turned into script cards yet —
+// rendered as a fixed-size product card (image + editable details) with a
+// "Generate script" action below it once it's connected into the graph.
+function isPendingProductCard(node: StoryboardNode): boolean {
+  return !!node.productRef && !node.stageTag;
 }
 // ---- per-card custom sizing (node.w/node.h, set by the resize grip) ----
 // The NODE_W/SCRIPT_BOX_H/NOTES_BOX_H/CLIP_VIDEO_H constants above stay as
@@ -90,19 +115,20 @@ function nodeClipVideoH(node: StoryboardNode): number {
 // height are NOT affected by vertical resize (clip height only changes
 // with width, via nodeClipVideoH above).
 function nodeScriptBoxH(node: StoryboardNode): number {
-  if (isPendingTiktokBreakdown(node)) return SCRIPT_BOX_H;
+  if (isPendingTiktokBreakdown(node) || isPendingProductCard(node)) return SCRIPT_BOX_H;
   const totalH = node.h ?? NODE_H;
   const delta = totalH - NODE_H;
   return Math.max(80, SCRIPT_BOX_H + Math.round(delta * 0.6));
 }
 function nodeNotesBoxH(node: StoryboardNode): number {
-  if (isPendingTiktokBreakdown(node)) return NOTES_BOX_H;
+  if (isPendingTiktokBreakdown(node) || isPendingProductCard(node)) return NOTES_BOX_H;
   const totalH = node.h ?? NODE_H;
   const delta = totalH - NODE_H;
   return Math.max(60, NOTES_BOX_H + Math.round(delta * 0.4));
 }
 function cardHeight(node: StoryboardNode): number {
   if (isPendingTiktokBreakdown(node)) return TIKTOK_PREVIEW_H;
+  if (isPendingProductCard(node)) return PRODUCT_CARD_H;
   return HEADER_H + nodeScriptBoxH(node) + nodeNotesBoxH(node) + nodeClipVideoH(node);
 }
 
@@ -452,6 +478,30 @@ export default function StoryboardCanvas({
     setBoard((b) => ({ ...b, nodes: b.nodes.map((n) => (n.id === nodeId ? { ...n, stageTag } : n)) }));
   }
 
+  // Same immutable-update pattern as updateNodeText, but merging into the
+  // node's productRef (the editable title/description/price fields on a
+  // pasted-product-link card). No-op on a node without a productRef.
+  function updateNodeProductRef(nodeId: string, patch: Partial<NonNullable<StoryboardNode["productRef"]>>) {
+    setBoard((b) => ({
+      ...b,
+      nodes: b.nodes.map((n) => (n.id === nodeId && n.productRef ? { ...n, productRef: { ...n.productRef, ...patch } } : n)),
+    }));
+  }
+
+  // Same pattern again, for the Shooting Guide panel's angle/tone/pace
+  // fields — starts from an all-empty guide if the node doesn't have one
+  // yet (e.g. a hand-made card, or a breakdown from before this feature).
+  function updateNodeShootingGuide(nodeId: string, patch: Partial<{ angle: string; tone: string; pace: string }>) {
+    setBoard((b) => ({
+      ...b,
+      nodes: b.nodes.map((n) =>
+        n.id === nodeId
+          ? { ...n, shootingGuide: { angle: "", tone: "", pace: "", ...(n.shootingGuide || {}), ...patch } }
+          : n
+      ),
+    }));
+  }
+
   // ---- clip attach flows ----
   function setNodeClip(nodeId: string, clip: StoryboardClip | null) {
     setBoard((b) => ({ ...b, nodes: b.nodes.map((n) => (n.id === nodeId ? { ...n, clip } : n)) }));
@@ -527,6 +577,46 @@ export default function StoryboardCanvas({
     }
   }
 
+  // "Paste a TikTok PRODUCT link anywhere" — the product-page sibling of
+  // importTikTokClip: creates a placeholder product card immediately (same
+  // optimistic pattern), then asks the server to best-effort scrape the
+  // page's Open Graph tags and patches the result onto the card. A failed
+  // scrape isn't an error state for the card itself — productRef comes back
+  // with scrapeFailed: true and the user fills the fields in by hand.
+  async function importProductLink(url: string) {
+    const rightmost = board.nodes.reduce((max, n) => Math.max(max, n.x), 0);
+    const node: StoryboardNode = {
+      id: crypto.randomUUID(),
+      label: "Product",
+      instruction: "",
+      x: board.nodes.length === 0 ? 60 : rightmost + NODE_W + GAP_X,
+      y: 120,
+      clip: null,
+      productRef: { sourceUrl: url, title: "", description: "", imageUrl: null, price: null, scrapeFailed: false },
+    };
+    setBoard((b) => ({ ...b, nodes: [...b.nodes, node] }));
+    setBusyNodeId(node.id);
+    try {
+      const res = await fetch(`${apiBase}/import-product-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, nodeId: node.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Import failed");
+      setBoard((b) => ({
+        ...b,
+        nodes: b.nodes.map((n) =>
+          n.id === node.id ? { ...n, productRef: data.productRef, label: data.productRef.title || "Product" } : n
+        ),
+      }));
+    } catch (err: any) {
+      setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Import failed" }));
+    } finally {
+      setBusyNodeId(null);
+    }
+  }
+
   // Window-level paste listener for the TikTok import above — active as long
   // as the canvas is mounted, but stands down whenever the user is focused in
   // a text field so normal pasting into a card's label/instruction still
@@ -539,6 +629,14 @@ export default function StoryboardCanvas({
         (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || (active as HTMLElement).isContentEditable);
       if (isEditingText) return; // let normal paste into a card's text fields happen untouched
       const text = e.clipboardData?.getData("text") || "";
+      // Product links first — a TikTok Shop URL also matches the generic
+      // isTikTokUrl pattern, so the more specific check has to win.
+      const productUrl = isTikTokProductUrl(text);
+      if (productUrl) {
+        e.preventDefault();
+        importProductLink(productUrl);
+        return;
+      }
       const url = isTikTokUrl(text);
       if (!url) return;
       e.preventDefault();
@@ -594,6 +692,36 @@ export default function StoryboardCanvas({
       }));
     } catch (err: any) {
       setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Breakdown failed" }));
+    } finally {
+      setBusyNodeId(null);
+    }
+  }
+
+  // "Generate script" on a connected product card — the server reads the
+  // chain of already-broken-down cards this product card is wired to (their
+  // CURRENT script text, not a fresh re-analysis) and synthesizes a new
+  // 6-stage shoppable script for this product, preserving the chain's core
+  // viral structure. Replaces this product card with the 6 new stage-tagged
+  // text-only cards, applied with the same delta pattern as startBreakdown.
+  async function generateShoppableScript(node: StoryboardNode) {
+    if (!window.confirm("Generate a new 6-stage shoppable script from the connected cards? This product card will be replaced.")) return;
+    setBusyNodeId(node.id);
+    clearNodeError(node.id);
+    try {
+      const res = await fetch(`${apiBase}/generate-shoppable-script`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodeId: node.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Script generation failed");
+      setBoard((b) => ({
+        ...b,
+        nodes: [...b.nodes.filter((n) => n.id !== node.id), ...data.newNodes],
+        connections: [...b.connections.filter((c) => c.fromId !== node.id && c.toId !== node.id), ...data.newConnections],
+      }));
+    } catch (err: any) {
+      setNodeErrors((prev) => ({ ...prev, [node.id]: err.message || "Script generation failed" }));
     } finally {
       setBusyNodeId(null);
     }
@@ -799,7 +927,7 @@ export default function StoryboardCanvas({
           <div className="min-w-0 flex-1">
             <h3 className="text-zinc-900 font-semibold text-sm truncate">Generate Video — Storyboard</h3>
             <p className="text-xs text-zinc-500 break-words">
-              Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok link anywhere to add it as a new video card.
+              Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok video link anywhere to add it as a new video card, or a TikTok product link to add a product card.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
@@ -1105,6 +1233,74 @@ export default function StoryboardCanvas({
                       {err && <p className="mt-0.5 text-[10px] text-red-400">{err}</p>}
                     </div>
                   </>
+                ) : isPendingProductCard(node) ? (
+                  <>
+                    <div
+                      onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                      className="px-3 py-1.5 border-b border-edge cursor-move flex items-center gap-2 shrink-0"
+                      style={{ borderLeft: `3px solid ${accent}` }}
+                    >
+                      <span
+                        className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold text-ink shrink-0"
+                        style={{ background: accent }}
+                      >
+                        {orderNumber.get(node.id) ?? "?"}
+                      </span>
+                      <input
+                        value={node.label}
+                        onChange={(e) => updateNodeText(node.id, { label: e.target.value })}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="flex-1 min-w-0 bg-transparent text-xs font-semibold text-zinc-900 outline-none"
+                      />
+                      <button
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={() => deleteNode(node.id)}
+                        title="Delete shot"
+                        className="text-zinc-500 hover:text-red-400 text-xs shrink-0"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="relative bg-black shrink-0" style={{ height: TIKTOK_PREVIEW_VIDEO_H }}>
+                      {busy && (
+                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
+                          <span className="text-[11px] text-white animate-pulse">Working...</span>
+                        </div>
+                      )}
+                      {node.productRef!.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={node.productRef!.imageUrl} alt="" className="w-full h-full object-contain bg-black" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-panel2">
+                          <span className="text-[10px] text-zinc-500">No image</span>
+                        </div>
+                      )}
+                    </div>
+                    <div onMouseDown={(e) => e.stopPropagation()} className="p-2 flex-1 min-h-0 flex flex-col gap-1.5 overflow-hidden">
+                      {node.productRef!.scrapeFailed && (
+                        <p className="text-[10px] text-zinc-500">Couldn't auto-fill from this link — enter the product details yourself.</p>
+                      )}
+                      <input
+                        value={node.productRef!.title}
+                        onChange={(e) => updateNodeProductRef(node.id, { title: e.target.value })}
+                        placeholder="Product title"
+                        className="w-full bg-transparent text-xs font-medium text-zinc-900 outline-none placeholder:text-zinc-400 border-b border-edge focus:border-edge2 pb-0.5"
+                      />
+                      <textarea
+                        value={node.productRef!.description}
+                        onChange={(e) => updateNodeProductRef(node.id, { description: e.target.value })}
+                        placeholder="Product description / selling points"
+                        className="w-full flex-1 min-h-0 bg-transparent text-[11px] text-zinc-700 leading-snug outline-none resize-none placeholder:text-zinc-400"
+                      />
+                      <input
+                        value={node.productRef!.price || ""}
+                        onChange={(e) => updateNodeProductRef(node.id, { price: e.target.value || null })}
+                        placeholder="Price (e.g. $19.99)"
+                        className="w-full bg-transparent text-[11px] text-zinc-700 outline-none placeholder:text-zinc-400 border-t border-edge pt-1"
+                      />
+                      {err && <p className="text-[10px] text-red-400">{err}</p>}
+                    </div>
+                  </>
                 ) : (
                   <>
                 <div
@@ -1148,16 +1344,39 @@ export default function StoryboardCanvas({
                   </button>
                 </div>
 
-                <div className="px-3 py-2 border-b border-edge shrink-0" style={{ height: nodeScriptBoxH(node) }}>
-                  <label className="text-[9px] uppercase tracking-wide text-zinc-500 mb-1 block">Script</label>
-                  <textarea
-                    value={node.instruction}
-                    onChange={(e) => updateNodeText(node.id, { instruction: e.target.value })}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    placeholder="What happens in this shot? Dialogue, action, camera direction..."
-                    className="w-full bg-transparent text-xs text-zinc-800 leading-relaxed outline-none resize-none placeholder:text-zinc-400"
-                    style={{ height: nodeScriptBoxH(node) - 22 }}
-                  />
+                {/* Script + Shooting Guide, side by side in one row that
+                    shares nodeScriptBoxH — the guide is 3 compact
+                    angle/tone/pace inputs (auto-filled by Breakdown, freely
+                    editable, empty placeholders on hand-made cards). Both
+                    halves are min-w-0 so the default 300px card width
+                    degrades to truncation instead of overflow. */}
+                <div className="flex border-b border-edge shrink-0 min-w-0" style={{ height: nodeScriptBoxH(node) }}>
+                  <div className="px-3 py-2 min-w-0" style={{ flex: 3 }}>
+                    <label className="text-[9px] uppercase tracking-wide text-zinc-500 mb-1 block">Script</label>
+                    <textarea
+                      value={node.instruction}
+                      onChange={(e) => updateNodeText(node.id, { instruction: e.target.value })}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      placeholder="What happens in this shot? Dialogue, action, camera direction..."
+                      className="w-full bg-transparent text-xs text-zinc-800 leading-relaxed outline-none resize-none placeholder:text-zinc-400"
+                      style={{ height: nodeScriptBoxH(node) - 22 }}
+                    />
+                  </div>
+                  <div className="px-2 py-1.5 border-l border-edge flex flex-col gap-1 min-w-0 overflow-hidden" style={{ flex: 2 }}>
+                    <label className="text-[9px] uppercase tracking-wide text-zinc-500 leading-none">Shooting Guide</label>
+                    {(["angle", "tone", "pace"] as const).map((field) => (
+                      <div key={field} className="flex flex-col min-w-0">
+                        <span className="text-[8px] text-zinc-400 capitalize leading-none">{field}</span>
+                        <input
+                          value={node.shootingGuide?.[field] || ""}
+                          onChange={(e) => updateNodeShootingGuide(node.id, { [field]: e.target.value })}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          placeholder={field === "angle" ? "e.g. close-up, handheld" : field === "tone" ? "e.g. playful, urgent" : "e.g. fast cuts"}
+                          className="w-full min-w-0 bg-transparent text-[10px] leading-tight text-zinc-700 outline-none placeholder:text-zinc-400 border-b border-transparent focus:border-edge2"
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
                 <div className="px-3 py-2 border-b border-edge shrink-0" style={{ height: nodeNotesBoxH(node) }}>
                   <label className="text-[9px] uppercase tracking-wide text-zinc-500 mb-1 block">Your editing notes</label>
@@ -1260,7 +1479,7 @@ export default function StoryboardCanvas({
                   }`}
                   style={{ left: 0, top: cardHeight(node) / 2, transform: "translate(-50%,-50%)", background: accent }}
                 />
-                {!isPendingTiktokBreakdown(node) && (
+                {!isPendingTiktokBreakdown(node) && !isPendingProductCard(node) && (
                   <div
                     onMouseDown={(e) => handleResizeMouseDown(e, node)}
                     title="Drag to resize"
@@ -1339,6 +1558,31 @@ export default function StoryboardCanvas({
               </Fragment>
             );
           })}
+
+          {/* "Generate script" lives under any product card that's been
+              wired into the graph (connected to at least one other card,
+              either direction) — same anchored-below-the-card placement
+              pattern as the chain-tail Generate button above. The server
+              reads the connected chain's CURRENT script text and
+              synthesizes a new shoppable script for this product (see the
+              generate-shoppable-script route). */}
+          {board.nodes
+            .filter(
+              (n) =>
+                isPendingProductCard(n) &&
+                board.connections.some((c) => c.fromId === n.id || c.toId === n.id)
+            )
+            .map((n) => (
+              <button
+                key={`shoppable-${n.id}`}
+                onClick={() => generateShoppableScript(n)}
+                disabled={busyNodeId === n.id}
+                className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
+                style={{ left: n.x, top: n.y + cardHeight(n) + 16, width: nodeWidth(n) }}
+              >
+                {busyNodeId === n.id ? "Generating script..." : "✨ Generate script"}
+              </button>
+            ))}
         </div>
       </div>
 

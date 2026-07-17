@@ -42,6 +42,43 @@ export function resolveStoryboardOrder(
   return ordered;
 }
 
+// Given a node id, returns every OTHER node connected to it — directly or
+// transitively, walking BOTH incoming and outgoing edges (undirected
+// reachability) — in resolveStoryboardOrder's narrative order. Used by the
+// "Generate script" action on a product card (see
+// src/app/api/creation/projects/[projectId]/storyboard/generate-shoppable-script/route.ts)
+// to gather whatever chain of script cards the product was wired to,
+// regardless of which direction the user drew the connection.
+export function resolveConnectedChain(
+  nodeId: string,
+  nodes: StoryboardNode[],
+  connections: Pick<CanvasConnection, "fromId" | "toId">[]
+): StoryboardNode[] {
+  const adjacency = new Map<string, string[]>();
+  for (const c of connections) {
+    if (!adjacency.has(c.fromId)) adjacency.set(c.fromId, []);
+    if (!adjacency.has(c.toId)) adjacency.set(c.toId, []);
+    adjacency.get(c.fromId)!.push(c.toId);
+    adjacency.get(c.toId)!.push(c.fromId);
+  }
+  const seen = new Set<string>([nodeId]);
+  let frontier = [nodeId];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const neighbor of adjacency.get(id) || []) {
+        if (!seen.has(neighbor)) {
+          seen.add(neighbor);
+          next.push(neighbor);
+        }
+      }
+    }
+    frontier = next;
+  }
+  seen.delete(nodeId);
+  return resolveStoryboardOrder(nodes, connections).filter((n) => seen.has(n.id));
+}
+
 // ---- Stage gate ("must cover all 6 funnel stages, in order") ----
 // The canonical funnel order every finished storyboard has to cover before
 // the Generate button unlocks. Same FunnelStageKey funnel used by video

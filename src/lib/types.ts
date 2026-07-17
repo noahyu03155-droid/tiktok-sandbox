@@ -314,6 +314,35 @@ export interface StoryboardNode {
   // node like x/y.
   w?: number;
   h?: number;
+  // A card sourced from pasting a TikTok PRODUCT link (distinct from a TikTok
+  // VIDEO link, which populates `clip` instead) — see isTikTokProductUrl in
+  // StoryboardCanvas.tsx and src/lib/tiktokProduct.ts. Rendered as a 9:16
+  // product card with a "Generate script" action once connected into the
+  // canvas graph. null/undefined = not a product card.
+  productRef?: {
+    sourceUrl: string;
+    title: string;
+    description: string;
+    imageUrl: string | null;
+    price: string | null;
+    // True if the best-effort scrape (generic Open Graph meta tags — TikTok
+    // Shop has no public product API we have access to, and its product
+    // pages are frequently JS-rendered, so this often comes back empty) found
+    // too little to trust. The UI shows editable fields either way so the
+    // user can fill in/correct details by hand.
+    scrapeFailed: boolean;
+  } | null;
+  // Optional structured filming guidance for this shot — auto-filled by
+  // Breakdown (see the breakdown API route) from the viral reference's actual
+  // pacing/tone/framing, but freely editable, and can also be filled in by
+  // hand on any card. Shown as a small panel next to the Script box in
+  // StoryboardCanvas.tsx. undefined/null = not set yet (panel shows empty
+  // editable fields with placeholders).
+  shootingGuide?: {
+    angle: string; // e.g. "Close-up, eye-level, handheld"
+    tone: string; // e.g. "Playful and a little chaotic"
+    pace: string; // e.g. "Fast cuts, no dead air"
+  } | null;
 }
 
 export interface StoryboardState {

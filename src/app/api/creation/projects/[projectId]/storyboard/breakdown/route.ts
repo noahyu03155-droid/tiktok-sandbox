@@ -7,6 +7,7 @@ import { requireProjectAccess } from "@/lib/creationAuth";
 import { getMediaDir, updateCreationProject } from "@/lib/db";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
+import { deriveShootingGuide, type ShootingGuideEntry } from "@/lib/shootingGuide";
 import type { StoryboardNode, VideoStats } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -151,6 +152,18 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
       transcript_segments: transcript.segments,
     });
 
+    // Nice-to-have on top of the breakdown: one extra lightweight Claude
+    // call for per-stage filming guidance (angle/tone/pace), shown in each
+    // card's Shooting Guide panel. Deliberately never fails the whole
+    // breakdown — the 6 stage cards are the main value; if this call
+    // errors, the new cards just ship without a pre-filled guide.
+    let shootingGuides: Record<string, ShootingGuideEntry> | null = null;
+    try {
+      shootingGuides = await deriveShootingGuide(analysis.structure);
+    } catch (guideErr) {
+      console.error("deriveShootingGuide failed — continuing breakdown without a shooting guide:", guideErr);
+    }
+
     const newNodes: StoryboardNode[] = [];
     for (let i = 0; i < analysis.structure.length; i++) {
       const stage = analysis.structure[i];
@@ -170,6 +183,7 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
         ]);
         clip = { source: "tiktok", url: `/api/media/storyboard/${params.projectId}/${filename}`, kind: "video" };
       }
+      const guide = shootingGuides?.[stage.key];
       newNodes.push({
         id: crypto.randomUUID(),
         label: stage.label,
@@ -178,6 +192,12 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
         y: node.y,
         clip,
         stageTag: stage.key,
+        // Coerced defensively — the guide comes straight from a JSON.parse
+        // of model output, so a missing/odd-shaped entry becomes null/""
+        // rather than poisoning the saved node.
+        shootingGuide: guide
+          ? { angle: String(guide.angle || ""), tone: String(guide.tone || ""), pace: String(guide.pace || "") }
+          : null,
       });
     }
 

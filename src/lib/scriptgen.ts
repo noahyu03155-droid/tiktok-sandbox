@@ -130,6 +130,119 @@ Description: ${input.product.description || "(no description)"}${profileText}`;
   }
 }
 
+const SHOPPABLE_CHAIN_SYSTEM_PROMPT = `You are a senior TikTok e-commerce content strategist. A brand team has already broken an existing viral video down into an ordered sequence of shot cards (each with its current script/notes text, possibly hand-edited by the team) and wants to adapt that exact viral structure into a new shoppable script for a DIFFERENT product.
+
+You'll receive:
+1. The ordered reference shots (each with a label and its current script text) — treat this as the real reference material, not something to re-derive from scratch.
+2. Our own product's info (title, description, price if known).
+3. Optionally, a short profile of the creator who will film this script.
+
+First, silently identify the reference sequence's core viral elements — its hook technique, pacing/rhythm, emotional beats, and what role each shot plays in the sequence. Then write a NEW 6-stage script (Reaction, Hook, Pain Point / Old Solution, Product Intro, Desired Outcome, CTA) for OUR product that deliberately preserves those same core elements (same hook technique, similar pacing, the same emotional arc) while swapping in our product's actual selling points and use cases. Don't copy the reference verbatim — adapt it. If the reference sequence has more or fewer than 6 shots, or doesn't cleanly map to these 6 stages, use your best judgment to still produce exactly these 6 stages, inferring what's missing from the overall reference tone/structure.
+
+Output ONLY a single JSON object (no text outside the JSON, no markdown code fences):
+{
+  "stages": [
+    { "label": "Reaction", "script": "...", "direction": "..." },
+    { "label": "Hook", "script": "...", "direction": "..." },
+    { "label": "Pain Point / Old Solution", "script": "...", "direction": "..." },
+    { "label": "Product Intro", "script": "...", "direction": "..." },
+    { "label": "Desired Outcome", "script": "...", "direction": "..." },
+    { "label": "CTA", "script": "...", "direction": "..." }
+  ]
+}
+
+Requirements:
+- The "script" field should be conversational and ready to read aloud.
+- Selling points must come from our product's actual info — don't invent features the reference's product had but ours doesn't.
+- The "direction" field should be one short, actionable filming tip.
+- Write everything in English.
+- Target a natural total spoken duration across all 6 stages of roughly 40-50 seconds when read aloud (rarely more than 60).
+- The "Reaction" stage's script should be a single sharp reactive beat, roughly 2-3 seconds when read aloud.
+- The "Hook" stage should create a genuine curiosity gap or bold/contrarian claim, not a generic opener.
+- If a creator profile is provided, let it shape voice/persona and filming-direction detail, but never invent product facts from it.`;
+
+// One shot card from the already-broken-down chain the product card was
+// wired to on the canvas — its label plus its CURRENT script text
+// (node.instruction, possibly hand-edited), not a fresh re-analysis.
+export interface ShoppableChainReferenceStage {
+  label: string;
+  script: string;
+}
+
+// The pasted-product-link card's info (see StoryboardNode.productRef) —
+// deliberately NOT a ShopifyProductSummary, this product may not exist in
+// Shopify at all.
+export interface ShoppableChainProduct {
+  title: string;
+  description: string;
+  price?: string | null;
+}
+
+// "Generate script" on a product card (see the generate-shoppable-script
+// routes): a separate entry point from generateScriptForProduct above — the
+// reference here is the user's current chain of script cards (lightweight
+// {label, script} pairs), not a full AnalysisResult, and the product comes
+// from a pasted TikTok product link rather than Shopify.
+export async function generateShoppableScriptFromChain(input: {
+  referenceStages: ShoppableChainReferenceStage[];
+  product: ShoppableChainProduct;
+  creatorProfile?: ScriptGenCreatorProfile | null;
+}): Promise<GeneratedScriptStage[]> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
+  const client = new Anthropic({ apiKey });
+
+  const referenceText = input.referenceStages
+    .map((s, i) => `${i + 1}. [${s.label}] ${s.script || "(no script text yet)"}`)
+    .join("\n");
+
+  const profileLines: string[] = [];
+  if (input.creatorProfile) {
+    const p = input.creatorProfile;
+    if (p.ageRange) profileLines.push(`- Age range: ${p.ageRange}`);
+    if (p.occupation) profileLines.push(`- Occupation: ${p.occupation}`);
+    if (p.interests) profileLines.push(`- Interests: ${p.interests}`);
+    if (p.experienceLevel) profileLines.push(`- On-camera experience: ${p.experienceLevel}`);
+    if (p.contentStyle) profileLines.push(`- Preferred content style: ${p.contentStyle}`);
+  }
+  const profileText =
+    profileLines.length > 0
+      ? `\n\n---\n\nCreator profile (use to shape voice/persona/filming-direction detail — don't invent product facts from it):\n${profileLines.join("\n")}`
+      : "";
+
+  const userContent = `Reference shot sequence (already broken down from a viral video):
+${referenceText}
+
+---
+
+Our product to adapt the script for:
+Title: ${input.product.title}
+Description: ${input.product.description || "(no description)"}
+Price: ${input.product.price || "unknown"}${profileText}`;
+
+  const msg = await trackAiTask(() =>
+    client.messages.create({
+      model: MODEL,
+      max_tokens: 3000,
+      system: SHOPPABLE_CHAIN_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userContent }],
+    })
+  );
+
+  const textBlock = msg.content.find((b) => b.type === "text") as { type: "text"; text: string } | undefined;
+  if (!textBlock) throw new Error("Claude returned no text content");
+
+  let jsonStr = textBlock.text.trim();
+  jsonStr = jsonStr.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "");
+
+  try {
+    const parsed = JSON.parse(jsonStr);
+    return parsed.stages as GeneratedScriptStage[];
+  } catch (e) {
+    throw new Error(`Failed to parse shoppable script JSON: ${jsonStr.slice(0, 500)}`);
+  }
+}
+
 const REFINE_SYSTEM_PROMPT = `You are a senior TikTok e-commerce content strategist. You previously wrote one beat of a script (part of a larger 6-stage script) for a brand's product. The brand team has reviewed it and left feedback on this one beat only. Rewrite just this beat to address their feedback — don't change what beat it is or its role in the overall script, just improve the actual line(s) and filming direction.
 
 Output ONLY a single JSON object (no text outside the JSON, no markdown code fences), in this format:
