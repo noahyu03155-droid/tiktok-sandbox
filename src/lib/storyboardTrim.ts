@@ -101,13 +101,20 @@ export async function pickBestSegment(opts: {
   try {
     const frameDir = path.join(tmpDir, "frames");
     fs.mkdirSync(frameDir, { recursive: true });
-    const frames: { t: number; file: string }[] = [];
-    for (let i = 0; i < sampleTimes.length; i++) {
-      const t = sampleTimes[i];
-      const framePath = path.join(frameDir, `f${i}.jpg`);
-      const ok = await extractFrame(srcPath, t, framePath);
-      if (ok) frames.push({ t, file: framePath });
-    }
+    // Extracted in parallel rather than one-at-a-time — each is a cheap
+    // single-frame ffmpeg grab (still protected by extractFrame's own kill
+    // timeout), and doing all 8 concurrently instead of sequentially was a
+    // real chunk of the "render takes too long" complaint across a board
+    // with many video shots, since this runs once per video clip that
+    // needs smart-trim.
+    const extracted = await Promise.all(
+      sampleTimes.map(async (t, i) => {
+        const framePath = path.join(frameDir, `f${i}.jpg`);
+        const ok = await extractFrame(srcPath, t, framePath);
+        return ok ? { t, file: framePath } : null;
+      })
+    );
+    const frames = extracted.filter((f): f is { t: number; file: string } => f !== null);
     if (frames.length < 2) return 0;
 
     const openai = new OpenAI({ apiKey });

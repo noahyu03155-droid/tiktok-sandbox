@@ -35,8 +35,13 @@ import { wrapCaption, CAPTION_FONT_FILE, type CaptionStylePreset } from "@/lib/s
 import { interpretEditingFeedback } from "@/lib/storyboardFeedback";
 import type { StoryboardState, StoryboardTransitionPreset } from "@/lib/types";
 
-const W = 720;
-const H = 1280;
+// 1440x2560 — "2K" for a 9:16 vertical short-form video (portrait
+// equivalent of 2560x1440). Was 720x1280; bumped per explicit request for
+// higher output quality. Every filter below (scalePad, Ken Burns crop/zoom,
+// caption position) derives its numbers from W/H, so this is the only place
+// that needs to change.
+const W = 1440;
+const H = 2560;
 const TRANSITION_SEC = 0.4;
 const FPS = 30;
 
@@ -122,12 +127,22 @@ function mediaPathFromUrl(url: string): string | null {
   return p;
 }
 
+// Caption sizing was originally tuned by eye against the old 720x1280
+// canvas — kept proportional to H here so bumping W/H (e.g. up to 2K) keeps
+// captions reading at the same relative on-screen size instead of shrinking
+// to a sliver of the frame.
+const CAPTION_SCALE = H / 1280;
+
 function captionFilter(tmpDir: string, index: number, text: string, style: CaptionStylePreset): string | null {
   const wrapped = wrapCaption(text, style);
   if (!wrapped) return null;
   const capPath = path.join(tmpDir, `cap${index}.txt`);
   fs.writeFileSync(capPath, wrapped);
-  return `drawtext=fontfile=${CAPTION_FONT_FILE}:textfile=${capPath}:reload=0:fontcolor=white:fontsize=32:line_spacing=8:box=1:boxcolor=black@0.5:boxborderw=14:x=(w-text_w)/2:y=h-th-90`;
+  const fontsize = Math.round(32 * CAPTION_SCALE);
+  const lineSpacing = Math.round(8 * CAPTION_SCALE);
+  const boxBorder = Math.round(14 * CAPTION_SCALE);
+  const bottomMargin = Math.round(90 * CAPTION_SCALE);
+  return `drawtext=fontfile=${CAPTION_FONT_FILE}:textfile=${capPath}:reload=0:fontcolor=white:fontsize=${fontsize}:line_spacing=${lineSpacing}:box=1:boxcolor=black@0.5:boxborderw=${boxBorder}:x=(w-text_w)/2:y=h-th-${bottomMargin}`;
 }
 
 function withCaption(baseFilter: string, caption: string | null): string {
@@ -215,6 +230,20 @@ export function startRenderJob(
       skipped.push(n.label || "untitled shot");
       return false;
     }
+    // clip.source === "tiktok" means this node's clip came from pasting a
+    // TikTok VIDEO link — either the "Import original video" reference
+    // widget on a connected chain's head node, or a trend video pasted
+    // straight onto the canvas. Both exist purely to feed the Breakdown /
+    // Breakdown-chain analysis (transcription + vision reference) and are
+    // deliberately KEPT on the board afterwards as context (see Breakdown's
+    // route doc comments) — they were never meant to themselves become a
+    // rendered shot in the final output. Without this check, a reference
+    // video left connected at the head of a chain would render as an
+    // unwanted extra clip prepended before the real 6-stage shots.
+    if (n.clip.source === "tiktok") {
+      skipped.push(`${n.label || "reference video"} (reference clip — not one of your filmed shots, excluded from the render)`);
+      return false;
+    }
     return true;
   });
 
@@ -299,7 +328,13 @@ export function startRenderJob(
           continue;
         }
         const segPath = path.join(tmpDir, `seg${i}.mp4`);
-        const videoOut = ["-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p"];
+        // Explicit -crf (lower = higher quality/bigger file; 18-20 is
+        // "visually near-lossless" territory for x264) — without it,
+        // libx264 falls back to its own default (23, noticeably softer),
+        // and this segment may still get re-encoded 1-2 more times during
+        // the crossfade-merge pass below, so starting from a high-quality
+        // source matters more here than for a single-generation encode.
+        const videoOut = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2", "-pix_fmt", "yuv420p"];
         let intendedSec = 0;
 
         if (clip.kind === "video") {
@@ -382,35 +417,56 @@ export function startRenderJob(
         // up with "Resource temporarily unavailable" / "Failed to inject
         // frame into filter network" — ffmpeg running out of some resource
         // (file descriptors / buffered frames) partway through such a deep
-        // graph. Folding left instead — merge 2 clips into an intermediate
-        // file, then merge that with the next clip, and so on — means
-        // ffmpeg only ever has 2 inputs open at once regardless of how many
-        // shots the board has. More individual ffmpeg calls, but each one
-        // is exactly as simple/robust as a normal 2-input crossfade, and
-        // the per-call SINGLE_SHOT_TIMEOUT_MS budget from runFfmpeg's
-        // default already comfortably covers one of these merges.
-        let current = segmentPaths[0];
-        let currentDur = segDurations[0];
-        for (let i = 1; i < segmentPaths.length; i++) {
-          const nextDur = segDurations[i];
-          const t = Math.max(0.05, Math.min(effectiveTransitionSec, currentDur / 2, nextDur / 2));
-          const offset = Math.max(0, currentDur - t);
-          const mergedPath = path.join(tmpDir, `merged${i}.mp4`);
-          await runFfmpeg([
-            "-y",
-            "-i", current,
-            "-i", segmentPaths[i],
-            "-filter_complex",
-            `[0:v][1:v]xfade=transition=${effectiveTransition}:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[v];[0:a][1:a]acrossfade=d=${t.toFixed(3)}[a]`,
-            "-map", "[v]", "-map", "[a]",
-            "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p",
-            ...AAC_OUT,
-            mergedPath,
-          ]);
-          current = mergedPath;
-          currentDur = currentDur + nextDur - t;
+        // graph.
+        //
+        // The first fix for that (merge 2 clips at a time, left to right,
+        // into a growing chain of intermediate files) traded that crash for
+        // a different, worse problem: linear "fold-left" means the FIRST
+        // segment gets re-encoded once per remaining segment — for 19
+        // shots, shot 1's content goes through 18 successive lossy
+        // re-encode generations before reaching the final file, which is
+        // exactly the visible blur/muffled-audio quality loss reported
+        // after that fix shipped.
+        //
+        // A balanced binary-tree merge keeps the "only 2 inputs open per
+        // ffmpeg call" property (still avoids the resource-exhaustion
+        // crash) while capping every piece of original content at
+        // ceil(log2(N)) re-encode generations instead of up to N-1 — for 19
+        // shots that's 5 generations worst-case instead of 18, a huge
+        // reduction in cumulative generation loss for both video and audio.
+        type Segment = { path: string; dur: number };
+        let level: Segment[] = segmentPaths.map((p, i) => ({ path: p, dur: segDurations[i] }));
+        let mergeCounter = 0;
+        while (level.length > 1) {
+          const next: Segment[] = [];
+          for (let i = 0; i < level.length; i += 2) {
+            if (i + 1 >= level.length) {
+              // Odd one out this round — carries forward untouched to the
+              // next round instead of forcing an unnecessary re-encode.
+              next.push(level[i]);
+              continue;
+            }
+            const a = level[i];
+            const b = level[i + 1];
+            const t = Math.max(0.05, Math.min(effectiveTransitionSec, a.dur / 2, b.dur / 2));
+            const offset = Math.max(0, a.dur - t);
+            const mergedPath = path.join(tmpDir, `merged${mergeCounter++}.mp4`);
+            await runFfmpeg([
+              "-y",
+              "-i", a.path,
+              "-i", b.path,
+              "-filter_complex",
+              `[0:v][1:v]xfade=transition=${effectiveTransition}:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[v];[0:a][1:a]acrossfade=d=${t.toFixed(3)}[a]`,
+              "-map", "[v]", "-map", "[a]",
+              "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2", "-pix_fmt", "yuv420p",
+              ...AAC_OUT,
+              mergedPath,
+            ]);
+            next.push({ path: mergedPath, dur: a.dur + b.dur - t });
+          }
+          level = next;
         }
-        fs.copyFileSync(current, finalPath);
+        fs.copyFileSync(level[0].path, finalPath);
       }
 
       job.result = {
