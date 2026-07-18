@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildFastmossVideoUrl, fetchCategoryTrendVideos, formatUsd, toCreatorInfo } from "@/lib/fastmoss";
 import type { FastMossVideoResult } from "@/lib/fastmoss";
 import { ingestTrendBatch, TREND_FETCH_LIMIT, type RawTrendItem } from "@/lib/trends";
+import { getCurrentUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,16 @@ function toRawItem(v: FastMossVideoResult, index: number): RawTrendItem {
 // (7/28/90) — a bare POST with no body behaves exactly like the old
 // hardcoded pets/7-days version.
 export async function POST(req: NextRequest) {
+  // Costs real FastMoss API credits per click, and the scheduled full-catalog
+  // refresh (src/lib/fastmossFullRefresh.ts) already keeps every category
+  // fresh automatically — same "everyone can see, only admin can trigger"
+  // convention already used by /api/trends/full-refresh and the category
+  // scan route. Previously any signed-in member could hit this with no gate.
+  const user = getCurrentUser();
+  if (!user || user.role !== "admin") {
+    return NextResponse.json({ error: "Only admins can trigger a manual FastMoss update" }, { status: 403 });
+  }
+
   if (!process.env.FASTMOSS_API_KEY) {
     return NextResponse.json(
       {
