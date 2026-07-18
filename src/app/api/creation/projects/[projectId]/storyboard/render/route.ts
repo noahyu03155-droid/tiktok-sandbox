@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { requireProjectAccess } from "@/lib/creationAuth";
 import { getMediaDir } from "@/lib/db";
-import { startRenderJob, getRenderJob } from "@/lib/storyboardRender";
+import { startRenderJob, getRenderJob, type CaptionsMode } from "@/lib/storyboardRender";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ function jobKey(projectId: string) {
   return `creation:${projectId}`;
 }
 
-export async function POST(_req: NextRequest, { params }: { params: { projectId: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { projectId: string } }) {
   const access = requireProjectAccess(params.projectId);
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
@@ -24,8 +24,14 @@ export async function POST(_req: NextRequest, { params }: { params: { projectId:
     return NextResponse.json({ error: "This storyboard has no shots yet." }, { status: 400 });
   }
 
+  // From the "want captions?" modal the canvas shows before every render —
+  // defaults to "off" (no captions) if the client somehow doesn't send it,
+  // since captions are opt-in now, not the old always-on behavior.
+  const body = await req.json().catch(() => ({}));
+  const captionsMode: CaptionsMode = body?.captionsMode === "auto" ? "auto" : "off";
+
   const outDir = path.join(getMediaDir(), "storyboard", params.projectId);
-  const { job } = startRenderJob(jobKey(params.projectId), board, outDir, `/api/media/storyboard/${params.projectId}`);
+  const { job } = startRenderJob(jobKey(params.projectId), board, outDir, `/api/media/storyboard/${params.projectId}`, captionsMode);
   return NextResponse.json({ job });
 }
 

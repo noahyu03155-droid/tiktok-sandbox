@@ -414,6 +414,12 @@ export default function StoryboardCanvas({
   }, []);
 
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  // Captions are opt-in per render (see storyboardRender.ts's CaptionsMode
+  // doc comment for why script-text captions got removed entirely) — this
+  // just tracks whether the confirm modal is open; the actual choice is
+  // passed straight into renderVideo(captionsMode) and never persisted, so
+  // the question is asked fresh every time Generate/Regenerate is clicked.
+  const [captionsPromptOpen, setCaptionsPromptOpen] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
@@ -1344,7 +1350,7 @@ export default function StoryboardCanvas({
   // Ensure the poll timer never outlives the component.
   useEffect(() => stopRenderPoll, []);
 
-  async function renderVideo() {
+  async function renderVideo(captionsMode: "off" | "auto") {
     setRendering(true);
     setRenderError(null);
     setRenderResult(null);
@@ -1353,6 +1359,8 @@ export default function StoryboardCanvas({
     try {
       const res = await fetch(`${apiBase}/render`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ captionsMode }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Render failed");
@@ -1367,6 +1375,18 @@ export default function StoryboardCanvas({
       setRenderError(err.message || "Render failed");
       setRendering(false);
     }
+  }
+
+  // Both the initial "Generate video" button and the post-render "🔁
+  // Regenerate" button go through here first — opens the captions-choice
+  // modal instead of calling renderVideo() directly.
+  function requestRender() {
+    setCaptionsPromptOpen(true);
+  }
+
+  function chooseCaptionsAndRender(mode: "off" | "auto") {
+    setCaptionsPromptOpen(false);
+    renderVideo(mode);
   }
 
   // Real-progress label for the Generate/Rendering button — replaces the
@@ -1771,7 +1791,7 @@ export default function StoryboardCanvas({
                 📎 {board.styleProfile ? `Ref: ${board.styleProfile.sourceLabel}` : "Import reference video"}
               </button>
               <button
-                onClick={renderVideo}
+                onClick={requestRender}
                 disabled={rendering}
                 className="h-9 px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium shrink-0"
               >
@@ -2296,7 +2316,7 @@ export default function StoryboardCanvas({
                   </p>
                 )}
                 <button
-                  onClick={renderVideo}
+                  onClick={requestRender}
                   disabled={rendering}
                   className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
                   style={{ left: n.x, top: generateButtonTop, width: nodeWidth(n) }}
@@ -2525,6 +2545,38 @@ export default function StoryboardCanvas({
             </div>
           );
         })()}
+
+      {captionsPromptOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+          <div className="bg-panel border border-edge rounded-xl p-5 w-full max-w-sm shadow-2xl">
+            <h3 className="text-zinc-900 font-semibold text-sm mb-1">Want captions on this video?</h3>
+            <p className="text-xs text-zinc-500 mb-4">
+              Captions are off by default. If you want them, they're auto-generated from what's actually said in each
+              clip (speech-to-text) — not the script text, so they always match what's on screen.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => chooseCaptionsAndRender("auto")}
+                className="w-full py-2.5 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"
+              >
+                🎙️ Yes — auto-generate from audio
+              </button>
+              <button
+                onClick={() => chooseCaptionsAndRender("off")}
+                className="w-full py-2.5 rounded-lg border border-edge text-zinc-700 hover:text-zinc-900 hover:border-edge2 text-sm font-medium"
+              >
+                No captions
+              </button>
+              <button
+                onClick={() => setCaptionsPromptOpen(false)}
+                className="w-full py-2 text-zinc-500 hover:text-zinc-900 text-xs"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

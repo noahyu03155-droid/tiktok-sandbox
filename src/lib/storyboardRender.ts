@@ -33,7 +33,19 @@ import { resolveStoryboardOrder } from "@/lib/storyboard";
 import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/storyboardTrim";
 import { wrapCaption, CAPTION_FONT_FILE, type CaptionStylePreset } from "@/lib/storyboardCaptions";
 import { interpretEditingFeedback } from "@/lib/storyboardFeedback";
+import { transcribeAudio } from "@/lib/transcribe";
 import type { StoryboardState, StoryboardTransitionPreset } from "@/lib/types";
+
+// "off" — no captions at all, burn nothing in (the default; captions are
+// opt-in, see the modal StoryboardCanvas.tsx shows before every render).
+// "auto" — real speech-to-text captions, transcribed per-shot from that
+// shot's own selected audio window via Whisper (see transcribeShotAudio
+// below). Deliberately NOT "use the script text as a caption" anymore —
+// that used to be the only behavior, and produced captions that didn't
+// match what's actually said on screen once a shot's script text and its
+// filmed clip drifted out of sync (e.g. the creator improvised while
+// filming, or a shot got re-wired to a different clip later).
+export type CaptionsMode = "off" | "auto";
 
 // 1440x2560 — "2K" for a 9:16 vertical short-form video (portrait
 // equivalent of 2560x1440). Was 720x1280; bumped per explicit request for
@@ -118,6 +130,43 @@ function probeHasAudio(srcPath: string): Promise<boolean> {
 
 const SILENT_AUDIO = ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"];
 const AAC_OUT = ["-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k"];
+
+// Pulls just the audio for the exact [startSec, startSec+durationSec)
+// window a shot ended up using (the same window smart-trim picked / the
+// same window that ends up in the final segment) — transcribing that exact
+// slice, rather than the whole source clip, keeps the caption scoped to
+// only what's actually said in THIS shot. Goes through runFfmpeg so it
+// shares its kill-timeout instead of being able to hang indefinitely.
+function extractAudioWindow(srcPath: string, startSec: number, durationSec: number, outPath: string): Promise<void> {
+  return runFfmpeg([
+    "-y", "-ss", String(startSec), "-t", String(durationSec), "-i", srcPath,
+    "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
+    outPath,
+  ]);
+}
+
+// Real speech-to-text captioning for "auto" mode — transcribes exactly what
+// the person says in this shot's selected window via Whisper (same
+// transcribeAudio used for video-analysis transcripts elsewhere in this
+// app), instead of just re-displaying the pre-written script text. Best
+// effort like pickBestSegment: a transcription hiccup (no API key, a
+// network blip, a genuinely silent/unintelligible clip) just means this one
+// shot ends up with no caption — never worth failing the whole render over.
+async function transcribeShotAudio(srcPath: string, startSec: number, durationSec: number, tmpDir: string, index: number): Promise<string | null> {
+  if (!process.env.OPENAI_API_KEY) return null;
+  try {
+    const audioPath = path.join(tmpDir, `whisper_${index}.mp3`);
+    await extractAudioWindow(srcPath, startSec, durationSec, audioPath);
+    const result = await Promise.race([
+      transcribeAudio(audioPath),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Whisper transcription timed out")), 30_000)),
+    ]);
+    const text = (result?.text || "").trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
 
 function mediaPathFromUrl(url: string): string | null {
   if (!url.startsWith("/api/media/")) return null;
@@ -216,7 +265,8 @@ export function startRenderJob(
   key: string,
   board: StoryboardState,
   outDir: string,
-  publicUrlPrefix: string
+  publicUrlPrefix: string,
+  captionsMode: CaptionsMode = "off"
 ): { started: boolean; job: RenderJob } {
   const existing = jobs.get(key);
   if (existing && existing.status === "running") {
@@ -224,6 +274,17 @@ export function startRenderJob(
   }
 
   const order = resolveStoryboardOrder(board.nodes, board.connections);
+  // resolveStoryboardOrder deliberately appends orphan nodes (not reachable
+  // from any connected chain) at the end, sorted by x — the right call for
+  // rendering an UNWIRED single-shot board, but wrong once the board also
+  // has a real wired chain: any leftover/unrelated card from testing a
+  // different idea (a different product's reference video, a stray import)
+  // has no connections either, so it used to render as an extra unwanted
+  // clip too. Only exempt orphans from exclusion when the board has NO
+  // connections anywhere — i.e. nothing has been wired up at all yet, so
+  // there's no "real chain" for a stray card to be mistaken as part of.
+  const hasAnyConnection = board.connections.length > 0;
+  const connectedIds = new Set(board.connections.flatMap((c) => [c.fromId, c.toId]));
   const skipped: string[] = [];
   const usable = order.filter((n) => {
     if (!n.clip) {
@@ -242,6 +303,10 @@ export function startRenderJob(
     // unwanted extra clip prepended before the real 6-stage shots.
     if (n.clip.source === "tiktok") {
       skipped.push(`${n.label || "reference video"} (reference clip — not one of your filmed shots, excluded from the render)`);
+      return false;
+    }
+    if (hasAnyConnection && !connectedIds.has(n.id)) {
+      skipped.push(`${n.label || "untitled card"} (not connected into your script chain — excluded from the render)`);
       return false;
     }
     return true;
@@ -319,7 +384,10 @@ export function startRenderJob(
         const node = usable[i];
         job.step = `Encoding shot ${i + 1} of ${usable.length}...`;
         const text = (node.instruction || node.label || "").trim();
-        const caption = captionFilter(tmpDir, i, text, captionStyle);
+        // Computed per-branch below, only in "auto" mode, only once the
+        // shot's actual audio window is known — see transcribeShotAudio's
+        // doc comment for why this is no longer just the script text.
+        let caption: string | null = null;
         const clip = node.clip!;
         const srcPath = mediaPathFromUrl(clip.url);
         if (!srcPath || !fs.existsSync(srcPath)) {
@@ -353,6 +421,10 @@ export function startRenderJob(
                 })
               : 0;
           const hasAudio = await probeHasAudio(srcPath);
+          if (captionsMode === "auto" && hasAudio) {
+            const transcribed = await transcribeShotAudio(srcPath, startSec, targetSec, tmpDir, i);
+            if (transcribed) caption = captionFilter(tmpDir, i, transcribed, captionStyle);
+          }
           if (hasAudio) {
             await runFfmpeg([
               "-y", "-i", srcPath,

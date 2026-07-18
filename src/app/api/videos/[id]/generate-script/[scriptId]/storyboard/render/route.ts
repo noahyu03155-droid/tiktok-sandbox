@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { getMediaDir, getVideo } from "@/lib/db";
 import { videoAccessError } from "@/lib/videoAuth";
-import { startRenderJob, getRenderJob } from "@/lib/storyboardRender";
+import { startRenderJob, getRenderJob, type CaptionsMode } from "@/lib/storyboardRender";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +19,7 @@ function jobKey(id: string, scriptId: string) {
 }
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string; scriptId: string } }
 ) {
   const video = getVideo(params.id);
@@ -33,12 +33,18 @@ export async function POST(
     return NextResponse.json({ error: "This storyboard has no shots yet." }, { status: 400 });
   }
 
+  // From the "want captions?" modal the canvas shows before every render —
+  // defaults to "off" (no captions) if the client somehow doesn't send it.
+  const body = await req.json().catch(() => ({}));
+  const captionsMode: CaptionsMode = body?.captionsMode === "auto" ? "auto" : "off";
+
   const outDir = path.join(getMediaDir(), "storyboard", params.scriptId);
   const { job } = startRenderJob(
     jobKey(params.id, params.scriptId),
     board,
     outDir,
-    `/api/media/storyboard/${params.scriptId}`
+    `/api/media/storyboard/${params.scriptId}`,
+    captionsMode
   );
   return NextResponse.json({ job });
 }
