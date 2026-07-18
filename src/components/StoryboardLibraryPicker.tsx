@@ -13,13 +13,16 @@ export interface LibraryClipChoice {
   videoUrl: string | null;
 }
 
-// Lets a storyboard node point at a clip already sitting in the team's own
-// analyzed-video library (Video Analysis / Trend Analysis / Creator
-// Tracker) instead of uploading something new. Patterned after
-// ProductPicker.tsx (plain English strings, no translation system — the
-// whole Script Generator tab this hangs off of is English-only), filters
-// client-side since /api/videos has no search param and the library is
-// small enough for that to be fine.
+// Lets a storyboard node point at a clip already sitting in the member's OWN
+// video library — i.e. something they themselves pasted/analyzed in Video
+// Analysis (source:"manual") — instead of uploading something new. NOT the
+// shared Trend Analysis / Creator Tracker catalog: those videos belong to
+// FastMoss/creator research, not this member's own footage, and showing
+// them here just confused "pick from your library" with "browse everyone's
+// trend videos." Patterned after ProductPicker.tsx (plain English strings,
+// no translation system — the whole Script Generator tab this hangs off of
+// is English-only), filters client-side since /api/videos has no search
+// param and the library is small enough for that to be fine.
 export default function StoryboardLibraryPicker({
   onSelect,
   onClose,
@@ -41,9 +44,12 @@ export default function StoryboardLibraryPicker({
   const results = useMemo(() => {
     if (!videos) return [];
     const q = query.trim().toLowerCase();
-    const withMedia = videos.filter((v) => v.thumbnail_path || v.video_path);
-    if (!q) return withMedia.slice(0, 60);
-    return withMedia
+    // source:"manual" = this member's own paste/upload in Video Analysis.
+    // "trend"/"creator" are the shared FastMoss/Creator-Tracker catalog —
+    // deliberately excluded here (see the doc comment above the component).
+    const own = videos.filter((v) => v.source === "manual" && (v.thumbnail_path || v.video_path));
+    if (!q) return own.slice(0, 60);
+    return own
       .filter((v) => (v.title || "").toLowerCase().includes(q) || (v.author || "").toLowerCase().includes(q))
       .slice(0, 60);
   }, [videos, query]);
