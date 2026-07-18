@@ -113,6 +113,34 @@ export const translations = {
     registerShowcaseHeadline: "Every viral video — broken down and ready to reuse",
     registerShowcaseSubtitle: "Real TikTok Shop videos already analyzed on COTORX",
 
+    // "How it works" 3-step section.
+    registerHowHeadline: "From viral video to your own script — in three steps",
+    registerHowStep1Title: "Paste a viral video",
+    registerHowStep1Body: "Drop in any TikTok Shop link and let COTORX pull the video, transcript, and product details automatically.",
+    registerHowStep2Title: "Get the full breakdown",
+    registerHowStep2Body: "AI breaks it into hook, structure, and selling points — laid out on a visual storyboard you can inspect stage by stage.",
+    registerHowStep3Title: "Generate your own script",
+    registerHowStep3Body: "Get a new shoppable script and storyboard built around your own product, ready to film.",
+
+    // Feature grid ("One platform" section).
+    registerFeaturesHeadline: "One platform, everything a TikTok Shop creator needs",
+    registerFeatureBreakdownTitle: "Video breakdown",
+    registerFeatureBreakdownBody: "Turn any viral video into a hook / structure / selling-point breakdown.",
+    registerFeatureScriptTitle: "Script generation",
+    registerFeatureScriptBody: "AI writes a new shoppable script based on what's already working.",
+    registerFeatureStoryboardTitle: "Storyboard canvas",
+    registerFeatureStoryboardBody: "Drag, reorder, and chain breakdown stages on a visual canvas.",
+    registerFeatureTrendsTitle: "Trend analysis",
+    registerFeatureTrendsBody: "Top trending videos and best-selling products, pulled live by category.",
+    registerFeatureCreatorTitle: "Creator tracker",
+    registerFeatureCreatorBody: "Track any TikTok Shop creator's video history and product picks over time.",
+    registerFeatureInsightsTitle: "Personalized recommendations",
+    registerFeatureInsightsBody: "COTORX learns your niche as you go and scores products just for you.",
+
+    // Final CTA banner, near the bottom of the page.
+    registerFinalCtaHeadline: "Ready to turn your next viral video into a sale?",
+    registerFinalCtaSubtitle: "It only takes one video to see how it works.",
+
     navCreation: "Creation",
     creationHeading: "Your creation space",
     creationNewProjectPlaceholder: "New project title",
@@ -474,6 +502,31 @@ export const translations = {
     registerSignUpNowLabel: "立即注册",
     registerShowcaseHeadline: "每一条爆款视频，都已拆解完毕，随时可复用",
     registerShowcaseSubtitle: "COTORX 上已经分析过的真实 TikTok Shop 视频",
+
+    registerHowHeadline: "从爆款视频到你自己的脚本，只需三步",
+    registerHowStep1Title: "粘贴一条爆款视频",
+    registerHowStep1Body: "粘贴任意 TikTok Shop 链接，COTORX 自动抓取视频、字幕和产品信息。",
+    registerHowStep2Title: "获得完整拆解",
+    registerHowStep2Body: "AI 拆解出钩子、结构和卖点，排在可视化分镜板上，逐段查看。",
+    registerHowStep3Title: "生成你自己的脚本",
+    registerHowStep3Body: "获得一份围绕你自己产品的全新可购物脚本和分镜，随时可以拍摄。",
+
+    registerFeaturesHeadline: "一个平台，覆盖 TikTok Shop 创作者需要的一切",
+    registerFeatureBreakdownTitle: "视频拆解",
+    registerFeatureBreakdownBody: "把任意爆款视频拆解成钩子/结构/卖点分析。",
+    registerFeatureScriptTitle: "脚本生成",
+    registerFeatureScriptBody: "AI 根据已经跑通的内容，写出全新的可购物脚本。",
+    registerFeatureStoryboardTitle: "分镜画布",
+    registerFeatureStoryboardBody: "在可视化画布上拖拽、排序、串联拆解阶段。",
+    registerFeatureTrendsTitle: "趋势分析",
+    registerFeatureTrendsBody: "按类目实时拉取热门视频和畅销产品。",
+    registerFeatureCreatorTitle: "达人追踪",
+    registerFeatureCreatorBody: "追踪任意 TikTok Shop 达人的视频历史和选品情况。",
+    registerFeatureInsightsTitle: "个性化推荐",
+    registerFeatureInsightsBody: "COTORX 会持续学习你的领域，为你专属打分推荐产品。",
+
+    registerFinalCtaHeadline: "准备好把下一条爆款视频变成一笔订单了吗？",
+    registerFinalCtaSubtitle: "只需要一条视频，就能看到效果。",
 
     navCreation: "创作",
     creationHeading: "你的创作空间",

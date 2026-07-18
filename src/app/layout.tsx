@@ -1,9 +1,19 @@
 import type { Metadata } from "next";
+import { Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { LocaleProvider } from "@/lib/i18n";
 import HeaderBar from "@/components/HeaderBar";
 import MainShell from "@/components/MainShell";
 import { getCurrentUser } from "@/lib/session";
+
+// A clean geometric sans used only for the COTORX wordmark (see Logo.tsx) —
+// gives it a techy, minimal feel without going as decorative/sci-fi as the
+// earlier Orbitron experiment (Phase 39, reverted in Phase 41). Everything
+// else (body copy, dense dashboard UI) stays on the default sans so
+// data-heavy screens (Trends, Creation, User Data) stay readable. Exposed
+// as a CSS variable so Logo.tsx can opt in without every page importing
+// next/font itself.
+const wordmarkFont = Space_Grotesk({ subsets: ["latin"], weight: ["700"], variable: "--font-wordmark" });
 
 // Core selling-point pitch, used both as the page <meta description> and as
 // the Open Graph title/description so link previews (iMessage, Messenger,
@@ -40,7 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const user = getCurrentUser();
   return (
     <html lang="en">
-      <body>
+      <body className={wordmarkFont.variable}>
         <LocaleProvider>
           <div className="min-h-screen bg-ink">
             <HeaderBar role={user?.role ?? null} />

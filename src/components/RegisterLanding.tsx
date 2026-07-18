@@ -3,29 +3,46 @@
 // Register page — this is the app's default entry point for anyone without
 // a session (see middleware.ts, which sends unauthenticated visits here
 // instead of /login; still reachable via the navbar's "Log in" link), so
-// it's meant to read as a proper marketing/landing page rather than a bare
+// it's meant to read as a proper marketing homepage rather than a bare
 // login box, since the account is eventually sold as a paid subscription.
 //
-// Phase 41: rebuilt the hero to match a reference the user pointed to
-// (Packify.ai) — plain borderless white navbar, a CENTERED headline with a
-// gradient-colored accent line, a centered subtitle, and two centered pill
-// CTAs (a solid black primary + an outlined secondary), instead of the
-// earlier two-column split + thick black frame from Phases 35/39. The
-// actual sign-up form still sits directly below the hero (not a separate
-// page) so a visitor can register without much scrolling — just no longer
-// crammed side-by-side with the headline.
+// Phase 41: rebuilt the hero to match a reference (Packify.ai) — plain
+// borderless white navbar, a CENTERED headline with a gradient accent line,
+// centered subtitle, two centered pill CTAs.
 //
-// The showcase strip's thumbnails are REAL images already fetched/cached by
-// this app's own TikTok pipeline (see the server component in
-// src/app/register/page.tsx, which reads them via listVideos()) — not
-// anything scraped from a reference site. If the install is brand new and
-// hasn't analyzed any videos yet, it falls back to plain gradient tiles so
-// the page never looks broken.
+// Phase 42: per the user's explicit note that the homepage doesn't need to
+// force the sign-up form front-and-center ("不规定要有那个sign up板块"),
+// restructured this into an actual content-driven marketing homepage,
+// mirroring the STRUCTURE (not the content/claims) of what's below Packify's
+// own hero — a proof strip, a numbered "how it works," a feature grid, then
+// a final CTA banner. The sign-up form moved from directly under the hero
+// down to its own section near the bottom (still reachable instantly via
+// either "Get started" button, which scrolls + highlights it). Deliberately
+// does NOT copy Packify's fabricated-sounding elements (customer logo wall,
+// "200,000+ brands," testimonials) since COTORX has no real data to back
+// those claims — every section below describes COTORX's own actual,
+// shipped features.
 import { Suspense, useState } from "react";
 import { useLocale } from "@/lib/i18n";
+import type { TranslationKey } from "@/lib/translations";
 import Logo from "@/components/Logo";
 import LanguageToggle from "@/components/LanguageToggle";
 import RegisterForm from "@/components/RegisterForm";
+
+const HOW_STEPS: { titleKey: TranslationKey; bodyKey: TranslationKey }[] = [
+  { titleKey: "registerHowStep1Title", bodyKey: "registerHowStep1Body" },
+  { titleKey: "registerHowStep2Title", bodyKey: "registerHowStep2Body" },
+  { titleKey: "registerHowStep3Title", bodyKey: "registerHowStep3Body" },
+];
+
+const FEATURES: { icon: string; titleKey: TranslationKey; bodyKey: TranslationKey }[] = [
+  { icon: "🔍", titleKey: "registerFeatureBreakdownTitle", bodyKey: "registerFeatureBreakdownBody" },
+  { icon: "✍️", titleKey: "registerFeatureScriptTitle", bodyKey: "registerFeatureScriptBody" },
+  { icon: "🗂️", titleKey: "registerFeatureStoryboardTitle", bodyKey: "registerFeatureStoryboardBody" },
+  { icon: "📈", titleKey: "registerFeatureTrendsTitle", bodyKey: "registerFeatureTrendsBody" },
+  { icon: "🎥", titleKey: "registerFeatureCreatorTitle", bodyKey: "registerFeatureCreatorBody" },
+  { icon: "🎯", titleKey: "registerFeatureInsightsTitle", bodyKey: "registerFeatureInsightsBody" },
+];
 
 function ThumbCard({
   src,
@@ -122,10 +139,76 @@ export default function RegisterLanding({ thumbnails }: { thumbnails: string[] }
         </div>
       </div>
 
-      {/* Sign-up form, directly below the hero — a visitor can register
-          without much scrolling, but no longer crammed side-by-side with
-          the headline (see Phase 41 note at the top of this file). */}
-      <div id="register-form" className="flex items-center justify-center px-4 pt-10 pb-20 scroll-mt-24">
+      {/* Dark showcase band — horizontally auto-scrolling strip of real
+          analyzed-video thumbnails. Sits right under the hero as a quick
+          "proof" beat, mirroring where Packify puts its trust strip. */}
+      <div className="bg-zinc-900 py-14 mt-6 overflow-hidden">
+        <div className="max-w-3xl mx-auto text-center px-6 mb-8">
+          <h2 className="text-2xl sm:text-3xl font-bold text-white">{t("registerShowcaseHeadline")}</h2>
+          <p className="mt-2 text-sm text-zinc-400">{t("registerShowcaseSubtitle")}</p>
+        </div>
+        <div className="flex w-max animate-marquee gap-4 px-4">
+          {stripImages.map((src, i) => (
+            <ThumbCard key={i} src={src} className="w-28 sm:w-32" borderClassName="border-zinc-700" />
+          ))}
+        </div>
+      </div>
+
+      {/* How it works — 3 numbered steps. */}
+      <div className="max-w-5xl mx-auto px-6 py-20">
+        <h2 className="text-2xl sm:text-3xl font-bold text-zinc-900 text-center mb-14">
+          {t("registerHowHeadline")}
+        </h2>
+        <div className="grid sm:grid-cols-3 gap-10">
+          {HOW_STEPS.map((step, i) => (
+            <div key={step.titleKey}>
+              <div className="w-10 h-10 rounded-full bg-zinc-900 text-white flex items-center justify-center font-bold text-sm mb-4">
+                {i + 1}
+              </div>
+              <h3 className="text-base font-semibold text-zinc-900 mb-2">{t(step.titleKey)}</h3>
+              <p className="text-sm text-zinc-500 leading-relaxed">{t(step.bodyKey)}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Feature grid — "one platform" style card grid. */}
+      <div className="bg-panel py-20">
+        <div className="max-w-5xl mx-auto px-6">
+          <h2 className="text-2xl sm:text-3xl font-bold text-zinc-900 text-center mb-14">
+            {t("registerFeaturesHeadline")}
+          </h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {FEATURES.map((f) => (
+              <div key={f.titleKey} className="bg-white border border-edge rounded-2xl p-6">
+                <div className="text-2xl mb-3">{f.icon}</div>
+                <h3 className="text-sm font-semibold text-zinc-900 mb-1.5">{t(f.titleKey)}</h3>
+                <p className="text-sm text-zinc-500 leading-relaxed">{t(f.bodyKey)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Final CTA banner. */}
+      <div className="max-w-3xl mx-auto px-6 py-20 text-center">
+        <h2 className="text-2xl sm:text-4xl font-black tracking-tight text-zinc-900 mb-3">
+          {t("registerFinalCtaHeadline")}
+        </h2>
+        <p className="text-base text-zinc-500 mb-8">{t("registerFinalCtaSubtitle")}</p>
+        <button
+          onClick={handleGetStarted}
+          className="bg-zinc-900 hover:bg-black text-white font-medium rounded-full px-8 py-3.5 text-sm transition-colors"
+        >
+          {t("registerHeroCta")}
+        </button>
+      </div>
+
+      {/* Sign-up form — the actual conversion point, at the end of the page
+          rather than crammed into the hero (see Phase 42 note at the top of
+          this file). Either "Get started" button scrolls here and briefly
+          highlights the card so clicking always has a visible effect. */}
+      <div id="register-form" className="flex items-center justify-center px-4 pb-20 scroll-mt-24">
         <div className="w-full max-w-sm">
           <p className="text-xs font-bold tracking-wide text-brand-500 uppercase mb-3 text-center">
             {t("registerSignUpNowLabel")}
@@ -139,20 +222,6 @@ export default function RegisterLanding({ thumbnails }: { thumbnails: string[] }
               <RegisterForm />
             </Suspense>
           </div>
-        </div>
-      </div>
-
-      {/* Dark showcase band — horizontally auto-scrolling strip of real
-          analyzed-video thumbnails. */}
-      <div className="bg-zinc-900 py-14 overflow-hidden">
-        <div className="max-w-3xl mx-auto text-center px-6 mb-8">
-          <h2 className="text-2xl sm:text-3xl font-bold text-white">{t("registerShowcaseHeadline")}</h2>
-          <p className="mt-2 text-sm text-zinc-400">{t("registerShowcaseSubtitle")}</p>
-        </div>
-        <div className="flex w-max animate-marquee gap-4 px-4">
-          {stripImages.map((src, i) => (
-            <ThumbCard key={i} src={src} className="w-28 sm:w-32" borderClassName="border-zinc-700" />
-          ))}
         </div>
       </div>
     </div>
