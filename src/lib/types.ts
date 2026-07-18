@@ -27,6 +27,41 @@ export interface CreatorProfile {
   completedAt: string | null;
 }
 
+// ---- Reaction-emotion picker (script generation) ----
+// The specific emotional beat the script's "Reaction" stage (the sharp
+// 2-3-second opening reactive beat — see scriptgen.ts's SYSTEM_PROMPT)
+// should evoke, picked by the user instead of left to Claude's default
+// choice — same idea as the multi-variant hook testing competitors do (see
+// the "New Production Script Breakdown" / competitor-research discussion),
+// just framed as "which reaction should this hook land" rather than
+// generating N full variants up front. Offered whenever the user generates
+// a brand-new script (Generate Product Script / Generate Shoppable Script —
+// NOT plain Breakdown, which transcribes/analyzes an existing video rather
+// than writing new copy, so there's no "reaction" for the user to choose).
+export const REACTION_EMOTIONS = [
+  "joy",
+  "gratitude",
+  "awe",
+  "excitement",
+  "pride",
+  "anger",
+  "fear",
+  "sadness",
+  "disgust",
+  "moral outrage",
+  "guilt",
+  "surprise",
+  "curiosity",
+  "relief",
+  "empathy",
+  "confusion",
+  "love",
+  "belonging",
+  "envy",
+  "shame",
+] as const;
+export type ReactionEmotion = (typeof REACTION_EMOTIONS)[number];
+
 export interface User {
   id: string;
   username: string;
@@ -108,6 +143,12 @@ export interface User {
     price: string | null;
     addedAt: string;
   }[];
+  // How many times this member has picked each reaction emotion when
+  // generating a new script (see REACTION_EMOTIONS above) — used purely to
+  // sort their own picker list so whichever they reach for most floats to
+  // the top over time (src/app/api/reaction-emotions/route.ts). Not present
+  // until they've generated at least one script with an emotion selected.
+  reactionEmotionUsage?: Partial<Record<ReactionEmotion, number>>;
 }
 
 // ---- Daily journal chat ("write like a diary, AI replies like a friend") ----

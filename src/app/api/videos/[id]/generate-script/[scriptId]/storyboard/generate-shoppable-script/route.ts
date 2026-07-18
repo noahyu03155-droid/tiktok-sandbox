@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import { getVideo, getUserById, updateVideoRecord } from "@/lib/db";
+import { getVideo, getUserById, updateVideoRecord, incrementReactionEmotionUsage } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { videoAccessError } from "@/lib/videoAuth";
 import { generateShoppableScriptFromChain } from "@/lib/scriptgen";
 import { resolveConnectedChain, REQUIRED_STAGE_SEQUENCE } from "@/lib/storyboard";
-import type { StoryboardNode } from "@/lib/types";
+import { REACTION_EMOTIONS, type StoryboardNode, type ReactionEmotion } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +53,12 @@ export async function POST(
   if (typeof nodeId !== "string" || !nodeId) {
     return NextResponse.json({ error: "nodeId is required" }, { status: 400 });
   }
+  // Optional — picked via the reaction-emotion popup right before this
+  // action (StoryboardCanvas.tsx), same pattern as the sibling
+  // generate-product-script route.
+  const reactionEmotion: ReactionEmotion | undefined = REACTION_EMOTIONS.includes(body?.reactionEmotion)
+    ? (body.reactionEmotion as ReactionEmotion)
+    : undefined;
 
   const scriptIdx = video.generated_scripts.findIndex((s) => s.id === params.scriptId);
   if (scriptIdx === -1) return NextResponse.json({ error: "script not found" }, { status: 404 });
@@ -93,7 +99,16 @@ export async function POST(
         price: node.productRef.price,
       },
       creatorProfile,
+      reactionEmotion,
     });
+
+    if (reactionEmotion && sessionUser) {
+      try {
+        incrementReactionEmotionUsage(sessionUser.userId, reactionEmotion);
+      } catch (usageErr) {
+        console.error("incrementReactionEmotionUsage failed — continuing:", usageErr);
+      }
+    }
 
     // Same position-based stage tagging as generate-product-script: the
     // prompt fixes the 6-stage order, but the labels don't string-match

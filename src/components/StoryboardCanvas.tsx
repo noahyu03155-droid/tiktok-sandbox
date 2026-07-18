@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import type { CanvasConnection, FunnelStageKey, GeneratedScriptStage, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
+import { REACTION_EMOTIONS } from "@/lib/types";
+import type { CanvasConnection, FunnelStageKey, GeneratedScriptStage, ReactionEmotion, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
 import { resolveStoryboardOrder, resolveChainTails, resolveConnectedChain, MIN_CHAIN_LENGTH_FOR_GENERATE, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
 import ProductPicker from "./ProductPicker";
@@ -309,8 +310,38 @@ export default function StoryboardCanvas({
         // an already-wired product over opening the picker.
         source: { type: "shopify"; product: { id: string; title: string } } | { type: "connected"; nodeId: string };
       }
+    | { kind: "shoppableScript"; node: StoryboardNode }
     | null
   >(null);
+  // ---- Reaction-emotion picker (Generate Product Script / Generate
+  // Shoppable Script only — see REACTION_EMOTIONS in types.ts and
+  // reactionEmotionInstruction in scriptgen.ts). Reuses the SAME modal as
+  // the indoor/outdoor prompt above rather than a second popup — for
+  // productScript both questions are asked together with one final
+  // "Generate script" button; for shoppableScript (no location concept)
+  // it's just the emotion picker. selectedLocation/selectedEmotion reset
+  // whenever a new locationPromptFor is opened (see the effect below).
+  const [selectedLocation, setSelectedLocation] = useState<"indoor" | "outdoor" | null>(null);
+  const [selectedEmotion, setSelectedEmotion] = useState<ReactionEmotion | null>(null);
+  // This member's own past picks (see /api/reaction-emotions) — sorts the
+  // emotion picker so whichever they reach for most floats to the top,
+  // ties broken by REACTION_EMOTIONS' fixed order. Fetched once; no need to
+  // refetch mid-session, the increment happens server-side and only matters
+  // for next time they open the picker.
+  const [emotionUsage, setEmotionUsage] = useState<Partial<Record<ReactionEmotion, number>>>({});
+  useEffect(() => {
+    fetch("/api/reaction-emotions")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => data?.usage && setEmotionUsage(data.usage))
+      .catch(() => {});
+  }, []);
+  const sortedEmotions = [...REACTION_EMOTIONS].sort(
+    (a, b) => (emotionUsage[b] || 0) - (emotionUsage[a] || 0)
+  );
+  useEffect(() => {
+    setSelectedLocation(null);
+    setSelectedEmotion(null);
+  }, [locationPromptFor]);
   const [busyNodeId, setBusyNodeId] = useState<string | null>(null);
   const [nodeErrors, setNodeErrors] = useState<Record<string, string>>({});
   // ---- "roughly how long will this take" wait-time estimate ----
@@ -1152,9 +1183,10 @@ export default function StoryboardCanvas({
   // product card itself SURVIVES but has its connections stripped (mirrors
   // the server route exactly — the local apply must keep the node too, or
   // the next autosave would overwrite the server's kept copy), ending up as
-  // a free-floating, reusable card.
-  async function generateShoppableScript(node: StoryboardNode) {
-    if (!window.confirm("Generate a new 6-stage shoppable script from the connected cards? The product card stays on the board, just disconnected.")) return;
+  // a free-floating, reusable card. The reaction-emotion modal (see
+  // locationPromptFor's "shoppableScript" kind) now serves as the
+  // confirmation step this used to need a window.confirm() for.
+  async function generateShoppableScript(node: StoryboardNode, reactionEmotion?: ReactionEmotion | null) {
     setBusyNodeId(node.id);
     beginBusy("shoppableScript");
     clearNodeError(node.id);
@@ -1162,7 +1194,7 @@ export default function StoryboardCanvas({
       const res = await fetch(`${apiBase}/generate-shoppable-script`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodeId: node.id }),
+        body: JSON.stringify({ nodeId: node.id, reactionEmotion: reactionEmotion || undefined }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Script generation failed");
@@ -1199,7 +1231,8 @@ export default function StoryboardCanvas({
   async function runGenerateProductScript(
     nodeId: string,
     source: { type: "shopify"; product: { id: string; title: string } } | { type: "connected"; nodeId: string },
-    location: "indoor" | "outdoor" | null
+    location: "indoor" | "outdoor" | null,
+    reactionEmotion?: ReactionEmotion | null
   ) {
     setBusyNodeId(nodeId);
     beginBusy("productScript");
@@ -1211,6 +1244,7 @@ export default function StoryboardCanvas({
         body: JSON.stringify({
           nodeId,
           location,
+          reactionEmotion: reactionEmotion || undefined,
           ...(source.type === "shopify" ? { shopifyProductId: source.product.id } : { connectedProductNodeId: source.nodeId }),
         }),
       });
@@ -1234,11 +1268,13 @@ export default function StoryboardCanvas({
   // locationPromptFor), now with the user's answer (or null for Skip).
   function confirmLocation(location: "indoor" | "outdoor" | null) {
     const pending = locationPromptFor;
+    const emotion = selectedEmotion;
     setLocationPromptFor(null);
     if (!pending) return;
     if (pending.kind === "breakdown") runBreakdown(pending.node, location);
     else if (pending.kind === "breakdownChain") runBreakdownChain(pending.node, location);
-    else if (pending.kind === "productScript") runGenerateProductScript(pending.node.id, pending.source, location);
+    else if (pending.kind === "productScript") runGenerateProductScript(pending.node.id, pending.source, location, emotion);
+    else if (pending.kind === "shoppableScript") generateShoppableScript(pending.node, emotion);
   }
 
   function handleLibraryPick(choice: LibraryClipChoice) {
@@ -2296,7 +2332,7 @@ export default function StoryboardCanvas({
             .map((n) => (
               <button
                 key={`shoppable-${n.id}`}
-                onClick={() => generateShoppableScript(n)}
+                onClick={() => setLocationPromptFor({ kind: "shoppableScript", node: n })}
                 disabled={busyNodeId === n.id}
                 className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
                 style={{ left: n.x, top: n.y + cardHeight(n) + 16, width: nodeWidth(n) }}
@@ -2382,36 +2418,113 @@ export default function StoryboardCanvas({
           Guide can be tailored (see confirmLocation + deriveShootingGuide
           in shootingGuide.ts). Skip proceeds with the old
           location-agnostic guidance. */}
-      {locationPromptFor && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
-          <div className="bg-panel rounded-xl border border-edge max-w-sm w-full p-5">
-            <h3 className="text-zinc-900 font-semibold mb-1">Where will you be filming this?</h3>
-            <p className="text-sm text-zinc-500 mb-4">
-              So the Shooting Guide can suggest angles, lighting, and pacing that actually work for the space.
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => confirmLocation("indoor")}
-                className="flex-1 py-2.5 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"
-              >
-                🏠 Indoor
-              </button>
-              <button
-                onClick={() => confirmLocation("outdoor")}
-                className="flex-1 py-2.5 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"
-              >
-                🌳 Outdoor
-              </button>
+      {locationPromptFor &&
+        (() => {
+          // productScript asks both questions in one modal; shoppableScript
+          // has no location concept (no shooting guide is generated for
+          // it) so only the emotion half shows; breakdown/breakdownChain
+          // are analysis-only actions with no new copy being written, so
+          // neither has a "reaction" to pick — unchanged plain
+          // indoor/outdoor/Skip flow for those two.
+          const needsEmotion = locationPromptFor.kind === "productScript" || locationPromptFor.kind === "shoppableScript";
+          const needsLocation = locationPromptFor.kind !== "shoppableScript";
+          return (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+              <div className="bg-panel rounded-xl border border-edge max-w-sm w-full p-5 max-h-[85vh] overflow-y-auto">
+                {needsLocation && (
+                  <>
+                    <h3 className="text-zinc-900 font-semibold mb-1">Where will you be filming this?</h3>
+                    <p className="text-sm text-zinc-500 mb-3">
+                      So the Shooting Guide can suggest angles, lighting, and pacing that actually work for the space.
+                    </p>
+                    {needsEmotion ? (
+                      <div className="flex gap-2 mb-4">
+                        <button
+                          onClick={() => setSelectedLocation("indoor")}
+                          className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+                            selectedLocation === "indoor"
+                              ? "bg-brand-500 text-white"
+                              : "bg-panel2 border border-edge text-zinc-700 hover:border-brand-500"
+                          }`}
+                        >
+                          🏠 Indoor
+                        </button>
+                        <button
+                          onClick={() => setSelectedLocation("outdoor")}
+                          className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+                            selectedLocation === "outdoor"
+                              ? "bg-brand-500 text-white"
+                              : "bg-panel2 border border-edge text-zinc-700 hover:border-brand-500"
+                          }`}
+                        >
+                          🌳 Outdoor
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => confirmLocation("indoor")}
+                          className="flex-1 py-2.5 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"
+                        >
+                          🏠 Indoor
+                        </button>
+                        <button
+                          onClick={() => confirmLocation("outdoor")}
+                          className="flex-1 py-2.5 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"
+                        >
+                          🌳 Outdoor
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+                {needsEmotion && (
+                  <>
+                    {/* Which emotion the script's opening "Reaction" beat
+                        (a sharp 2-3s reactive beat, see scriptgen.ts)
+                        should land — see REACTION_EMOTIONS in types.ts.
+                        Sorted by this member's own past picks
+                        (emotionUsage, from /api/reaction-emotions) so
+                        whichever they reach for most floats to the top;
+                        entirely optional, leaving none selected lets the
+                        AI pick whatever fits the product best. */}
+                    <h3 className="text-zinc-900 font-semibold mb-1">What reaction should the hook land?</h3>
+                    <p className="text-sm text-zinc-500 mb-3">
+                      Pick the emotion the opening beat should evoke in viewers — optional, leave blank to let the AI decide.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 mb-4">
+                      {sortedEmotions.map((emotion) => (
+                        <button
+                          key={emotion}
+                          onClick={() => setSelectedEmotion((cur) => (cur === emotion ? null : emotion))}
+                          className={`px-2.5 py-1 rounded-full text-xs capitalize ${
+                            selectedEmotion === emotion
+                              ? "bg-brand-500 text-white"
+                              : "bg-panel2 border border-edge text-zinc-600 hover:border-brand-500"
+                          }`}
+                        >
+                          {emotion}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => confirmLocation(selectedLocation)}
+                      className="w-full py-2.5 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"
+                    >
+                      ✨ Generate script
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => (needsEmotion ? setLocationPromptFor(null) : confirmLocation(null))}
+                  className="w-full mt-2 py-2 rounded-lg border border-edge text-zinc-500 hover:text-zinc-900 hover:border-edge2 text-sm"
+                >
+                  {needsEmotion ? "Cancel" : "Skip"}
+                </button>
+              </div>
             </div>
-            <button
-              onClick={() => confirmLocation(null)}
-              className="w-full mt-2 py-2 rounded-lg border border-edge text-zinc-500 hover:text-zinc-900 hover:border-edge2 text-sm"
-            >
-              Skip
-            </button>
-          </div>
-        </div>
-      )}
+          );
+        })()}
     </div>
   );
 }

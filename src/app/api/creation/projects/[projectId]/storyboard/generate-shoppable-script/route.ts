@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { requireProjectAccess } from "@/lib/creationAuth";
-import { updateCreationProject, getUserById } from "@/lib/db";
+import { updateCreationProject, getUserById, incrementReactionEmotionUsage } from "@/lib/db";
 import { generateShoppableScriptFromChain } from "@/lib/scriptgen";
 import { resolveConnectedChain, REQUIRED_STAGE_SEQUENCE } from "@/lib/storyboard";
-import type { StoryboardNode } from "@/lib/types";
+import { REACTION_EMOTIONS, type StoryboardNode, type ReactionEmotion } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +47,12 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
   if (typeof nodeId !== "string" || !nodeId) {
     return NextResponse.json({ error: "nodeId is required" }, { status: 400 });
   }
+  // Optional — picked via the reaction-emotion popup right before this
+  // action (StoryboardCanvas.tsx), same pattern as the sibling
+  // generate-product-script route.
+  const reactionEmotion: ReactionEmotion | undefined = REACTION_EMOTIONS.includes(body?.reactionEmotion)
+    ? (body.reactionEmotion as ReactionEmotion)
+    : undefined;
 
   const board = access.project.storyboard;
   const node = board?.nodes.find((n) => n.id === nodeId);
@@ -85,7 +91,16 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
         price: node.productRef.price,
       },
       creatorProfile,
+      reactionEmotion,
     });
+
+    if (reactionEmotion) {
+      try {
+        incrementReactionEmotionUsage(access.user.userId, reactionEmotion);
+      } catch (usageErr) {
+        console.error("incrementReactionEmotionUsage failed — continuing:", usageErr);
+      }
+    }
 
     // Same position-based stage tagging as generate-product-script: the
     // prompt fixes the 6-stage order, but the labels don't string-match

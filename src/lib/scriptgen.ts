@@ -1,7 +1,18 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { AnalysisResult, GeneratedScriptStage } from "./types";
+import type { AnalysisResult, GeneratedScriptStage, ReactionEmotion } from "./types";
 import type { ShopifyProductSummary } from "./shopify";
 import { trackAiTask } from "./aiActivity";
+
+// Builds the extra prompt fragment for a user-picked reaction emotion (see
+// REACTION_EMOTIONS in types.ts and the reaction-emotion picker in
+// StoryboardCanvas.tsx) — shared by both generateScriptForProduct and
+// generateShoppableScriptFromChain below so the wording can't drift between
+// the two entry points. Returns "" when no emotion was picked, leaving the
+// existing behavior (Claude picks whatever reaction fits best) unchanged.
+function reactionEmotionInstruction(emotion: ReactionEmotion | null | undefined): string {
+  if (!emotion) return "";
+  return `\n\n---\n\nThe user has specifically chosen "${emotion}" as the emotional reaction this script's opening "Reaction" beat should evoke in the viewer. Write that beat's script/direction to clearly land this specific emotion — don't default to a generic reaction. Let it color the tone of the rest of the script too, but the Reaction beat itself must unmistakably be "${emotion}".`;
+}
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
 
@@ -59,6 +70,7 @@ interface ScriptGenInput {
   analysis: AnalysisResult;
   product: ShopifyProductSummary;
   creatorProfile?: ScriptGenCreatorProfile | null;
+  reactionEmotion?: ReactionEmotion | null;
 }
 
 export async function generateScriptForProduct(input: ScriptGenInput): Promise<GeneratedScriptStage[]> {
@@ -105,7 +117,7 @@ Our product to adapt the script for:
 Title: ${input.product.title}
 Category: ${input.product.productType || "unknown"}
 Tags: ${input.product.tags.join(", ") || "none"}
-Description: ${input.product.description || "(no description)"}${profileText}`;
+Description: ${input.product.description || "(no description)"}${profileText}${reactionEmotionInstruction(input.reactionEmotion)}`;
 
   const msg = await trackAiTask(() =>
     client.messages.create({
@@ -187,6 +199,7 @@ export async function generateShoppableScriptFromChain(input: {
   referenceStages: ShoppableChainReferenceStage[];
   product: ShoppableChainProduct;
   creatorProfile?: ScriptGenCreatorProfile | null;
+  reactionEmotion?: ReactionEmotion | null;
 }): Promise<GeneratedScriptStage[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
@@ -218,7 +231,7 @@ ${referenceText}
 Our product to adapt the script for:
 Title: ${input.product.title}
 Description: ${input.product.description || "(no description)"}
-Price: ${input.product.price || "unknown"}${profileText}`;
+Price: ${input.product.price || "unknown"}${profileText}${reactionEmotionInstruction(input.reactionEmotion)}`;
 
   const msg = await trackAiTask(() =>
     client.messages.create({

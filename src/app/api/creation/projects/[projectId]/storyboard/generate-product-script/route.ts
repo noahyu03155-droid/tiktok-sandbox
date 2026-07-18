@@ -3,7 +3,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { requireProjectAccess } from "@/lib/creationAuth";
-import { getMediaDir, updateCreationProject, getUserById, updateUser } from "@/lib/db";
+import { getMediaDir, updateCreationProject, getUserById, updateUser, incrementReactionEmotionUsage } from "@/lib/db";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
 import { getShopifyProduct } from "@/lib/shopify";
@@ -11,7 +11,7 @@ import { generateScriptForProduct } from "@/lib/scriptgen";
 import { REQUIRED_STAGE_SEQUENCE } from "@/lib/storyboard";
 import { deriveShootingGuide, type ShootingGuideEntry, type ShootingLocation } from "@/lib/shootingGuide";
 import { inferActionInsightTags, mergeInsightTags } from "@/lib/personalityInsights";
-import type { StoryboardNode, VideoStats, FunnelStage } from "@/lib/types";
+import { REACTION_EMOTIONS, type StoryboardNode, type VideoStats, type FunnelStage, type ReactionEmotion } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -85,6 +85,11 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
   // film.
   const location: ShootingLocation | undefined =
     body?.location === "indoor" || body?.location === "outdoor" ? body.location : undefined;
+  // Optional — picked via the reaction-emotion popup right before this
+  // action (StoryboardCanvas.tsx), same pattern as location above.
+  const reactionEmotion: ReactionEmotion | undefined = REACTION_EMOTIONS.includes(body?.reactionEmotion)
+    ? (body.reactionEmotion as ReactionEmotion)
+    : undefined;
 
   const board = access.project.storyboard;
   const nodeIdx = board?.nodes.findIndex((n) => n.id === nodeId) ?? -1;
@@ -189,7 +194,21 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
       videoTitle: meta.title || "TikTok clip",
       analysis,
       product,
+      reactionEmotion,
     });
+
+    // Best-effort — records this member picked this emotion, so their own
+    // reaction-emotion picker sorts it higher next time. Tracked against
+    // whoever actually clicked the button (access.user), not necessarily
+    // the project owner — matches what /api/reaction-emotions would show
+    // them if they're an admin acting on someone else's project.
+    if (reactionEmotion) {
+      try {
+        incrementReactionEmotionUsage(access.user.userId, reactionEmotion);
+      } catch (usageErr) {
+        console.error("incrementReactionEmotionUsage failed — continuing:", usageErr);
+      }
+    }
 
     // Nice-to-have on top of the new script, same as the plain Breakdown
     // routes: one extra lightweight Claude call for per-stage filming

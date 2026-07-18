@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
-import type { VideoRecord, TrendBatch, CreatorInfo, TrackedCreator, User, UserRole, CreationProject, JournalEntry } from "./types";
+import type { VideoRecord, TrendBatch, CreatorInfo, TrackedCreator, User, UserRole, CreationProject, JournalEntry, ReactionEmotion } from "./types";
 import { hashPassword } from "./password";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -517,6 +517,23 @@ export function updateUser(id: string, patch: Partial<User>) {
   if (!existing) return;
   store.users[id] = { ...existing, ...patch };
   persist();
+}
+
+// Bumps this member's usage count for one reaction emotion by 1 (see
+// User.reactionEmotionUsage / REACTION_EMOTIONS in types.ts) — called by the
+// script-generation routes right after a successful generation that had an
+// emotion selected. Returns the updated usage map so the caller can hand it
+// straight back in the response without a second read. No-op (returns {})
+// if the user doesn't exist.
+export function incrementReactionEmotionUsage(userId: string, emotion: ReactionEmotion): Partial<Record<ReactionEmotion, number>> {
+  const store = load();
+  const user = store.users[userId];
+  if (!user) return {};
+  const usage = { ...(user.reactionEmotionUsage || {}) };
+  usage[emotion] = (usage[emotion] || 0) + 1;
+  store.users[userId] = { ...user, reactionEmotionUsage: usage };
+  persist();
+  return usage;
 }
 
 // ---- Journal chat (per-user diary-style chat, see /api/journal) ----

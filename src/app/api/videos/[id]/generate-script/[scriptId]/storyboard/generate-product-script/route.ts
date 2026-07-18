@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { getMediaDir, getVideo, getUserById, updateVideoRecord } from "@/lib/db";
+import { getMediaDir, getVideo, getUserById, updateVideoRecord, incrementReactionEmotionUsage } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { videoAccessError } from "@/lib/videoAuth";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
@@ -11,7 +11,7 @@ import { getShopifyProduct } from "@/lib/shopify";
 import { generateScriptForProduct } from "@/lib/scriptgen";
 import { REQUIRED_STAGE_SEQUENCE } from "@/lib/storyboard";
 import { deriveShootingGuide, type ShootingGuideEntry, type ShootingLocation } from "@/lib/shootingGuide";
-import type { StoryboardNode, VideoStats, FunnelStage } from "@/lib/types";
+import { REACTION_EMOTIONS, type StoryboardNode, type VideoStats, type FunnelStage, type ReactionEmotion } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +84,13 @@ export async function POST(
   }
   const location: ShootingLocation | undefined =
     body?.location === "indoor" || body?.location === "outdoor" ? body.location : undefined;
+  // Optional — picked via the reaction-emotion popup right before this
+  // action (StoryboardCanvas.tsx), same "asked via a popup, threaded
+  // through as a plain string" pattern as location above. Validated against
+  // the fixed REACTION_EMOTIONS list rather than trusted as arbitrary text.
+  const reactionEmotion: ReactionEmotion | undefined = REACTION_EMOTIONS.includes(body?.reactionEmotion)
+    ? (body.reactionEmotion as ReactionEmotion)
+    : undefined;
 
   const scriptIdx = video.generated_scripts.findIndex((s) => s.id === params.scriptId);
   if (scriptIdx === -1) return NextResponse.json({ error: "script not found" }, { status: 404 });
@@ -186,7 +193,20 @@ export async function POST(
       analysis,
       product,
       creatorProfile: dbUser?.creatorProfile || null,
+      reactionEmotion,
     });
+
+    // Best-effort — records this member picked this emotion, so their own
+    // reaction-emotion picker sorts it higher next time (see
+    // /api/reaction-emotions and incrementReactionEmotionUsage in db.ts).
+    // Only fires when they actually picked one; never blocks the response.
+    if (reactionEmotion && sessionUser) {
+      try {
+        incrementReactionEmotionUsage(sessionUser.userId, reactionEmotion);
+      } catch (usageErr) {
+        console.error("incrementReactionEmotionUsage failed — continuing:", usageErr);
+      }
+    }
 
     // Nice-to-have on top of the new script, same as the plain Breakdown
     // routes — see the creation-project sibling route for the full
