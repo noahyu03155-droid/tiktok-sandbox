@@ -181,6 +181,35 @@ function seedInstruction(script: string, direction: string) {
   return [script, direction ? `🎬 ${direction}` : ""].filter(Boolean).join("\n\n");
 }
 
+// Every fetch in this component reads the response body with `res.json()`.
+// That's safe as long as the server actually answers — but every one of
+// this app's own API routes always responds with NextResponse.json, even on
+// failure, so a body that ISN'T valid JSON never comes from our own code.
+// In practice it means the request never made it to (or back from) the
+// Next.js server at all: Railway's edge proxy returning a plain-text body
+// like "upstream error" when a request times out or the app process
+// restarts/crashes mid-request (long ffmpeg renders are the most likely
+// trigger). Without this, that shows up to the user as a raw, meaningless
+// "Unexpected token 'u', "upstream error" is not valid JSON" crash instead
+// of an actionable message. Used in place of a bare `await res.json()`
+// everywhere in this file.
+async function safeJson(res: Response): Promise<any> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    const snippet = text.trim().slice(0, 200);
+    throw new Error(
+      res.ok
+        ? `Got an unexpected non-JSON response from the server: "${snippet}"`
+        : `The server didn't respond properly (status ${res.status}): "${snippet || "empty response"}". This usually means the request timed out or the app restarted mid-request — please try again${
+            snippet.toLowerCase().includes("upstream") ? " (if this keeps happening on video render, try a shorter storyboard — fewer/shorter clips render faster)." : "."
+          }`
+    );
+  }
+}
+
 function defaultStoryboard(stages: GeneratedScriptStage[]): StoryboardState {
   const nodes: StoryboardNode[] = stages.map((stage, i) => ({
     id: crypto.randomUUID(),
@@ -365,7 +394,7 @@ export default function StoryboardCanvas({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (res.ok && data.entry) {
         setJournalEntries((prev) => [...prev, { id: data.entry.id, role: "ai", content: data.entry.content }]);
       }
@@ -797,7 +826,7 @@ export default function StoryboardCanvas({
         method: "POST",
         body: form,
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Upload failed");
       setNodeClip(nodeId, { source: "upload", url: data.url, kind: data.kind });
     } catch (err: any) {
@@ -835,7 +864,7 @@ export default function StoryboardCanvas({
         method: "POST",
         body: form,
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Upload failed");
       if (data.kind !== "video") throw new Error("The reference file needs to be a video, not a photo.");
       setRefVideoByNode((prev) => ({ ...prev, [nodeId]: { url: data.url, kind: data.kind } }));
@@ -876,7 +905,7 @@ export default function StoryboardCanvas({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, nodeId: node.id }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Import failed");
       setNodeClip(node.id, { source: "tiktok", url: data.url, kind: "video" });
     } catch (err: any) {
@@ -911,7 +940,7 @@ export default function StoryboardCanvas({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, nodeId: node.id }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Import failed");
       setBoard((b) => ({
         ...b,
@@ -968,7 +997,7 @@ export default function StoryboardCanvas({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nodeId: node.id, label: node.label, instruction: node.instruction }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Generation failed");
       setNodeClip(node.id, { source: "ai", url: data.url, kind: data.kind });
     } catch (err: any) {
@@ -1002,7 +1031,7 @@ export default function StoryboardCanvas({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nodeId: node.id, location }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Breakdown failed");
       // The original card is NOT filtered out here — the server keeps it
       // (and its existing connections) untouched; we just add the new
@@ -1046,7 +1075,7 @@ export default function StoryboardCanvas({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nodeId: node.id, referenceVideoUrl: ref.url, location }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Chain breakdown failed");
       const updatedById = new Map<string, StoryboardNode>((data.updatedNodes as StoryboardNode[]).map((n) => [n.id, n]));
       setBoard((b) => ({
@@ -1082,7 +1111,7 @@ export default function StoryboardCanvas({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nodeId: node.id }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Script generation failed");
       setBoard((b) => ({
         ...b,
@@ -1132,7 +1161,7 @@ export default function StoryboardCanvas({
           ...(source.type === "shopify" ? { shopifyProductId: source.product.id } : { connectedProductNodeId: source.nodeId }),
         }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Script generation failed");
       setBoard((b) => ({
         ...b,
@@ -1179,7 +1208,7 @@ export default function StoryboardCanvas({
       const res = await fetch(`${apiBase}/render`, {
         method: "POST",
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Render failed");
       setRenderResult({ url: data.url, skipped: data.skipped || [], styleApplied: data.styleApplied || null, appliedFeedback: data.appliedFeedback || null });
     } catch (err: any) {
@@ -1208,7 +1237,7 @@ export default function StoryboardCanvas({
         method: "POST",
         body: form,
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Style analysis failed");
       setBoard((b) => ({ ...b, styleProfile: data.profile as StoryboardStyleProfile }));
     } catch (err: any) {
@@ -1234,7 +1263,7 @@ export default function StoryboardCanvas({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Style analysis failed");
       setBoard((b) => ({ ...b, styleProfile: data.profile as StoryboardStyleProfile }));
     } catch (err: any) {
