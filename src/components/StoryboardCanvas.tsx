@@ -29,9 +29,18 @@ const NODE_W = 300;
 // TikTok preview already uses, so uploaded footage is fully visible).
 const HEADER_H = 40;
 const SCRIPT_BOX_H = 110;
+// Shooting Guide (angle/tone/pace) used to be squeezed into a side column
+// next to Script, sharing its height and getting only ~2/5 of the card's
+// 300px width — three labeled inputs in that little space read as
+// cramped/hard to actually use. Now its own full-width row below Script,
+// same treatment as the "Your editing notes" box, with the three fields
+// laid out in a row across the card's full width instead of stacked in a
+// sliver. Fixed height (not resizable like Script/Notes) since three short
+// single-line inputs never need more room.
+const SHOOTING_GUIDE_BOX_H = 54;
 const NOTES_BOX_H = 80;
 const CLIP_VIDEO_H = Math.round(NODE_W * (16 / 9));
-const NODE_H = HEADER_H + SCRIPT_BOX_H + NOTES_BOX_H + CLIP_VIDEO_H;
+const NODE_H = HEADER_H + SCRIPT_BOX_H + SHOOTING_GUIDE_BOX_H + NOTES_BOX_H + CLIP_VIDEO_H;
 const GAP_X = 70;
 const STYLE_WIDGET_H = 34; // compact reference-style control shown above each chain-tail's Generate button
 const STYLE_WIDGET_GAP = 8;
@@ -147,6 +156,31 @@ function findConnectedProductRefNode(
   }
   return null;
 }
+// The mirror of findConnectedProductRefNode — given a PRODUCT card, finds a
+// directly-connected raw/not-yet-broken-down TikTok video card, if any.
+// Used to detect the "product + fresh video wired together at the start of
+// a chain" case: when true, both cards' own default action buttons
+// (Breakdown / Generate product script / Generate script) collapse into one
+// combined action instead of all three showing at once — see the button
+// JSX below for why three separate buttons for what's really one workflow
+// was confusing, and why the plain product-only "Generate script" flow
+// (generateShoppableScript, which expects an ALREADY-broken-down reference
+// chain) would silently produce a low-quality script here anyway, since a
+// pending video card's instruction text is still empty.
+function findConnectedPendingVideoNode(
+  node: StoryboardNode,
+  nodes: StoryboardNode[],
+  connections: CanvasConnection[]
+): StoryboardNode | null {
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  for (const c of connections) {
+    if (c.fromId !== node.id && c.toId !== node.id) continue;
+    const otherId = c.fromId === node.id ? c.toId : c.fromId;
+    const other = nodeById.get(otherId);
+    if (other && isPendingTiktokBreakdown(other)) return other;
+  }
+  return null;
+}
 // ---- per-card custom sizing (node.w/node.h, set by the resize grip) ----
 // The NODE_W/SCRIPT_BOX_H/NOTES_BOX_H/CLIP_VIDEO_H constants above stay as
 // the defaults; these helpers resolve a specific node's actual dimensions.
@@ -181,7 +215,7 @@ function nodeNotesBoxH(node: StoryboardNode): number {
 function cardHeight(node: StoryboardNode): number {
   if (isPendingTiktokBreakdown(node)) return TIKTOK_PREVIEW_H;
   if (isPendingProductCard(node)) return PRODUCT_CARD_H;
-  return HEADER_H + nodeScriptBoxH(node) + nodeNotesBoxH(node) + nodeClipVideoH(node);
+  return HEADER_H + nodeScriptBoxH(node) + SHOOTING_GUIDE_BOX_H + nodeNotesBoxH(node) + nodeClipVideoH(node);
 }
 
 function seedInstruction(script: string, direction: string) {
@@ -1782,6 +1816,14 @@ export default function StoryboardCanvas({
             const accent = ACCENTS[i % ACCENTS.length];
             const busy = busyNodeId === node.id;
             const err = nodeErrors[node.id];
+            // A raw video card that already has a product card wired
+            // directly into it — see findConnectedPendingVideoNode's doc
+            // comment for why this collapses the card's usual two buttons
+            // (Breakdown / Generate product script) into one combined
+            // action instead.
+            const connectedProductForVideo = isPendingTiktokBreakdown(node)
+              ? findConnectedProductRefNode(node, board.nodes, board.connections)
+              : null;
             return (
               <div
                 key={node.id}
@@ -1825,36 +1867,49 @@ export default function StoryboardCanvas({
                       )}
                     </div>
                     <div className="p-2 flex-1 flex flex-col justify-center gap-1.5">
-                      <button
-                        onClick={() => startBreakdown(node)}
-                        disabled={busy}
-                        className="w-full py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium"
-                      >
-                        🔍 Breakdown into stages
-                      </button>
-                      <button
-                        onClick={() => {
-                          // If a product card is already connected to this
-                          // video (see image2-style layouts), use it
-                          // directly instead of opening the Shopify catalog
-                          // picker — the user already told us which product
-                          // this script is for by wiring it in.
-                          const connectedProduct = findConnectedProductRefNode(node, board.nodes, board.connections);
-                          if (connectedProduct) {
+                      {connectedProductForVideo ? (
+                        // Product already wired directly into this fresh
+                        // video — one combined action instead of the usual
+                        // two-plus-the-product-card's-own-button set (see
+                        // findConnectedPendingVideoNode's doc comment).
+                        // Analyzes the video itself first (transcribe +
+                        // Claude breakdown), then folds in the connected
+                        // product's own selling points, and writes a brand
+                        // new 6-stage script — same generate-product-script
+                        // pipeline "Generate product script" already used,
+                        // just surfaced as the one obvious action here
+                        // instead of a buried second button.
+                        <button
+                          onClick={() =>
                             setLocationPromptFor({
                               kind: "productScript",
                               node,
-                              source: { type: "connected", nodeId: connectedProduct.id },
-                            });
-                          } else {
-                            setProductPickerNodeId(node.id);
+                              source: { type: "connected", nodeId: connectedProductForVideo.id },
+                            })
                           }
-                        }}
-                        disabled={busy}
-                        className="w-full py-2 rounded-lg bg-panel2 border border-edge hover:border-brand-500 disabled:opacity-40 text-zinc-800 text-xs font-medium"
-                      >
-                        🛍️ Generate product script
-                      </button>
+                          disabled={busy}
+                          className="w-full py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium"
+                        >
+                          🎬✨ Analyze Video + Write Product Script
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => startBreakdown(node)}
+                            disabled={busy}
+                            className="w-full py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium"
+                          >
+                            🔍 Breakdown into stages
+                          </button>
+                          <button
+                            onClick={() => setProductPickerNodeId(node.id)}
+                            disabled={busy}
+                            className="w-full py-2 rounded-lg bg-panel2 border border-edge hover:border-brand-500 disabled:opacity-40 text-zinc-800 text-xs font-medium"
+                          >
+                            🛍️ Generate product script
+                          </button>
+                        </>
+                      )}
                       {err && <p className="mt-0.5 text-[10px] text-red-400">{err}</p>}
                     </div>
                   </>
@@ -1990,35 +2045,36 @@ export default function StoryboardCanvas({
                   </button>
                 </div>
 
-                {/* Script + Shooting Guide, side by side in one row that
-                    shares nodeScriptBoxH — the guide is 3 compact
-                    angle/tone/pace inputs (auto-filled by Breakdown, freely
-                    editable, empty placeholders on hand-made cards). Both
-                    halves are min-w-0 so the default 300px card width
-                    degrades to truncation instead of overflow. */}
-                <div className="flex border-b border-edge shrink-0 min-w-0" style={{ height: nodeScriptBoxH(node) }}>
-                  <div className="px-3 py-2 min-w-0" style={{ flex: 3 }}>
-                    <label className="text-[9px] uppercase tracking-wide text-zinc-500 mb-1 block">Script</label>
-                    <textarea
-                      value={node.instruction}
-                      onChange={(e) => updateNodeText(node.id, { instruction: e.target.value })}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      placeholder="What happens in this shot? Dialogue, action, camera direction..."
-                      className="w-full bg-transparent text-xs text-zinc-800 leading-relaxed outline-none resize-none overflow-y-auto placeholder:text-zinc-400"
-                      style={{ height: nodeScriptBoxH(node) - 22 }}
-                    />
-                  </div>
-                  <div className="px-2 py-1.5 border-l border-edge flex flex-col gap-1 min-w-0 overflow-hidden" style={{ flex: 2 }}>
-                    <label className="text-[9px] uppercase tracking-wide text-zinc-500 leading-none">Shooting Guide</label>
+                {/* Script — full width, its own row. Used to share this row
+                    with Shooting Guide in a cramped side column; that's now
+                    its own full-width row right below (see
+                    SHOOTING_GUIDE_BOX_H's doc comment above). */}
+                <div className="px-3 py-2 border-b border-edge shrink-0 min-w-0" style={{ height: nodeScriptBoxH(node) }}>
+                  <label className="text-[9px] uppercase tracking-wide text-zinc-500 mb-1 block">Script</label>
+                  <textarea
+                    value={node.instruction}
+                    onChange={(e) => updateNodeText(node.id, { instruction: e.target.value })}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    placeholder="What happens in this shot? Dialogue, action, camera direction..."
+                    className="w-full bg-transparent text-xs text-zinc-800 leading-relaxed outline-none resize-none overflow-y-auto placeholder:text-zinc-400"
+                    style={{ height: nodeScriptBoxH(node) - 22 }}
+                  />
+                </div>
+                {/* Shooting Guide — full width now instead of a squeezed
+                    side column, three fields laid out across the row so
+                    each actually has room to type in. */}
+                <div className="px-3 py-1.5 border-b border-edge shrink-0 min-w-0" style={{ height: SHOOTING_GUIDE_BOX_H }}>
+                  <label className="text-[9px] uppercase tracking-wide text-zinc-500 leading-none mb-1 block">Shooting Guide</label>
+                  <div className="flex gap-2 min-w-0">
                     {(["angle", "tone", "pace"] as const).map((field) => (
-                      <div key={field} className="flex flex-col min-w-0">
+                      <div key={field} className="flex-1 min-w-0">
                         <span className="text-[8px] text-zinc-400 capitalize leading-none">{field}</span>
                         <input
                           value={node.shootingGuide?.[field] || ""}
                           onChange={(e) => updateNodeShootingGuide(node.id, { [field]: e.target.value })}
                           onMouseDown={(e) => e.stopPropagation()}
-                          placeholder={field === "angle" ? "e.g. close-up, handheld" : field === "tone" ? "e.g. playful, urgent" : "e.g. fast cuts"}
-                          className="w-full min-w-0 bg-transparent text-[10px] leading-tight text-zinc-700 outline-none placeholder:text-zinc-400 border-b border-transparent focus:border-edge2"
+                          placeholder={field === "angle" ? "e.g. close-up" : field === "tone" ? "e.g. playful" : "e.g. fast cuts"}
+                          className="w-full min-w-0 bg-transparent text-[10px] leading-tight text-zinc-700 outline-none placeholder:text-zinc-400 border-b border-edge focus:border-brand-500"
                         />
                       </div>
                     ))}
@@ -2211,12 +2267,21 @@ export default function StoryboardCanvas({
               pattern as the chain-tail Generate button above. The server
               reads the connected chain's CURRENT script text and
               synthesizes a new shoppable script for this product (see the
-              generate-shoppable-script route). */}
+              generate-shoppable-script route). EXCLUDES a product card
+              wired directly to a still-raw/un-analyzed video card — that
+              pairing already gets its own single merged
+              "Analyze Video + Write Product Script" button on the video
+              card itself (see connectedProductForVideo above and
+              findConnectedPendingVideoNode's doc comment); showing this
+              button there too would just be the second of two buttons
+              doing overlapping things, which was the user's original
+              complaint. */}
           {board.nodes
             .filter(
               (n) =>
                 isPendingProductCard(n) &&
-                board.connections.some((c) => c.fromId === n.id || c.toId === n.id)
+                board.connections.some((c) => c.fromId === n.id || c.toId === n.id) &&
+                !findConnectedPendingVideoNode(n, board.nodes, board.connections)
             )
             .map((n) => (
               <button
