@@ -75,6 +75,14 @@ const ACCENTS = ["#5cc4ee", "#f472b6", "#facc15", "#4ade80", "#a78bfa", "#fb923c
 // vs. ffmpeg extraction + Whisper transcription + a Claude call), not
 // measured telemetry — see beginBusy/estimateLabel below for how they're
 // used.
+// renderVideo used to be here with a flat 30s guess — real renders (an
+// ffmpeg encode per shot, sometimes minutes for a multi-shot storyboard)
+// blew way past that, leaving the button stuck on "Almost done..." for
+// however long the render actually took with no real feedback. It's no
+// longer a fixed-estimate flow at all: renderVideo() now polls a
+// background job (src/lib/storyboardRender.ts) and computes a live ETA
+// from the ACTUAL observed time-per-shot (see renderButtonLabel below),
+// which is both more honest and self-corrects as the render progresses.
 const ACTION_ESTIMATE_SEC: Record<string, number> = {
   upload: 8,
   aiImage: 15,
@@ -82,7 +90,6 @@ const ACTION_ESTIMATE_SEC: Record<string, number> = {
   breakdownChain: 55, // same pipeline, plus matching onto an existing chain
   shoppableScript: 20,
   productScript: 50, // same transcribe+analyze pipeline as breakdown, plus one more Claude call
-  renderVideo: 30,
   styleAnalyze: 20,
   journalReply: 10,
 };
@@ -345,6 +352,18 @@ export default function StoryboardCanvas({
   const [rendering, setRendering] = useState(false);
   const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
+  // Live progress from the background render job (see renderVideo below +
+  // src/lib/storyboardRender.ts) — completedShots/totalShots/avgSecPerShot
+  // are all real, observed numbers, not a guess, so the "~Xs left" shown on
+  // the button gets more accurate as the render actually progresses instead
+  // of being wrong from the start.
+  const [renderProgress, setRenderProgress] = useState<{
+    completedShots: number;
+    totalShots: number;
+    step: string;
+    avgSecPerShot: number | null;
+  } | null>(null);
+  const renderPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ---- "Learn from a reference video" — analyzes an example clip's cut
   // pacing/transition/caption style and applies it to this storyboard's
@@ -1199,24 +1218,101 @@ export default function StoryboardCanvas({
     }
   }
 
+  // Applies one poll's worth of job status. `job` is whatever GET ${apiBase}/render
+  // returns (see src/lib/storyboardRender.ts's RenderJob) — this both
+  // updates the live progress display and, once the job leaves "running",
+  // stops polling and resolves renderVideo()'s outer busy state.
+  function applyRenderJob(job: {
+    status: "running" | "done" | "error";
+    totalShots: number;
+    completedShots: number;
+    step: string;
+    avgSecPerShot: number | null;
+    result: { url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null;
+    error: string | null;
+  } | null | undefined) {
+    if (!job) return;
+    setRenderProgress({
+      completedShots: job.completedShots,
+      totalShots: job.totalShots,
+      step: job.step,
+      avgSecPerShot: job.avgSecPerShot,
+    });
+    if (job.status === "done") {
+      setRenderResult(job.result);
+      stopRenderPoll();
+      setRendering(false);
+    } else if (job.status === "error") {
+      setRenderError(job.error || "Render failed");
+      stopRenderPoll();
+      setRendering(false);
+    }
+  }
+
+  function stopRenderPoll() {
+    if (renderPollTimer.current) {
+      clearInterval(renderPollTimer.current);
+      renderPollTimer.current = null;
+    }
+  }
+
+  async function pollRenderStatus() {
+    try {
+      const res = await fetch(`${apiBase}/render`, { cache: "no-store" });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error(data.error || "Failed to check render status");
+      applyRenderJob(data.job);
+    } catch {
+      // A single poll failing (network blip) isn't fatal — the next tick 2s
+      // later just tries again. Only an error the SERVER actually reports
+      // via job.status:"error" above stops the render and surfaces to the
+      // user; a transient poll failure shouldn't abandon an otherwise
+      // successfully-running render.
+    }
+  }
+
+  // Ensure the poll timer never outlives the component.
+  useEffect(() => stopRenderPoll, []);
+
   async function renderVideo() {
     setRendering(true);
-    beginBusy("renderVideo");
     setRenderError(null);
     setRenderResult(null);
+    setRenderProgress(null);
+    stopRenderPoll();
     try {
       const res = await fetch(`${apiBase}/render`, {
         method: "POST",
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Render failed");
-      setRenderResult({ url: data.url, skipped: data.skipped || [], styleApplied: data.styleApplied || null, appliedFeedback: data.appliedFeedback || null });
+      applyRenderJob(data.job);
+      // Only keep polling if the job is still running after this first
+      // response — a 1-shot render can already be "done" by the time the
+      // POST itself returns.
+      if (data.job?.status === "running") {
+        renderPollTimer.current = setInterval(pollRenderStatus, 2000);
+      }
     } catch (err: any) {
       setRenderError(err.message || "Render failed");
-    } finally {
       setRendering(false);
-      setBusyKind(null);
     }
+  }
+
+  // Real-progress label for the Generate/Rendering button — replaces the
+  // old fixed-guess estimateLabel for this one action (see the doc comment
+  // on ACTION_ESTIMATE_SEC above for why). Falls back to a plain "Starting…"
+  // until the first poll response has come back with real shot counts.
+  function renderButtonLabel(): string {
+    if (!rendering) return "🎬 Generate video";
+    if (!renderProgress || renderProgress.totalShots === 0) return "Starting...";
+    const { completedShots, totalShots, step, avgSecPerShot } = renderProgress;
+    if (avgSecPerShot != null && completedShots > 0 && completedShots < totalShots) {
+      const remainingSec = Math.round(avgSecPerShot * (totalShots - completedShots));
+      const etaLabel = remainingSec >= 60 ? `~${Math.ceil(remainingSec / 60)}m left` : remainingSec > 2 ? `~${remainingSec}s left` : "almost done";
+      return `Shot ${completedShots}/${totalShots} (${etaLabel})`;
+    }
+    return step || `Shot ${completedShots}/${totalShots}...`;
   }
 
   function startStyleUpload() {
@@ -2103,7 +2199,7 @@ export default function StoryboardCanvas({
                   className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
                   style={{ left: n.x, top: generateButtonTop, width: nodeWidth(n) }}
                 >
-                  {rendering ? estimateLabel("Rendering...", tick) : "🎬 Generate video"}
+                  {renderButtonLabel()}
                 </button>
               </Fragment>
             );
