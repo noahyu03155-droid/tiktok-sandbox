@@ -3,6 +3,7 @@ import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import { getMediaDir, getVideo } from "@/lib/db";
+import { videoAccessError } from "@/lib/videoAuth";
 import { resolveStoryboardOrder } from "@/lib/storyboard";
 import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/storyboardTrim";
 import { wrapCaption, CAPTION_FONT_FILE, type CaptionStylePreset } from "@/lib/storyboardCaptions";
@@ -115,6 +116,8 @@ export async function POST(
 ) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
 
   const script = video.generated_scripts.find((s) => s.id === params.scriptId);
   const board = script?.storyboard;

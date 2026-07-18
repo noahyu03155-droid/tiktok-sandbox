@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getVideo, updateVideoRecord } from "@/lib/db";
+import { videoAccessError } from "@/lib/videoAuth";
 import type { StoryboardState } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,8 @@ export async function PUT(
 ) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
 
   const body = (await req.json().catch(() => null)) as StoryboardState | null;
   if (!body || typeof body !== "object" || !Array.isArray(body.nodes) || !Array.isArray(body.connections)) {

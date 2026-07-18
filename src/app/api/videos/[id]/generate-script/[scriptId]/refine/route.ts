@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getVideo, updateVideoRecord } from "@/lib/db";
+import { videoAccessError } from "@/lib/videoAuth";
 import { getShopifyProduct } from "@/lib/shopify";
 import { refineScriptStage } from "@/lib/scriptgen";
 import type { GeneratedScriptStage } from "@/lib/types";
@@ -18,6 +19,8 @@ export async function POST(
 ) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
 
   const body = await req.json().catch(() => ({}));
   const stageIndex = body.stageIndex;

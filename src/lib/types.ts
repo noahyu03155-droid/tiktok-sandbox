@@ -2,6 +2,17 @@
 
 export type UserRole = "admin" | "member";
 
+// Feature-visibility tier for a "member" account — separate from UserRole
+// above, which is the real login-level admin/member split (controls things
+// like the /user-data admin panel and cross-member Creation visibility).
+// AccessTier instead just controls which top-level nav tabs a member sees
+// (see src/lib/accessTier.ts) — an admin-tagged member still can't see
+// /user-data, only the actual UserRole "admin" (the site owner) can. Unset
+// (undefined) means "no tier assigned yet" and is treated as "business" (the
+// broadest of the three) so existing/untagged members keep seeing what they
+// already could before this field existed — see tabsForTier.
+export type AccessTier = "business" | "vip" | "admin";
+
 // A handful of short answers collected right after registration (see
 // /onboarding) — used purely to nudge the AI script generator's tone,
 // persona, and filming-direction detail toward this specific creator
@@ -23,6 +34,10 @@ export interface User {
   // Never sent to the client.
   passwordHash: string;
   role: UserRole;
+  // Which nav tabs this member sees — set from the User Data page's search +
+  // tag UI (src/components/UserDataListContent.tsx / UserKeywordGraphPageContent.tsx).
+  // See the AccessTier doc comment above for how this differs from `role`.
+  accessTier?: AccessTier | null;
   createdAt: string;
   // Optional product category picked at registration (from the FastMoss
   // category tree) — drives the personalized "For You" section on the
@@ -230,6 +245,12 @@ export interface CanvasState {
 
 export interface VideoRecord {
   id: string;
+  // The member who pasted this in on the Video Analysis home board (only set
+  // for source:"manual" — see src/lib/videoAuth.ts). null/absent for
+  // "trend"/"creator" sourced videos (shared FastMoss/Creator-Tracker catalog
+  // entries, not any one member's private content) and for legacy "manual"
+  // records created before this field existed.
+  ownerId?: string | null;
   source_url: string;
   webpage_url: string | null;
   title: string;

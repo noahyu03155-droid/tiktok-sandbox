@@ -3,24 +3,36 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLocale } from "@/lib/i18n";
-import type { UserRole } from "@/lib/types";
+import type { AccessTier, UserRole } from "@/lib/types";
+import { canSeeTab } from "@/lib/accessTier";
 import Logo from "./Logo";
 import LanguageToggle from "./LanguageToggle";
 import LogoutButton from "./LogoutButton";
 
-export default function HeaderBar({ role = null }: { role?: UserRole | null }) {
+export default function HeaderBar({
+  role = null,
+  accessTier = null,
+}: {
+  role?: UserRole | null;
+  // Feature-visibility tier (business/vip/admin-tag) — see src/lib/accessTier.ts.
+  // Only meaningful for role:"member"; a real admin bypasses it entirely.
+  accessTier?: AccessTier | null;
+}) {
   const { t } = useLocale();
   const pathname = usePathname();
 
   if (pathname === "/login" || pathname === "/register" || pathname === "/onboarding") return null;
 
-  const navItems = [
-    { href: "/", label: t("navVideoAnalysis") },
-    { href: "/trends", label: t("navTrendAnalysis") },
-    { href: "/creators", label: t("navCreatorTracker") },
-    { href: "/creation", label: t("navCreation") },
-    ...(role === "admin" ? [{ href: "/user-data", label: t("navUserData") }] : []),
-  ];
+  const isSuperAdmin = role === "admin";
+  // Built as a plain push list (rather than filter/concat on object
+  // literals) purely to keep the item shape trivial to type — see
+  // src/lib/accessTier.ts for what canSeeTab actually gates.
+  const navItems: { href: string; label: string }[] = [];
+  if (canSeeTab("video", isSuperAdmin, accessTier)) navItems.push({ href: "/", label: t("navVideoAnalysis") });
+  if (canSeeTab("trends", isSuperAdmin, accessTier)) navItems.push({ href: "/trends", label: t("navTrendAnalysis") });
+  if (canSeeTab("creators", isSuperAdmin, accessTier)) navItems.push({ href: "/creators", label: t("navCreatorTracker") });
+  if (canSeeTab("creation", isSuperAdmin, accessTier)) navItems.push({ href: "/creation", label: t("navCreation") });
+  if (isSuperAdmin) navItems.push({ href: "/user-data", label: t("navUserData") });
 
   return (
     // Phase 41: reverted Phase 39's thick black border/outlined nav pill —

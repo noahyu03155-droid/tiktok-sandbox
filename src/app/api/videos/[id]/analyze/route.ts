@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getVideo } from "@/lib/db";
+import { videoAccessError } from "@/lib/videoAuth";
 import { runAIBreakdown } from "@/lib/pipeline";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,8 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
 
   // A stuck status:"analyzing" (e.g. the dev server restarted mid-request,
   // or an old build without the Claude-call timeout hung indefinitely)

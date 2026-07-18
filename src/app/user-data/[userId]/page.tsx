@@ -29,6 +29,7 @@ export default function UserDataDetailPage({ params }: { params: { userId: strin
       joinedAt={target.createdAt}
       projectCount={projects.length}
       lastActiveAt={lastActiveAt}
+      accessTier={target.accessTier || null}
       branches={branches}
       customTags={target.customTags || []}
       graphPositions={target.graphPositions || {}}

@@ -202,11 +202,13 @@ export function createVideoRecord(
     source?: "manual" | "trend" | "creator";
     creator?: CreatorInfo | null;
     trackedCreatorId?: string | null;
+    ownerId?: string | null;
   }
 ) {
   const store = load();
   store.videos[id] = {
     id,
+    ownerId: opts?.ownerId ?? null,
     source_url,
     webpage_url: null,
     title: "",

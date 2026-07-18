@@ -3,6 +3,7 @@ import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import { getMediaDir, getVideo, updateVideoRecord } from "@/lib/db";
+import { videoAccessError } from "@/lib/videoAuth";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
 import { deriveShootingGuide, type ShootingGuideEntry, type ShootingLocation } from "@/lib/shootingGuide";
@@ -52,6 +53,8 @@ export async function POST(
 ) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
 
   if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json(

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { getVideo, getUserById, updateVideoRecord } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
+import { videoAccessError } from "@/lib/videoAuth";
 import { generateShoppableScriptFromChain } from "@/lib/scriptgen";
 import { resolveConnectedChain, REQUIRED_STAGE_SEQUENCE } from "@/lib/storyboard";
 import type { StoryboardNode } from "@/lib/types";
@@ -37,6 +38,8 @@ export async function POST(
 ) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
 
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(

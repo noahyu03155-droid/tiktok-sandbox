@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import { getMediaDir, getVideo, getUserById, updateVideoRecord } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
+import { videoAccessError } from "@/lib/videoAuth";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
 import { getShopifyProduct } from "@/lib/shopify";
@@ -49,6 +50,8 @@ export async function POST(
 ) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
 
   const sessionUser = getCurrentUser();
   const dbUser = sessionUser ? getUserById(sessionUser.userId) : null;

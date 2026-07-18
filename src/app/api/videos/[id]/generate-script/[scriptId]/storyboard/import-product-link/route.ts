@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getVideo } from "@/lib/db";
+import { videoAccessError } from "@/lib/videoAuth";
 import { scrapeProductLink } from "@/lib/tiktokProduct";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +18,8 @@ export async function POST(
 ) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
 
   const body = await req.json().catch(() => ({}));
   const url = typeof body?.url === "string" ? body.url.trim() : "";

@@ -5,6 +5,7 @@ import { LocaleProvider } from "@/lib/i18n";
 import HeaderBar from "@/components/HeaderBar";
 import MainShell from "@/components/MainShell";
 import { getCurrentUser } from "@/lib/session";
+import { getUserById } from "@/lib/db";
 
 // A clean geometric sans used only for the COTORX wordmark (see Logo.tsx) —
 // gives it a techy, minimal feel without going as decorative/sci-fi as the
@@ -47,13 +48,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   // component. Using headers()/cookies() anywhere in a server component
   // automatically opts that route into dynamic rendering, so no extra
   // `export const dynamic` is needed here.
-  const user = getCurrentUser();
+  const sessionUser = getCurrentUser();
+  // The session cookie only carries userId/username/role (see
+  // src/lib/session.ts) — accessTier lives on the full DB record, so it's
+  // fetched here rather than added to the session payload.
+  const dbUser = sessionUser ? getUserById(sessionUser.userId) : null;
   return (
     <html lang="en">
       <body className={wordmarkFont.variable}>
         <LocaleProvider>
           <div className="min-h-screen bg-ink">
-            <HeaderBar role={user?.role ?? null} />
+            <HeaderBar role={sessionUser?.role ?? null} accessTier={dbUser?.accessTier ?? null} />
             <MainShell>{children}</MainShell>
           </div>
         </LocaleProvider>

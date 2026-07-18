@@ -20,6 +20,7 @@ export default function UserDataPage() {
       createdAt: u.createdAt,
       hasProfile: !!u.creatorProfile?.completedAt,
       preferredCategoryLabel: u.preferredCategoryLabel || null,
+      accessTier: u.accessTier || null,
     }))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 

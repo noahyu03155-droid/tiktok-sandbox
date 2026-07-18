@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { getMediaDir, getVideo, updateVideoRecord } from "@/lib/db";
+import { videoAccessError } from "@/lib/videoAuth";
 import { analyzeReferenceStyle } from "@/lib/storyboardStyle";
 import { fetchTikTokVideo } from "@/lib/tiktok";
 
@@ -27,6 +28,8 @@ export async function POST(
 ) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
 
   const scriptIdx = video.generated_scripts.findIndex((s) => s.id === params.scriptId);
   if (scriptIdx === -1) return NextResponse.json({ error: "script not found" }, { status: 404 });
@@ -107,6 +110,8 @@ export async function DELETE(
 ) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
   const scriptIdx = video.generated_scripts.findIndex((s) => s.id === params.scriptId);
   if (scriptIdx === -1) return NextResponse.json({ error: "script not found" }, { status: 404 });
   const script = video.generated_scripts[scriptIdx];

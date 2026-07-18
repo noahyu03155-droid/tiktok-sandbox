@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getVideo, updateVideoRecord } from "@/lib/db";
+import { videoAccessError } from "@/lib/videoAuth";
 import { queueFetchAndTranscribe } from "@/lib/fetchQueue";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,8 @@ export const dynamic = "force-dynamic";
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
   const video = getVideo(params.id);
   if (!video) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const accessErr = videoAccessError(video);
+  if (accessErr) return NextResponse.json({ error: accessErr.error }, { status: accessErr.status });
 
   updateVideoRecord(params.id, { status: "pending", error_message: null, analysis: null });
   queueFetchAndTranscribe(params.id, video.source_url);
