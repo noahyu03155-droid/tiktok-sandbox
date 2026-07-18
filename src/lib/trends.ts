@@ -14,6 +14,16 @@ import {
 import { queueFetchAndTranscribe } from "@/lib/fetchQueue";
 import type { CreatorInfo, TrendBatch, TrendItem, VideoRecord } from "@/lib/types";
 
+// How often a category's trend data is treated as "fresh enough" — shared
+// between the on-demand personalized-For-You route (which live-pulls only
+// when a cached batch is older than this) and the scheduled full-catalog
+// refresh job (src/lib/fastmossFullRefresh.ts), which re-pulls every
+// category on exactly this cadence. Keeping both on the same constant means
+// a category the scheduled job just refreshed never gets redundantly
+// re-pulled on the next page visit — see the doc comment on
+// FRESH_MS/personalized/route.ts for the original motivation.
+export const TREND_REFRESH_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
 export interface RawTrendItem {
   rank?: number;
   fastmoss_url: string;

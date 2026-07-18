@@ -54,6 +54,24 @@ interface CategoryScanStatus {
   error: string | null;
 }
 
+// Status of the scheduled full-catalog trend refresh (see
+// src/lib/fastmossFullRefresh.ts), as returned by GET /api/trends/full-refresh.
+interface FullRefreshStatus {
+  status: "idle" | "running" | "done" | "error";
+  total: number;
+  processed: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  lastPersistedRun: {
+    finishedAt: string;
+    categoriesProcessed: number;
+    categoriesTotal: number;
+    status: "done" | "error";
+    error?: string | null;
+  } | null;
+}
+
 // Response shape of POST /api/trends/analyze-product.
 interface ProductAnalysis {
   salesTrend: {
@@ -941,6 +959,23 @@ export default function TrendsPageContent({
   const [scanTriggerError, setScanTriggerError] = useState<string | null>(null);
   const scanPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // "Trending Now — All Categories" — the merged, sales-sorted feed pulled
+  // from every category's latest batch (see /api/trends/top-videos-all).
+  // Read-only aggregation, no live FastMoss call of its own — populated by
+  // whatever the scheduled full-catalog refresh (or an admin's manual
+  // per-category Update) has already ingested.
+  const [allCatItems, setAllCatItems] = useState<EnrichedItem[] | null>(null);
+  const [allCatLoading, setAllCatLoading] = useState(false);
+  const [allCatError, setAllCatError] = useState<string | null>(null);
+  const [allCatCount, setAllCatCount] = useState(0);
+
+  // Status of the scheduled full-catalog refresh job itself (last run time,
+  // in-progress state) — same polled-status pattern as the category scan
+  // above, plus an admin-only manual trigger.
+  const [fullRefreshStatus, setFullRefreshStatus] = useState<FullRefreshStatus | null>(null);
+  const [fullRefreshTriggerError, setFullRefreshTriggerError] = useState<string | null>(null);
+  const fullRefreshPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Favorites — shared across every TrendCard/ProductCard on this page via
   // FavoritesContext (see its doc comment near the top of this file).
   // Fetched once on mount, same one-request-for-the-whole-page pattern as
@@ -1116,6 +1151,21 @@ export default function TrendsPageContent({
     };
   }, []);
 
+  // Load the merged "All Categories" trending feed + full-refresh job status
+  // once on mount — same pattern as the category-tree fetch above.
+  useEffect(() => {
+    loadAllCategoriesTop();
+    pollFullRefreshStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Make sure the full-refresh poll timer never leaks past unmount.
+  useEffect(() => {
+    return () => {
+      if (fullRefreshPollTimer.current) clearInterval(fullRefreshPollTimer.current);
+    };
+  }, []);
+
   // Close the category dropdown on any click outside it.
   useEffect(() => {
     if (!categoryDropdownOpen) return;
@@ -1221,6 +1271,66 @@ export default function TrendsPageContent({
       pollScanStatus();
     } catch (err: any) {
       setScanTriggerError(err.message || "Failed to start scan");
+    }
+  }
+
+  // Loads the merged "All Categories" feed — a pure read, no FastMoss call
+  // of its own (see /api/trends/top-videos-all's doc comment).
+  function loadAllCategoriesTop() {
+    setAllCatLoading(true);
+    setAllCatError(null);
+    fetch("/api/trends/top-videos-all?limit=40", { cache: "no-store" })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.error || "Failed to load trending videos");
+        setAllCatItems(data.items || []);
+        setAllCatCount(data.categoriesCount || 0);
+      })
+      .catch((err: any) => setAllCatError(err.message || "Failed to load trending videos"))
+      .finally(() => setAllCatLoading(false));
+  }
+
+  // Poll the background full-catalog refresh job's status — same
+  // running/done/error pattern as pollScanStatus above. On "done", also
+  // reload the merged feed so newly-ingested categories show up without a
+  // manual page refresh.
+  function pollFullRefreshStatus() {
+    fetch("/api/trends/full-refresh", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        setFullRefreshStatus(data.status);
+        if (data.status?.status === "running") {
+          if (!fullRefreshPollTimer.current) {
+            fullRefreshPollTimer.current = setInterval(pollFullRefreshStatus, 15000);
+          }
+        } else {
+          if (fullRefreshPollTimer.current) {
+            clearInterval(fullRefreshPollTimer.current);
+            fullRefreshPollTimer.current = null;
+          }
+          if (data.status?.status === "done") loadAllCategoriesTop();
+        }
+      })
+      .catch(() => {
+        if (fullRefreshPollTimer.current) {
+          clearInterval(fullRefreshPollTimer.current);
+          fullRefreshPollTimer.current = null;
+        }
+      });
+  }
+
+  // Admin-only manual override — the scheduler already runs this
+  // automatically every few days (see src/lib/fastmossFullRefresh.ts).
+  async function triggerFullRefresh() {
+    setFullRefreshTriggerError(null);
+    try {
+      const res = await fetch("/api/trends/full-refresh", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to start refresh");
+      setFullRefreshStatus(data.status);
+      pollFullRefreshStatus();
+    } catch (err: any) {
+      setFullRefreshTriggerError(err.message || "Failed to start refresh");
     }
   }
 
@@ -1628,6 +1738,69 @@ export default function TrendsPageContent({
           {scanStatus?.status === "error" && <span className="text-red-400">{scanStatus.error}</span>}
           {scanTriggerError && <span className="text-red-400">{scanTriggerError}</span>}
         </div>
+      </div>
+
+      {/* "Trending Now — All Categories": every category's latest pull
+          merged into one feed and sorted by sales, so this leads with the
+          catalog-wide top sellers instead of one category at a time. Kept
+          fresh by the scheduled full-catalog refresh (see
+          src/lib/fastmossFullRefresh.ts) — the per-category batch list
+          further down still lets an admin browse/pull one category at a
+          time if they want to. */}
+      <div className="space-y-3 pb-8 border-b border-edge">
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-900">{t("trendAllCategoriesHeading")}</h3>
+            <p className="text-xs text-zinc-500">
+              {allCatCount > 0
+                ? t("trendAllCategoriesSubtitle", { count: String(allCatCount) })
+                : t("trendAllCategoriesSubtitleEmpty")}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap text-[11px] text-zinc-500">
+            {fullRefreshStatus?.status === "running" ? (
+              <span className="text-yellow-600 animate-pulse">
+                {t("trendFullRefreshRunning", {
+                  processed: String(fullRefreshStatus.processed),
+                  total: String(fullRefreshStatus.total || "?"),
+                })}
+              </span>
+            ) : fullRefreshStatus?.lastPersistedRun?.finishedAt ? (
+              <span>
+                {t("trendFullRefreshLastRun", {
+                  date: new Date(fullRefreshStatus.lastPersistedRun.finishedAt).toISOString().slice(0, 16).replace("T", " "),
+                })}
+              </span>
+            ) : (
+              <span>{t("trendFullRefreshNeverRun")}</span>
+            )}
+            {role === "admin" && fullRefreshStatus?.status !== "running" && (
+              <button onClick={triggerFullRefresh} className="text-brand-400 hover:text-brand-300 underline underline-offset-2">
+                {t("trendFullRefreshRunNow")}
+              </button>
+            )}
+            {fullRefreshStatus?.status === "error" && fullRefreshStatus.error && (
+              <span className="text-red-400">{fullRefreshStatus.error}</span>
+            )}
+            {fullRefreshTriggerError && <span className="text-red-400">{fullRefreshTriggerError}</span>}
+          </div>
+        </div>
+        {allCatLoading && !allCatItems && <p className="text-sm text-yellow-600 animate-pulse">{t("trendUpdating")}</p>}
+        {allCatError && <p className="text-sm text-red-400">{allCatError}</p>}
+        {allCatItems && allCatItems.length === 0 && (
+          <p className="text-sm text-zinc-500">{t("trendAllCategoriesEmpty")}</p>
+        )}
+        {allCatItems && allCatItems.length > 0 && (
+          <TrendSection
+            title={t("trendTopBySales")}
+            items={allCatItems}
+            metric="sales"
+            batchId="all-categories"
+            selectMode={false}
+            selected={EMPTY_SELECTION}
+            onToggleSelect={() => {}}
+          />
+        )}
       </div>
 
       {updateError && (

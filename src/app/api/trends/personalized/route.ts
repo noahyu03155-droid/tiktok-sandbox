@@ -3,18 +3,23 @@ import { getCurrentUser } from "@/lib/session";
 import { getUserById, getVideo, getLatestTrendBatchByCategory } from "@/lib/db";
 import { buildFastmossVideoUrl, fetchCategoryTrendVideos, fetchFastMossCategories, formatUsd, toCreatorInfo } from "@/lib/fastmoss";
 import type { FastMossVideoResult } from "@/lib/fastmoss";
-import { ingestTrendBatch, type RawTrendItem } from "@/lib/trends";
+import { ingestTrendBatch, TREND_REFRESH_INTERVAL_MS, type RawTrendItem } from "@/lib/trends";
 import type { TrendBatch, TrendItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 const REGION = process.env.FASTMOSS_REGION || "US";
-// Reuse a same-category batch pulled within the last 24h instead of
-// re-hitting FastMoss's paid API on every page visit — many different
-// users can share one category's cached pull (see
+// Reuse a same-category batch pulled within the scheduled refresh window
+// instead of re-hitting FastMoss's paid API on every page visit — many
+// different users can share one category's cached pull (see
 // getLatestTrendBatchByCategory in db.ts, and the shared logic in
-// /api/trends/update which this route parallels).
-const FRESH_MS = 24 * 60 * 60 * 1000;
+// /api/trends/update which this route parallels). Kept in lockstep with the
+// scheduled full-catalog refresh's own cadence (src/lib/fastmossFullRefresh.ts)
+// so a category that job already refreshed never gets redundantly re-pulled
+// here just because more than 24h happened to pass — was 24h before that
+// background job existed, when a live pull on-visit was the only way any
+// category ever got refreshed at all.
+const FRESH_MS = TREND_REFRESH_INTERVAL_MS;
 
 function toRawItem(v: FastMossVideoResult, index: number): RawTrendItem {
   return {

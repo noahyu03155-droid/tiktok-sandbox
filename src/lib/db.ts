@@ -76,6 +76,20 @@ interface Store {
     totalNodes: number; // how many category nodes existed in the tree at scan time
     totalTested: number; // how many were actually successfully tested (may be < totalNodes if some errored/skipped)
   } | null;
+  // Last completed run of the scheduled full-catalog trend refresh (see
+  // src/lib/fastmossFullRefresh.ts) — every confirmed-valid FastMoss
+  // category re-pulled on a fixed cadence (TREND_REFRESH_INTERVAL_MS in
+  // trends.ts) so the Trend Analysis page has a broad, already-processed
+  // video library instead of making the first visitor of the day wait on a
+  // live pull. Persisted (not just kept in memory) so the schedule survives
+  // a server restart/redeploy.
+  lastTrendFullRefresh?: {
+    finishedAt: string; // ISO timestamp
+    categoriesProcessed: number;
+    categoriesTotal: number;
+    status: "done" | "error";
+    error?: string | null;
+  } | null;
 }
 
 // Simple JSON-file-backed store. This app is a small internal team tool with
@@ -330,6 +344,45 @@ export function getLatestTrendBatchByCategory(categoryId: string): TrendBatch | 
     .filter((b) => b.category_id === categoryId)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   return matches[0] || null;
+}
+
+// One batch per distinct category (whichever was created most recently) —
+// the source data for the "All Categories · Top Selling" aggregated feed
+// (see /api/trends/top-videos-all), which merges every category's latest
+// pull into one globally-sorted list instead of showing them as separate
+// per-category sections. Falls back to grouping by the raw category label
+// for older batches ingested before category_id existed (manually-pasted
+// ones, mainly).
+export function listLatestTrendBatchPerCategory(): TrendBatch[] {
+  const store = load();
+  const byCategory = new Map<string, TrendBatch>();
+  for (const b of Object.values(store.trendBatches)) {
+    const key = b.category_id || b.category;
+    const existing = byCategory.get(key);
+    if (!existing || new Date(b.created_at).getTime() > new Date(existing.created_at).getTime()) {
+      byCategory.set(key, b);
+    }
+  }
+  return Array.from(byCategory.values());
+}
+
+// ---- Scheduled full-catalog trend refresh (see fastmossFullRefresh.ts) ----
+
+export function setLastTrendFullRefresh(data: {
+  finishedAt: string;
+  categoriesProcessed: number;
+  categoriesTotal: number;
+  status: "done" | "error";
+  error?: string | null;
+}) {
+  const store = load();
+  store.lastTrendFullRefresh = data;
+  persist();
+}
+
+export function getLastTrendFullRefresh() {
+  const store = load();
+  return store.lastTrendFullRefresh || null;
 }
 
 // ---- Creator Tracker ----
