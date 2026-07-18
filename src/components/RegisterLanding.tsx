@@ -22,7 +22,7 @@
 // "200,000+ brands," testimonials) since COTORX has no real data to back
 // those claims — every section below describes COTORX's own actual,
 // shipped features.
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useLocale } from "@/lib/i18n";
 import type { TranslationKey } from "@/lib/translations";
 import Logo from "@/components/Logo";
@@ -139,6 +139,24 @@ export default function RegisterLanding({ showcaseVideos }: { showcaseVideos: Sh
     setPulseForm(true);
     window.setTimeout(() => setPulseForm(false), 1200);
   }
+
+  // Arriving here via a link that already points at the sign-up section
+  // (e.g. the login page's "Register" link, now /register#register-form)
+  // should land directly on it instead of the top of the marketing page —
+  // same destination "Get started" scrolls to above. Done as an explicit
+  // effect rather than relying on the browser's native hash-scroll-on-load,
+  // since that can land in the wrong spot here: the page has async-loaded
+  // showcase thumbnails above this section that shift its position after
+  // the browser's initial (pre-hydration) scroll attempt already happened.
+  useEffect(() => {
+    if (typeof window === "undefined" || window.location.hash !== "#register-form") return;
+    const el = document.getElementById("register-form");
+    if (!el) return;
+    // A tick after mount so images/layout above have settled before we
+    // measure the scroll target's position.
+    const timer = window.setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const thumbnails = showcaseVideos.map((v) => v.thumb);
   const stripSource = thumbnails.length > 0 ? thumbnails : new Array(10).fill(null);

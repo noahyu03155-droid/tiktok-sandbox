@@ -66,7 +66,11 @@ function LoginForm() {
       </button>
       <p className="text-xs text-zinc-500 mt-4 text-center">
         {t("noAccountYet")}{" "}
-        <a href="/register" className="text-brand-400 hover:text-brand-300 underline">
+        {/* Jumps straight to the sign-up form section instead of the top of
+            the marketing landing page — see RegisterLanding.tsx's
+            #register-form scroll-on-mount effect for why this is a hash
+            link rather than relying on native browser anchor scrolling. */}
+        <a href="/register#register-form" className="text-brand-400 hover:text-brand-300 underline">
           {t("registerLink")}
         </a>
       </p>
