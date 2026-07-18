@@ -32,6 +32,9 @@ export default function HeaderBar({
   if (canSeeTab("trends", isSuperAdmin, accessTier)) navItems.push({ href: "/trends", label: t("navTrendAnalysis") });
   if (canSeeTab("creators", isSuperAdmin, accessTier)) navItems.push({ href: "/creators", label: t("navCreatorTracker") });
   if (canSeeTab("creation", isSuperAdmin, accessTier)) navItems.push({ href: "/creation", label: t("navCreation") });
+  // Favorites is personal, not a feature tier — always visible to any
+  // signed-in member, unlike the tabs above which are gated by canSeeTab.
+  navItems.push({ href: "/favorites", label: t("navFavorites") });
   if (isSuperAdmin) navItems.push({ href: "/user-data", label: t("navUserData") });
 
   return (

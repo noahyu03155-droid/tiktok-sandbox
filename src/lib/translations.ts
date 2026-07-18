@@ -6,7 +6,16 @@ export const translations = {
     appTagline: "Video Script Breakdown Workbench",
     navVideoAnalysis: "Video Analysis",
     navTrendAnalysis: "Trend Analysis",
+    navFavorites: "Favorites",
     logout: "Log out",
+
+    favoritesPageTitle: "Favorites",
+    favoritesPageSubtitle: "Videos and products you've bookmarked, all in one place.",
+    favoritesTabVideos: "Videos",
+    favoritesTabProducts: "Products",
+    favoritesLoading: "Loading...",
+    favoritesEmptyVideos: "No favorited videos yet — tap the star on any video card to save it here.",
+    favoritesEmptyProducts: "No favorited products yet — tap the star on any product card to save it here.",
 
     pasteHeading: "Paste a video, get an instant breakdown",
     pasteSubheading:
@@ -21,6 +30,9 @@ export const translations = {
     breakdownFailed: "Analysis failed",
     emptyBoardMessage: "No videos analyzed yet — paste a TikTok link to get started.",
     referenceBadge: "Reference",
+    favoriteAdd: "Add to favorites",
+    favoriteRemove: "Remove from favorites",
+    videoCardMoreScripts: "+{count} more product(s)",
 
     statusPending: "Queued",
     statusFetching: "Fetching video",
@@ -112,6 +124,8 @@ export const translations = {
     registerSignUpNowLabel: "Sign up now",
     registerShowcaseHeadline: "Every viral video — broken down and ready to reuse",
     registerShowcaseSubtitle: "Real TikTok Shop videos already analyzed on COTORX",
+    registerShowcaseRoleCreator: "Creator",
+    registerShowcaseAnonymous: "TikTok Shop creator",
 
     // "How it works" 3-step section.
     registerHowHeadline: "From viral video to your own script — in three steps",
@@ -406,7 +420,16 @@ export const translations = {
     appTagline: "视频话术拆解工作台",
     navVideoAnalysis: "视频分析",
     navTrendAnalysis: "趋势分析",
+    navFavorites: "收藏库",
     logout: "退出登录",
+
+    favoritesPageTitle: "收藏库",
+    favoritesPageSubtitle: "你收藏的视频和产品，都在这里。",
+    favoritesTabVideos: "视频",
+    favoritesTabProducts: "产品",
+    favoritesLoading: "加载中...",
+    favoritesEmptyVideos: "还没有收藏任何视频 — 点击视频卡片上的星标即可收藏。",
+    favoritesEmptyProducts: "还没有收藏任何产品 — 点击产品卡片上的星标即可收藏。",
 
     pasteHeading: "粘贴视频，自动拆解",
     pasteSubheading:
@@ -421,6 +444,9 @@ export const translations = {
     breakdownFailed: "拆解失败",
     emptyBoardMessage: "还没有拆解过任何视频，粘贴一个 TikTok 链接开始吧。",
     referenceBadge: "参考",
+    favoriteAdd: "加入收藏",
+    favoriteRemove: "取消收藏",
+    videoCardMoreScripts: "还有 {count} 个相关产品",
 
     statusPending: "排队中",
     statusFetching: "抓取视频中",
@@ -512,6 +538,8 @@ export const translations = {
     registerSignUpNowLabel: "立即注册",
     registerShowcaseHeadline: "每一条爆款视频，都已拆解完毕，随时可复用",
     registerShowcaseSubtitle: "COTORX 上已经分析过的真实 TikTok Shop 视频",
+    registerShowcaseRoleCreator: "创作者",
+    registerShowcaseAnonymous: "TikTok Shop 创作者",
 
     registerHowHeadline: "从爆款视频到你自己的脚本，只需三步",
     registerHowStep1Title: "粘贴一条爆款视频",

@@ -12,7 +12,10 @@ export default function LogoutButton() {
 
   async function handleLogout() {
     await fetch("/api/logout", { method: "POST" });
-    router.push("/login");
+    // Land on the public homepage, not straight into the bare login form —
+    // middleware.ts redirects any signed-out visit to "/" onward to
+    // /register (the marketing landing page), same as a fresh visitor.
+    router.push("/");
     router.refresh();
   }
 

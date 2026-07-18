@@ -1,14 +1,29 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useLocale } from "@/lib/i18n";
 import { formatCompactNumber, STATUS_KEY } from "@/lib/format";
 import type { TrendItem, VideoRecord } from "@/lib/types";
+import FavoriteButton from "./FavoriteButton";
 
 interface EnrichedItem extends TrendItem {
   video: VideoRecord | null;
 }
+
+// Shared favorites state for both card types on this page (TrendCard's
+// video favorites + ProductCard's product favorites). Provided once by the
+// top-level TrendsPageContent component and consumed via useContext inside
+// TrendCard/ProductCard — avoids threading favorites props through
+// TrendSection, which renders both card types and is called from several
+// places in this file (the "For You" section plus every per-batch
+// views/sales section).
+const FavoritesContext = createContext<{
+  videoIds: Set<string>;
+  productIds: Set<string>;
+  toggleVideo: (id: string) => void;
+  toggleProduct: (item: EnrichedItem) => void;
+} | null>(null);
 
 interface EnrichedBatch {
   id: string;
@@ -173,6 +188,7 @@ function TrendCard({
   onToggleSelect: () => void;
 }) {
   const { t } = useLocale();
+  const favorites = useContext(FavoritesContext);
 
   // On-demand "AI Analysis" panel — deliberately NOT auto-loaded (each fetch
   // spends real FastMoss API credits); only fetched the first time this
@@ -257,7 +273,11 @@ function TrendCard({
   // still has something to show. No sparkline — we only ever have a
   // point-in-time snapshot, not daily history (see chat).
   const gmvPrimary = item.gmv ?? item.gmv_28d ?? null;
-  const outboundUrl = item.fastmoss_url || video?.source_url || null;
+  // Prefer the real TikTok video link (webpage_url is the yt-dlp-resolved
+  // canonical page, source_url whatever was originally pulled in) over
+  // FastMoss's own video-detail page, so the "open in new window" icon
+  // takes the user to the actual TikTok video, not a FastMoss wrapper page.
+  const outboundUrl = video?.webpage_url || video?.source_url || item.fastmoss_url || null;
   const profileUrl = video?.creator?.profile_url || null;
 
   const body = (
@@ -309,13 +329,20 @@ function TrendCard({
           )}
         </div>
 
-        {/* top-right: AI breakdown pill + outbound link (hidden in select mode to avoid clutter) */}
+        {/* top-right: AI breakdown pill + favorite + outbound link (hidden in select mode to avoid clutter) */}
         {!selectMode && (
           <div className="absolute top-2 right-2 flex items-center gap-1">
             {video?.analysis && (
               <span className="text-[10px] font-medium text-white bg-black/70 px-2 py-1 rounded-full leading-none">
                 🧠 AI
               </span>
+            )}
+            {video && favorites && (
+              <FavoriteButton
+                favorited={favorites.videoIds.has(video.id)}
+                onToggle={() => favorites.toggleVideo(video.id)}
+                title={favorites.videoIds.has(video.id) ? t("favoriteRemove") : t("favoriteAdd")}
+              />
             )}
             {outboundUrl && (
               <a
@@ -517,6 +544,7 @@ function TrendCard({
 // TrendCard's, to keep the two card types independent and simple.
 function ProductCard({ item }: { item: EnrichedItem }) {
   const { t } = useLocale();
+  const favorites = useContext(FavoritesContext);
 
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -601,6 +629,15 @@ function ProductCard({ item }: { item: EnrichedItem }) {
       <span className="absolute top-2 left-2 z-10 flex items-center gap-0.5 text-[11px] font-bold text-white bg-black/80 rounded-full px-2 py-1 leading-none">
         🔥 #{item.rank}
       </span>
+      {item.product_id && favorites && (
+        <div className="absolute top-2 right-2 z-10">
+          <FavoriteButton
+            favorited={favorites.productIds.has(item.product_id)}
+            onToggle={() => favorites.toggleProduct(item)}
+            title={favorites.productIds.has(item.product_id) ? t("favoriteRemove") : t("favoriteAdd")}
+          />
+        </div>
+      )}
       {item.product_image && !imgFailed ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -904,6 +941,83 @@ export default function TrendsPageContent({
   const [scanTriggerError, setScanTriggerError] = useState<string | null>(null);
   const scanPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Favorites — shared across every TrendCard/ProductCard on this page via
+  // FavoritesContext (see its doc comment near the top of this file).
+  // Fetched once on mount, same one-request-for-the-whole-page pattern as
+  // VideoGrid.tsx's favoriteIds.
+  const [favoriteVideoIds, setFavoriteVideoIds] = useState<Set<string>>(new Set());
+  const [favoriteProductIds, setFavoriteProductIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    fetch("/api/favorites/videos", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : { videos: [] }))
+      .then((data) => setFavoriteVideoIds(new Set((data.videos || []).map((v: any) => v.video.id))))
+      .catch(() => {});
+    fetch("/api/favorites/products", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : { products: [] }))
+      .then((data) => setFavoriteProductIds(new Set((data.products || []).map((p: any) => p.productId))))
+      .catch(() => {});
+  }, []);
+
+  async function toggleFavoriteVideo(videoId: string) {
+    const wasFavorited = favoriteVideoIds.has(videoId);
+    setFavoriteVideoIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorited) next.delete(videoId);
+      else next.add(videoId);
+      return next;
+    });
+    try {
+      const res = await fetch(wasFavorited ? `/api/favorites/videos/${videoId}` : "/api/favorites/videos", {
+        method: wasFavorited ? "DELETE" : "POST",
+        headers: wasFavorited ? undefined : { "Content-Type": "application/json" },
+        body: wasFavorited ? undefined : JSON.stringify({ videoId }),
+      });
+      if (!res.ok) throw new Error("failed");
+    } catch {
+      setFavoriteVideoIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorited) next.add(videoId);
+        else next.delete(videoId);
+        return next;
+      });
+    }
+  }
+
+  async function toggleFavoriteProduct(item: EnrichedItem) {
+    const productId = item.product_id;
+    if (!productId) return;
+    const wasFavorited = favoriteProductIds.has(productId);
+    setFavoriteProductIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorited) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+    try {
+      const res = await fetch(wasFavorited ? `/api/favorites/products/${productId}` : "/api/favorites/products", {
+        method: wasFavorited ? "DELETE" : "POST",
+        headers: wasFavorited ? undefined : { "Content-Type": "application/json" },
+        body: wasFavorited
+          ? undefined
+          : JSON.stringify({
+              productId,
+              title: item.product_name || item.fastmoss_title || "Untitled product",
+              imageUrl: item.product_image || null,
+              price: item.product_price || null,
+            }),
+      });
+      if (!res.ok) throw new Error("failed");
+    } catch {
+      setFavoriteProductIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorited) next.add(productId);
+        else next.delete(productId);
+        return next;
+      });
+    }
+  }
+
   async function load() {
     const res = await fetch("/api/trends", { cache: "no-store" });
     if (!res.ok) return;
@@ -1191,6 +1305,14 @@ export default function TrendsPageContent({
   );
 
   return (
+    <FavoritesContext.Provider
+      value={{
+        videoIds: favoriteVideoIds,
+        productIds: favoriteProductIds,
+        toggleVideo: toggleFavoriteVideo,
+        toggleProduct: toggleFavoriteProduct,
+      }}
+    >
     <div className="space-y-10">
       {/* Top-level Video/Product split. Video = everything that already
           existed here (For You video section, manual category/date toolbar,
@@ -1564,5 +1686,6 @@ export default function TrendsPageContent({
         </>
       )}
     </div>
+    </FavoritesContext.Provider>
   );
 }

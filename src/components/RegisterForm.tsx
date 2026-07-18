@@ -134,7 +134,12 @@ export default function RegisterForm() {
         value={username}
         onChange={(e) => setUsername(e.target.value)}
         className="w-full mb-1 px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-900 text-sm outline-none focus:border-brand-500"
-        autoFocus
+        // No autoFocus: since Phase 42 this form lives at the very BOTTOM of
+        // RegisterLanding.tsx (below the hero/marquee/features sections),
+        // not right under the hero anymore. Focusing an off-screen input on
+        // mount makes the browser auto-scroll straight to it, so every
+        // fresh visitor landed on the bottom sign-up section instead of the
+        // hero — that's the bug this removal fixes.
       />
       <p className="text-[11px] text-zinc-600 mb-3">{t("usernameHint")}</p>
       <label className="block text-xs text-zinc-500 mb-1">{t("passwordLabel")}</label>

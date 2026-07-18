@@ -13,6 +13,43 @@ export default function VideoGrid({ initialVideos }: { initialVideos: VideoRecor
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { t } = useLocale();
 
+  // Favorited video ids — fetched once (not per-card) so the whole board
+  // shares one request; see src/components/FavoriteButton.tsx for why the
+  // toggle state lives up here instead of inside each VideoCard.
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    fetch("/api/favorites/videos", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : { videos: [] }))
+      .then((data) => setFavoriteIds(new Set((data.videos || []).map((v: any) => v.video.id))))
+      .catch(() => {});
+  }, []);
+
+  async function toggleFavorite(videoId: string) {
+    const wasFavorited = favoriteIds.has(videoId);
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorited) next.delete(videoId);
+      else next.add(videoId);
+      return next;
+    });
+    try {
+      const res = await fetch(wasFavorited ? `/api/favorites/videos/${videoId}` : "/api/favorites/videos", {
+        method: wasFavorited ? "DELETE" : "POST",
+        headers: wasFavorited ? undefined : { "Content-Type": "application/json" },
+        body: wasFavorited ? undefined : JSON.stringify({ videoId }),
+      });
+      if (!res.ok) throw new Error("failed");
+    } catch {
+      // Revert on failure.
+      setFavoriteIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorited) next.add(videoId);
+        else next.delete(videoId);
+        return next;
+      });
+    }
+  }
+
   useEffect(() => {
     setVideos(initialVideos);
   }, [initialVideos]);
@@ -122,6 +159,8 @@ export default function VideoGrid({ initialVideos }: { initialVideos: VideoRecor
               selectMode={selectMode}
               selected={selected.has(v.id)}
               onToggleSelect={toggleSelect}
+              favorited={favoriteIds.has(v.id)}
+              onToggleFavorite={() => toggleFavorite(v.id)}
             />
           ))}
         </div>

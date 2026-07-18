@@ -87,6 +87,27 @@ export interface User {
   // a custom tag defaults to "root" until reassigned; branch nodes are always
   // fixed to "root" and are never reconnectable — see UserKeywordGraph.tsx).
   graphParentOverrides?: Record<string, string>;
+  // ---- Favorites ("收藏库") — src/app/favorites, src/components/FavoriteButton.tsx ----
+  // Bookmarked VIDEOS. Just the id + when — everything else (thumbnail,
+  // stats, title) is re-read live from the VideoRecord at render time
+  // (getVideo(videoId)) rather than snapshotted, so a favorited video's
+  // card always reflects its current state. A favorite whose video was
+  // since deleted (or, for a "manual" import, is no longer owned by this
+  // user) is simply skipped when the list is rendered — see
+  // /api/favorites/videos's GET.
+  favoriteVideos?: { id: string; videoId: string; addedAt: string }[];
+  // Bookmarked PRODUCTS. Unlike videos, a trend/product-tab item has no
+  // durable backing record to re-read later (FastMoss batches rotate out),
+  // so the display fields it needs are snapshotted directly onto the
+  // favorite entry at save time instead.
+  favoriteProducts?: {
+    id: string;
+    productId: string;
+    title: string;
+    imageUrl: string | null;
+    price: string | null;
+    addedAt: string;
+  }[];
 }
 
 // ---- Daily journal chat ("write like a diary, AI replies like a friend") ----

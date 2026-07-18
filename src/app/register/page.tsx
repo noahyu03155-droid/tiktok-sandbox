@@ -8,14 +8,23 @@ import RegisterLanding from "@/components/RegisterLanding";
 export const dynamic = "force-dynamic";
 
 export default function RegisterPage() {
-  // Purely decorative — just the thumbnail image URL, nothing else about
-  // these videos (title/transcript/stats) is read or passed to the client.
-  // /api/media/[...path] already serves these with no auth check, so this
-  // isn't exposing anything that wasn't already publicly fetchable.
-  const thumbnails = listVideos()
-    .filter((v) => !!v.thumbnail_path)
+  // Purely decorative. Restricted to source:"trend"/"creator" videos — the
+  // shared FastMoss/Creator-Tracker catalog every member browses — rather
+  // than the full unfiltered listVideos(), which since the Phase 45
+  // ownership work can also contain OTHER MEMBERS' PRIVATE "manual"
+  // Video-Analysis imports. Showcasing someone's own pasted-in video (and
+  // their handle) on the public marketing page would leak private content;
+  // catalog videos are already public TikTok Shop content, so there's
+  // nothing new exposed by showing those. Author handle is included now
+  // (still nothing from title/transcript/stats) for the floating-video
+  // showcase grid's name/role captions.
+  const showcaseVideos = listVideos()
+    .filter((v) => !!v.thumbnail_path && (v.source === "trend" || v.source === "creator"))
     .slice(0, 24)
-    .map((v) => `/api/media/${v.thumbnail_path!.split(/[\\/]/).pop()}`);
+    .map((v) => ({
+      thumb: `/api/media/${v.thumbnail_path!.split(/[\\/]/).pop()}`,
+      author: v.author || null,
+    }));
 
-  return <RegisterLanding thumbnails={thumbnails} />;
+  return <RegisterLanding showcaseVideos={showcaseVideos} />;
 }

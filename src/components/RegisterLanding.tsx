@@ -74,7 +74,57 @@ function ThumbCard({
   );
 }
 
-export default function RegisterLanding({ thumbnails }: { thumbnails: string[] }) {
+interface ShowcaseVideo {
+  thumb: string;
+  author: string | null;
+}
+
+// Small circular badge on each floating-grid card — reuses the same
+// play-triangle glyph as the Logo/favicon mark (see Logo.tsx's Phase 47
+// note) purely for brand consistency, standing in for a platform icon the
+// way Spyglass.so's reference grid uses an Instagram bubble.
+function PlayBadge() {
+  return (
+    <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white shadow flex items-center justify-center">
+      <svg width="10" height="10" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M13 10.8L22.5 16L13 21.2V10.8Z" fill="#18181b" />
+      </svg>
+    </div>
+  );
+}
+
+// Spyglass.so-style floating/staggered grid of real analyzed-video
+// thumbnails — alternating columns are nudged up/down (translate-y) so the
+// grid doesn't read as a flat, boring table. Each card gets a name (the
+// video's real TikTok author handle) + role caption underneath, same
+// two-line pattern as the reference. Falls back to a generic label when a
+// video has no author on record rather than inventing one.
+function FloatingShowcaseGrid({ videos, t }: { videos: ShowcaseVideo[]; t: (key: TranslationKey) => string }) {
+  const cards = videos.length > 0 ? videos.slice(0, 8) : new Array(8).fill({ thumb: null, author: null });
+  return (
+    <div className="grid grid-cols-4 gap-3 sm:gap-4">
+      {cards.map((v: ShowcaseVideo, i: number) => (
+        <div key={i} className={i % 2 === 1 ? "mt-6 sm:mt-8" : ""}>
+          <div className="relative rounded-xl overflow-hidden border border-edge shadow-lg shadow-zinc-900/10 bg-panel2 aspect-[9/16]">
+            {v.thumb ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={v.thumb} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full bg-gradient-to-br from-brand-100 to-brand-400" />
+            )}
+            <PlayBadge />
+          </div>
+          <p className="mt-1.5 text-xs font-semibold text-zinc-900 truncate">
+            {v.author ? `@${v.author}` : t("registerShowcaseAnonymous")}
+          </p>
+          <p className="text-[11px] text-zinc-500">{t("registerShowcaseRoleCreator")}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function RegisterLanding({ showcaseVideos }: { showcaseVideos: ShowcaseVideo[] }) {
   const { t } = useLocale();
   // "Get started" used to be a bare #register-form anchor link — on desktop
   // the sign-up panel already sits in view next to the headline, so a hash
@@ -90,9 +140,14 @@ export default function RegisterLanding({ thumbnails }: { thumbnails: string[] }
     window.setTimeout(() => setPulseForm(false), 1200);
   }
 
+  const thumbnails = showcaseVideos.map((v) => v.thumb);
   const stripSource = thumbnails.length > 0 ? thumbnails : new Array(10).fill(null);
   // Doubled so the CSS animation (translateX -50%) loops seamlessly.
   const stripImages = [...stripSource, ...stripSource];
+  // A different slice for the floating grid than the marquee strip uses, so
+  // the two showcase moments on the page don't feel like the exact same
+  // content repeated.
+  const floatingVideos = showcaseVideos.slice(8, 16);
 
   return (
     <div className="min-h-screen bg-ink">
@@ -190,37 +245,37 @@ export default function RegisterLanding({ thumbnails }: { thumbnails: string[] }
         </div>
       </div>
 
-      {/* Final CTA banner. */}
-      <div className="max-w-3xl mx-auto px-6 py-20 text-center">
-        <h2 className="text-2xl sm:text-4xl font-black tracking-tight text-zinc-900 mb-3">
-          {t("registerFinalCtaHeadline")}
-        </h2>
-        <p className="text-base text-zinc-500 mb-8">{t("registerFinalCtaSubtitle")}</p>
-        <button
-          onClick={handleGetStarted}
-          className="bg-zinc-900 hover:bg-black text-white font-medium rounded-full px-8 py-3.5 text-sm transition-colors"
-        >
-          {t("registerHeroCta")}
-        </button>
-      </div>
-
-      {/* Sign-up form — the actual conversion point, at the end of the page
-          rather than crammed into the hero (see Phase 42 note at the top of
-          this file). Either "Get started" button scrolls here and briefly
-          highlights the card so clicking always has a visible effect. */}
-      <div id="register-form" className="flex items-center justify-center px-4 pb-20 scroll-mt-24">
-        <div className="w-full max-w-sm">
-          <p className="text-xs font-bold tracking-wide text-brand-500 uppercase mb-3 text-center">
-            {t("registerSignUpNowLabel")}
-          </p>
-          <div
-            className={`rounded-2xl transition-shadow duration-300 ${
-              pulseForm ? "ring-4 ring-brand-400 ring-offset-2" : ""
-            }`}
-          >
-            <Suspense fallback={null}>
-              <RegisterForm />
-            </Suspense>
+      {/* Final CTA — Spyglass.so-style split: a floating grid of real
+          analyzed-video thumbnails on the left, the actual conversion point
+          (headline + sign-up form) on the right. Previously this was two
+          separate centered sections (a CTA banner, then the form below it)
+          — merged + moved side-by-side per the reference. */}
+      <div id="register-form" className="max-w-6xl mx-auto px-6 py-20 scroll-mt-24">
+        <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          <div className="hidden lg:block">
+            <FloatingShowcaseGrid videos={floatingVideos} t={t} />
+          </div>
+          <div className="text-center lg:text-left">
+            <h2 className="text-2xl sm:text-4xl font-black tracking-tight text-zinc-900 mb-3 leading-tight">
+              {t("registerFinalCtaHeadline")}
+            </h2>
+            <p className="text-base text-zinc-500 mb-8">{t("registerFinalCtaSubtitle")}</p>
+            <div className="flex justify-center lg:justify-start">
+              <div className="w-full max-w-sm">
+                <p className="text-xs font-bold tracking-wide text-brand-500 uppercase mb-3 text-center lg:text-left">
+                  {t("registerSignUpNowLabel")}
+                </p>
+                <div
+                  className={`rounded-2xl transition-shadow duration-300 ${
+                    pulseForm ? "ring-4 ring-brand-400 ring-offset-2" : ""
+                  }`}
+                >
+                  <Suspense fallback={null}>
+                    <RegisterForm />
+                  </Suspense>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
