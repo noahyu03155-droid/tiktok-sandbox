@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import type { FunnelStageKey, GeneratedScriptStage, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
+import type { CanvasConnection, FunnelStageKey, GeneratedScriptStage, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
 import { resolveStoryboardOrder, resolveChainTails, resolveConnectedChain, MIN_CHAIN_LENGTH_FOR_GENERATE, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
 import ProductPicker from "./ProductPicker";
@@ -118,6 +118,28 @@ function isPendingTiktokBreakdown(node: StoryboardNode): boolean {
 function isPendingProductCard(node: StoryboardNode): boolean {
   return !!node.productRef && !node.stageTag;
 }
+// A pending TikTok video card's directly-connected pending product card, if
+// any — lets "Generate product script" prefer whatever product the user
+// already wired into the chain (see image2-style layouts: a product card
+// connected down into a video card) over opening the ProductPicker's
+// Shopify catalog search. Only looks at DIRECT neighbors (one hop), not the
+// whole transitively-connected chain, since a product card should be
+// unambiguously "the" product for this specific video, not any product
+// anywhere downstream of it.
+function findConnectedProductRefNode(
+  node: StoryboardNode,
+  nodes: StoryboardNode[],
+  connections: CanvasConnection[]
+): StoryboardNode | null {
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  for (const c of connections) {
+    if (c.fromId !== node.id && c.toId !== node.id) continue;
+    const otherId = c.fromId === node.id ? c.toId : c.fromId;
+    const other = nodeById.get(otherId);
+    if (other && isPendingProductCard(other)) return other;
+  }
+  return null;
+}
 // ---- per-card custom sizing (node.w/node.h, set by the resize grip) ----
 // The NODE_W/SCRIPT_BOX_H/NOTES_BOX_H/CLIP_VIDEO_H constants above stay as
 // the defaults; these helpers resolve a specific node's actual dimensions.
@@ -198,6 +220,27 @@ export default function StoryboardCanvas({
   // Which pending TikTok card the "Generate product script" product picker
   // is currently open for (null = closed).
   const [productPickerNodeId, setProductPickerNodeId] = useState<string | null>(null);
+  // Whichever of Breakdown / Breakdown chain / Generate product script is
+  // waiting on the user to answer "indoor or outdoor?" before it actually
+  // runs (null = no prompt open) — see the LocationPromptModal render below
+  // and confirmLocation. Asked so deriveShootingGuide (shootingGuide.ts) can
+  // favor angle/tone/pace guidance that's realistic for where the creator
+  // actually plans to film, instead of one-size-fits-all guidance.
+  const [locationPromptFor, setLocationPromptFor] = useState<
+    | { kind: "breakdown"; node: StoryboardNode }
+    | { kind: "breakdownChain"; node: StoryboardNode }
+    | {
+        kind: "productScript";
+        node: StoryboardNode;
+        // Either a Shopify catalog product picked ad hoc through
+        // ProductPicker, or the id of an already-connected pending
+        // product card (productRef) on the canvas — see
+        // findConnectedProductRefNode, which makes the video card prefer
+        // an already-wired product over opening the picker.
+        source: { type: "shopify"; product: { id: string; title: string } } | { type: "connected"; nodeId: string };
+      }
+    | null
+  >(null);
   const [busyNodeId, setBusyNodeId] = useState<string | null>(null);
   const [nodeErrors, setNodeErrors] = useState<Record<string, string>>({});
   // ---- "roughly how long will this take" wait-time estimate ----
@@ -480,6 +523,12 @@ export default function StoryboardCanvas({
   }
 
   function handleWheel(e: WheelEvent) {
+    // Let a scrollable textarea (the Script / "your editing notes" boxes)
+    // handle its own wheel scroll natively instead of always zooming the
+    // whole canvas — previously this fired unconditionally, so scrolling
+    // long script/notes text required dragging the textarea's own
+    // scrollbar handle rather than just scrolling the mouse wheel over it.
+    if (e.target instanceof HTMLTextAreaElement) return;
     e.preventDefault();
     const rect = viewportRef.current?.getBoundingClientRect();
     const mouseX = e.clientX - (rect?.left ?? 0);
@@ -937,8 +986,13 @@ export default function StoryboardCanvas({
   // with the AI's summary/quote as a starting instruction) in a new row
   // BELOW the original card. The original card is kept, untouched, so the
   // user can compare it against the breakdown — see breakdown/route.ts.
-  async function startBreakdown(node: StoryboardNode) {
+  function startBreakdown(node: StoryboardNode) {
     if (!window.confirm("Break this TikTok clip down into tagged stage cards (only the stages actually found in the video)? The original video stays on the board so you can compare it against the new cards.")) return;
+    // Ask indoor/outdoor before actually running — see locationPromptFor.
+    setLocationPromptFor({ kind: "breakdown", node });
+  }
+
+  async function runBreakdown(node: StoryboardNode, location: "indoor" | "outdoor" | null) {
     setBusyNodeId(node.id);
     beginBusy("breakdown");
     clearNodeError(node.id);
@@ -946,7 +1000,7 @@ export default function StoryboardCanvas({
       const res = await fetch(`${apiBase}/breakdown`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodeId: node.id }),
+        body: JSON.stringify({ nodeId: node.id, location }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Breakdown failed");
@@ -973,10 +1027,16 @@ export default function StoryboardCanvas({
   // EXISTING connected cards (matched by stageTag, positional fallback for
   // untagged ones) instead of creating/replacing any node. See
   // breakdown-chain/route.ts for the matching logic.
-  async function startBreakdownChain(node: StoryboardNode) {
+  function startBreakdownChain(node: StoryboardNode) {
     const ref = refVideoByNode[node.id];
     if (!ref) return;
     if (!window.confirm("Break down this reference video and fill in the connected chain's script + shooting guide? Cards with no clip yet may get a reference clip trimmed in.")) return;
+    setLocationPromptFor({ kind: "breakdownChain", node });
+  }
+
+  async function runBreakdownChain(node: StoryboardNode, location: "indoor" | "outdoor" | null) {
+    const ref = refVideoByNode[node.id];
+    if (!ref) return;
     setBusyNodeId(node.id);
     beginBusy("breakdownChain");
     clearNodeError(node.id);
@@ -984,7 +1044,7 @@ export default function StoryboardCanvas({
       const res = await fetch(`${apiBase}/breakdown-chain`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodeId: node.id, referenceVideoUrl: ref.url }),
+        body: JSON.stringify({ nodeId: node.id, referenceVideoUrl: ref.url, location }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Chain breakdown failed");
@@ -1044,10 +1104,21 @@ export default function StoryboardCanvas({
   // standalone Video Analysis "Generate script" feature) to write a NEW
   // 6-stage script adapted to the Shopify product the user just picked.
   // Replaces this card with 6 stage-tagged, text-only cards (clip: null).
-  async function handleProductPicked(product: { id: string; title: string }) {
+  function handleProductPicked(product: { id: string; title: string }) {
     const nodeId = productPickerNodeId;
     setProductPickerNodeId(null);
     if (!nodeId) return;
+    const node = board.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    // Ask indoor/outdoor before actually running — see locationPromptFor.
+    setLocationPromptFor({ kind: "productScript", node, source: { type: "shopify", product } });
+  }
+
+  async function runGenerateProductScript(
+    nodeId: string,
+    source: { type: "shopify"; product: { id: string; title: string } } | { type: "connected"; nodeId: string },
+    location: "indoor" | "outdoor" | null
+  ) {
     setBusyNodeId(nodeId);
     beginBusy("productScript");
     clearNodeError(nodeId);
@@ -1055,7 +1126,11 @@ export default function StoryboardCanvas({
       const res = await fetch(`${apiBase}/generate-product-script`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodeId, shopifyProductId: product.id }),
+        body: JSON.stringify({
+          nodeId,
+          location,
+          ...(source.type === "shopify" ? { shopifyProductId: source.product.id } : { connectedProductNodeId: source.nodeId }),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Script generation failed");
@@ -1070,6 +1145,18 @@ export default function StoryboardCanvas({
       setBusyNodeId(null);
       setBusyKind(null);
     }
+  }
+
+  // Fired by the location-prompt modal's Indoor/Outdoor/Skip buttons —
+  // dispatches to whichever of the 3 actions was actually waiting (see
+  // locationPromptFor), now with the user's answer (or null for Skip).
+  function confirmLocation(location: "indoor" | "outdoor" | null) {
+    const pending = locationPromptFor;
+    setLocationPromptFor(null);
+    if (!pending) return;
+    if (pending.kind === "breakdown") runBreakdown(pending.node, location);
+    else if (pending.kind === "breakdownChain") runBreakdownChain(pending.node, location);
+    else if (pending.kind === "productScript") runGenerateProductScript(pending.node.id, pending.source, location);
   }
 
   function handleLibraryPick(choice: LibraryClipChoice) {
@@ -1621,7 +1708,23 @@ export default function StoryboardCanvas({
                         🔍 Breakdown into stages
                       </button>
                       <button
-                        onClick={() => setProductPickerNodeId(node.id)}
+                        onClick={() => {
+                          // If a product card is already connected to this
+                          // video (see image2-style layouts), use it
+                          // directly instead of opening the Shopify catalog
+                          // picker — the user already told us which product
+                          // this script is for by wiring it in.
+                          const connectedProduct = findConnectedProductRefNode(node, board.nodes, board.connections);
+                          if (connectedProduct) {
+                            setLocationPromptFor({
+                              kind: "productScript",
+                              node,
+                              source: { type: "connected", nodeId: connectedProduct.id },
+                            });
+                          } else {
+                            setProductPickerNodeId(node.id);
+                          }
+                        }}
                         disabled={busy}
                         className="w-full py-2 rounded-lg bg-panel2 border border-edge hover:border-brand-500 disabled:opacity-40 text-zinc-800 text-xs font-medium"
                       >
@@ -1776,7 +1879,7 @@ export default function StoryboardCanvas({
                       onChange={(e) => updateNodeText(node.id, { instruction: e.target.value })}
                       onMouseDown={(e) => e.stopPropagation()}
                       placeholder="What happens in this shot? Dialogue, action, camera direction..."
-                      className="w-full bg-transparent text-xs text-zinc-800 leading-relaxed outline-none resize-none placeholder:text-zinc-400"
+                      className="w-full bg-transparent text-xs text-zinc-800 leading-relaxed outline-none resize-none overflow-y-auto placeholder:text-zinc-400"
                       style={{ height: nodeScriptBoxH(node) - 22 }}
                     />
                   </div>
@@ -1803,7 +1906,7 @@ export default function StoryboardCanvas({
                     onChange={(e) => updateNodeText(node.id, { editorNotes: e.target.value })}
                     onMouseDown={(e) => e.stopPropagation()}
                     placeholder="Notes for yourself when filming/editing this shot — pacing, framing, tone..."
-                    className="w-full bg-transparent text-xs text-zinc-500 leading-relaxed outline-none resize-none placeholder:text-zinc-400"
+                    className="w-full bg-transparent text-xs text-zinc-500 leading-relaxed outline-none resize-none overflow-y-auto placeholder:text-zinc-400"
                     style={{ height: nodeNotesBoxH(node) - 22 }}
                   />
                 </div>
@@ -2072,6 +2175,42 @@ export default function StoryboardCanvas({
 
       {productPickerNodeId && (
         <ProductPicker onSelect={handleProductPicked} onClose={() => setProductPickerNodeId(null)} />
+      )}
+
+      {/* Indoor/outdoor prompt — shown right before Breakdown / Breakdown
+          chain / Generate product script actually runs, so the Shooting
+          Guide can be tailored (see confirmLocation + deriveShootingGuide
+          in shootingGuide.ts). Skip proceeds with the old
+          location-agnostic guidance. */}
+      {locationPromptFor && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+          <div className="bg-panel rounded-xl border border-edge max-w-sm w-full p-5">
+            <h3 className="text-zinc-900 font-semibold mb-1">Where will you be filming this?</h3>
+            <p className="text-sm text-zinc-500 mb-4">
+              So the Shooting Guide can suggest angles, lighting, and pacing that actually work for the space.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => confirmLocation("indoor")}
+                className="flex-1 py-2.5 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"
+              >
+                🏠 Indoor
+              </button>
+              <button
+                onClick={() => confirmLocation("outdoor")}
+                className="flex-1 py-2.5 rounded-lg bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium"
+              >
+                🌳 Outdoor
+              </button>
+            </div>
+            <button
+              onClick={() => confirmLocation(null)}
+              className="w-full mt-2 py-2 rounded-lg border border-edge text-zinc-500 hover:text-zinc-900 hover:border-edge2 text-sm"
+            >
+              Skip
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -7,7 +7,7 @@ import { requireProjectAccess } from "@/lib/creationAuth";
 import { getMediaDir, updateCreationProject, getUserById, updateUser } from "@/lib/db";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
-import { deriveShootingGuide, type ShootingGuideEntry } from "@/lib/shootingGuide";
+import { deriveShootingGuide, type ShootingGuideEntry, type ShootingLocation } from "@/lib/shootingGuide";
 import { inferActionInsightTags, mergeInsightTags } from "@/lib/personalityInsights";
 import type { StoryboardNode, VideoStats } from "@/lib/types";
 
@@ -103,6 +103,13 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
   if (typeof nodeId !== "string" || !nodeId) {
     return NextResponse.json({ error: "nodeId is required" }, { status: 400 });
   }
+  // Optional — asked via a popup right before this action (see
+  // StoryboardCanvas.tsx's location-prompt modal) so the Shooting Guide can
+  // favor angle/tone/pace that's actually realistic for where the creator
+  // plans to film. Undefined/invalid just falls back to the old
+  // location-agnostic guidance.
+  const location: ShootingLocation | undefined =
+    body?.location === "indoor" || body?.location === "outdoor" ? body.location : undefined;
 
   const board = access.project.storyboard;
   const nodeIdx = board?.nodes.findIndex((n) => n.id === nodeId) ?? -1;
@@ -180,7 +187,7 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
     // errors, the new cards just ship without a pre-filled guide.
     let shootingGuides: Record<string, ShootingGuideEntry> | null = null;
     try {
-      shootingGuides = await deriveShootingGuide(analysis.structure);
+      shootingGuides = await deriveShootingGuide(analysis.structure, location);
     } catch (guideErr) {
       console.error("deriveShootingGuide failed — continuing breakdown without a shooting guide:", guideErr);
     }

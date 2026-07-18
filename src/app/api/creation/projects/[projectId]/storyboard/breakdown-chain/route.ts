@@ -6,7 +6,7 @@ import { requireProjectAccess } from "@/lib/creationAuth";
 import { getMediaDir, updateCreationProject, getUserById, updateUser } from "@/lib/db";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
-import { deriveShootingGuide, type ShootingGuideEntry } from "@/lib/shootingGuide";
+import { deriveShootingGuide, type ShootingGuideEntry, type ShootingLocation } from "@/lib/shootingGuide";
 import { inferActionInsightTags, mergeInsightTags } from "@/lib/personalityInsights";
 import { resolveStoryboardOrder, resolveConnectedChain } from "@/lib/storyboard";
 import type { StoryboardNode, FunnelStageKey } from "@/lib/types";
@@ -87,6 +87,8 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
   if (typeof referenceVideoUrl !== "string" || !referenceVideoUrl) {
     return NextResponse.json({ error: "referenceVideoUrl is required" }, { status: 400 });
   }
+  const location: ShootingLocation | undefined =
+    body?.location === "indoor" || body?.location === "outdoor" ? body.location : undefined;
 
   const board = access.project.storyboard;
   const nodeIdx = board?.nodes.findIndex((n) => n.id === nodeId) ?? -1;
@@ -133,7 +135,7 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
 
     let shootingGuides: Record<string, ShootingGuideEntry> | null = null;
     try {
-      shootingGuides = await deriveShootingGuide(analysis.structure);
+      shootingGuides = await deriveShootingGuide(analysis.structure, location);
     } catch (guideErr) {
       console.error("deriveShootingGuide failed — continuing chain breakdown without a shooting guide:", guideErr);
     }

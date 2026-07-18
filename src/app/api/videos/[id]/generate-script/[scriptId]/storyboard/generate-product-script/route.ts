@@ -9,7 +9,8 @@ import { analyzeVideo } from "@/lib/analyze";
 import { getShopifyProduct } from "@/lib/shopify";
 import { generateScriptForProduct } from "@/lib/scriptgen";
 import { REQUIRED_STAGE_SEQUENCE } from "@/lib/storyboard";
-import type { StoryboardNode, VideoStats } from "@/lib/types";
+import { deriveShootingGuide, type ShootingGuideEntry, type ShootingLocation } from "@/lib/shootingGuide";
+import type { StoryboardNode, VideoStats, FunnelStage } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -71,9 +72,15 @@ export async function POST(
     return NextResponse.json({ error: "nodeId is required" }, { status: 400 });
   }
   const shopifyProductId = body?.shopifyProductId;
-  if (typeof shopifyProductId !== "string" || !shopifyProductId) {
-    return NextResponse.json({ error: "shopifyProductId is required" }, { status: 400 });
+  const connectedProductNodeId = body?.connectedProductNodeId;
+  if (
+    (typeof shopifyProductId !== "string" || !shopifyProductId) &&
+    (typeof connectedProductNodeId !== "string" || !connectedProductNodeId)
+  ) {
+    return NextResponse.json({ error: "shopifyProductId or connectedProductNodeId is required" }, { status: 400 });
   }
+  const location: ShootingLocation | undefined =
+    body?.location === "indoor" || body?.location === "outdoor" ? body.location : undefined;
 
   const scriptIdx = video.generated_scripts.findIndex((s) => s.id === params.scriptId);
   if (scriptIdx === -1) return NextResponse.json({ error: "script not found" }, { status: 404 });
@@ -100,8 +107,29 @@ export async function POST(
     );
   }
 
-  const product = await getShopifyProduct(shopifyProductId);
-  if (!product) return NextResponse.json({ error: "Shopify product not found" }, { status: 404 });
+  let product: { id: string; title: string; handle: string; description: string; tags: string[]; productType: string; imageUrl: string | null };
+  if (typeof shopifyProductId === "string" && shopifyProductId) {
+    const shopifyProduct = await getShopifyProduct(shopifyProductId);
+    if (!shopifyProduct) return NextResponse.json({ error: "Shopify product not found" }, { status: 404 });
+    product = shopifyProduct;
+  } else {
+    const connectedNode = board.nodes.find((n) => n.id === connectedProductNodeId);
+    if (!connectedNode || !connectedNode.productRef) {
+      return NextResponse.json({ error: "Connected product card not found on this board." }, { status: 400 });
+    }
+    const ref = connectedNode.productRef;
+    product = {
+      id: connectedNode.id,
+      title: ref.title || "Untitled product",
+      handle: "",
+      description: [ref.description, ref.price ? `Price: ${ref.price}` : "", ref.rating ? `Rating: ${ref.rating}` : ""]
+        .filter(Boolean)
+        .join("\n"),
+      tags: [],
+      productType: "",
+      imageUrl: ref.imageUrl,
+    };
+  }
 
   const dir = path.dirname(videoPath);
 
@@ -157,19 +185,43 @@ export async function POST(
       creatorProfile: dbUser?.creatorProfile || null,
     });
 
+    // Nice-to-have on top of the new script, same as the plain Breakdown
+    // routes — see the creation-project sibling route for the full
+    // reasoning. Non-fatal.
+    let shootingGuides: Record<string, ShootingGuideEntry> | null = null;
+    try {
+      const syntheticStructure: FunnelStage[] = stages.map((stage, i) => ({
+        key: REQUIRED_STAGE_SEQUENCE[i],
+        label: stage.label,
+        start_time: 0,
+        end_time: 0,
+        summary: stage.script,
+        quote: stage.direction || "",
+      }));
+      shootingGuides = await deriveShootingGuide(syntheticStructure, location);
+    } catch (guideErr) {
+      console.error("deriveShootingGuide failed — continuing product script without a shooting guide:", guideErr);
+    }
+
     // generateScriptForProduct always returns the 6 stages in the fixed
     // funnel order (by construction of its prompt) but without a stage key
     // — its labels don't string-match FunnelStageKey values — so tag each
     // new card by POSITION against REQUIRED_STAGE_SEQUENCE.
-    const newNodes: StoryboardNode[] = stages.map((stage, i) => ({
-      id: crypto.randomUUID(),
-      label: stage.label,
-      instruction: [stage.script, stage.direction ? `🎬 ${stage.direction}` : ""].filter(Boolean).join("\n\n"),
-      x: node.x + i * (NODE_W + GAP_X),
-      y: node.y,
-      clip: null,
-      stageTag: REQUIRED_STAGE_SEQUENCE[i],
-    }));
+    const newNodes: StoryboardNode[] = stages.map((stage, i) => {
+      const guide = shootingGuides?.[REQUIRED_STAGE_SEQUENCE[i]];
+      return {
+        id: crypto.randomUUID(),
+        label: stage.label,
+        instruction: [stage.script, stage.direction ? `🎬 ${stage.direction}` : ""].filter(Boolean).join("\n\n"),
+        x: node.x + i * (NODE_W + GAP_X),
+        y: node.y,
+        clip: null,
+        stageTag: REQUIRED_STAGE_SEQUENCE[i],
+        shootingGuide: guide
+          ? { angle: String(guide.angle || ""), tone: String(guide.tone || ""), pace: String(guide.pace || "") }
+          : null,
+      };
+    });
 
     const newConnections = newNodes.slice(0, -1).map((n, i) => ({
       id: crypto.randomUUID(),

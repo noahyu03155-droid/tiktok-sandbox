@@ -9,8 +9,9 @@ import { analyzeVideo } from "@/lib/analyze";
 import { getShopifyProduct } from "@/lib/shopify";
 import { generateScriptForProduct } from "@/lib/scriptgen";
 import { REQUIRED_STAGE_SEQUENCE } from "@/lib/storyboard";
+import { deriveShootingGuide, type ShootingGuideEntry, type ShootingLocation } from "@/lib/shootingGuide";
 import { inferActionInsightTags, mergeInsightTags } from "@/lib/personalityInsights";
-import type { StoryboardNode, VideoStats } from "@/lib/types";
+import type { StoryboardNode, VideoStats, FunnelStage } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -65,10 +66,25 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
   if (typeof nodeId !== "string" || !nodeId) {
     return NextResponse.json({ error: "nodeId is required" }, { status: 400 });
   }
+  // Either a Shopify catalog product id (picked ad hoc through
+  // ProductPicker), or the id of an already-connected pending product card
+  // (productRef) on this same board — see findConnectedProductRefNode in
+  // StoryboardCanvas.tsx, which prefers whatever product the user already
+  // wired into the chain over opening the catalog picker.
   const shopifyProductId = body?.shopifyProductId;
-  if (typeof shopifyProductId !== "string" || !shopifyProductId) {
-    return NextResponse.json({ error: "shopifyProductId is required" }, { status: 400 });
+  const connectedProductNodeId = body?.connectedProductNodeId;
+  if (
+    (typeof shopifyProductId !== "string" || !shopifyProductId) &&
+    (typeof connectedProductNodeId !== "string" || !connectedProductNodeId)
+  ) {
+    return NextResponse.json({ error: "shopifyProductId or connectedProductNodeId is required" }, { status: 400 });
   }
+  // Optional — asked via a popup right before this action (see
+  // StoryboardCanvas.tsx's location-prompt modal) so the Shooting Guide can
+  // favor angle/tone/pace that's realistic for where the creator plans to
+  // film.
+  const location: ShootingLocation | undefined =
+    body?.location === "indoor" || body?.location === "outdoor" ? body.location : undefined;
 
   const board = access.project.storyboard;
   const nodeIdx = board?.nodes.findIndex((n) => n.id === nodeId) ?? -1;
@@ -92,8 +108,35 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
     );
   }
 
-  const product = await getShopifyProduct(shopifyProductId);
-  if (!product) return NextResponse.json({ error: "Shopify product not found" }, { status: 404 });
+  // ShopifyProductSummary-shaped either way, so generateScriptForProduct
+  // downstream doesn't need to know which source it came from.
+  let product: { id: string; title: string; handle: string; description: string; tags: string[]; productType: string; imageUrl: string | null };
+  if (typeof shopifyProductId === "string" && shopifyProductId) {
+    const shopifyProduct = await getShopifyProduct(shopifyProductId);
+    if (!shopifyProduct) return NextResponse.json({ error: "Shopify product not found" }, { status: 404 });
+    product = shopifyProduct;
+  } else {
+    const connectedNode = board.nodes.find((n) => n.id === connectedProductNodeId);
+    if (!connectedNode || !connectedNode.productRef) {
+      return NextResponse.json({ error: "Connected product card not found on this board." }, { status: 400 });
+    }
+    const ref = connectedNode.productRef;
+    product = {
+      id: connectedNode.id,
+      title: ref.title || "Untitled product",
+      handle: "",
+      // Fold price/rating into the description text since
+      // generateScriptForProduct only reads title/productType/tags/
+      // description — this is the simplest way to still give it that
+      // context without changing its input shape.
+      description: [ref.description, ref.price ? `Price: ${ref.price}` : "", ref.rating ? `Rating: ${ref.rating}` : ""]
+        .filter(Boolean)
+        .join("\n"),
+      tags: [],
+      productType: "",
+      imageUrl: ref.imageUrl,
+    };
+  }
 
   const dir = path.dirname(videoPath);
 
@@ -148,6 +191,32 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
       product,
     });
 
+    // Nice-to-have on top of the new script, same as the plain Breakdown
+    // routes: one extra lightweight Claude call for per-stage filming
+    // guidance (angle/tone/pace). generateScriptForProduct's output has no
+    // FunnelStageKey/start_time/end_time (it's a fresh script, not a
+    // trimmed clip) — deriveShootingGuide only actually reads
+    // key/label/summary/quote, so build a synthetic FunnelStage per new
+    // card (position-tagged against REQUIRED_STAGE_SEQUENCE, same as the
+    // newNodes below) using the stage's script as the "summary" and its
+    // camera direction as the "quote". Non-fatal — the 6 new script cards
+    // are the main value; if this call errors, they just ship without a
+    // pre-filled guide.
+    let shootingGuides: Record<string, ShootingGuideEntry> | null = null;
+    try {
+      const syntheticStructure: FunnelStage[] = stages.map((stage, i) => ({
+        key: REQUIRED_STAGE_SEQUENCE[i],
+        label: stage.label,
+        start_time: 0,
+        end_time: 0,
+        summary: stage.script,
+        quote: stage.direction || "",
+      }));
+      shootingGuides = await deriveShootingGuide(syntheticStructure, location);
+    } catch (guideErr) {
+      console.error("deriveShootingGuide failed — continuing product script without a shooting guide:", guideErr);
+    }
+
     // Best-effort personality/preference signal for the admin User Data
     // graph (src/lib/personalityInsights.ts) — richer than the plain
     // breakdown routes since we know the actual PRODUCT this member is
@@ -172,15 +241,22 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
     // funnel order (by construction of its prompt) but without a stage key
     // — its labels don't string-match FunnelStageKey values — so tag each
     // new card by POSITION against REQUIRED_STAGE_SEQUENCE.
-    const newNodes: StoryboardNode[] = stages.map((stage, i) => ({
-      id: crypto.randomUUID(),
-      label: stage.label,
-      instruction: [stage.script, stage.direction ? `🎬 ${stage.direction}` : ""].filter(Boolean).join("\n\n"),
-      x: node.x + i * (NODE_W + GAP_X),
-      y: node.y,
-      clip: null,
-      stageTag: REQUIRED_STAGE_SEQUENCE[i],
-    }));
+    const newNodes: StoryboardNode[] = stages.map((stage, i) => {
+      const guide = shootingGuides?.[REQUIRED_STAGE_SEQUENCE[i]];
+      return {
+        id: crypto.randomUUID(),
+        label: stage.label,
+        instruction: [stage.script, stage.direction ? `🎬 ${stage.direction}` : ""].filter(Boolean).join("\n\n"),
+        x: node.x + i * (NODE_W + GAP_X),
+        y: node.y,
+        clip: null,
+        stageTag: REQUIRED_STAGE_SEQUENCE[i],
+        // Coerced defensively — see breakdown/route.ts's identical pattern.
+        shootingGuide: guide
+          ? { angle: String(guide.angle || ""), tone: String(guide.tone || ""), pace: String(guide.pace || "") }
+          : null,
+      };
+    });
 
     const newConnections = newNodes.slice(0, -1).map((n, i) => ({
       id: crypto.randomUUID(),

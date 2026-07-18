@@ -5,7 +5,7 @@ import path from "path";
 import { getMediaDir, getVideo, updateVideoRecord } from "@/lib/db";
 import { extractAudio, transcribeAudio } from "@/lib/transcribe";
 import { analyzeVideo } from "@/lib/analyze";
-import { deriveShootingGuide, type ShootingGuideEntry } from "@/lib/shootingGuide";
+import { deriveShootingGuide, type ShootingGuideEntry, type ShootingLocation } from "@/lib/shootingGuide";
 import { resolveStoryboardOrder, resolveConnectedChain } from "@/lib/storyboard";
 import type { StoryboardNode, FunnelStageKey } from "@/lib/types";
 
@@ -75,6 +75,8 @@ export async function POST(
   if (typeof referenceVideoUrl !== "string" || !referenceVideoUrl) {
     return NextResponse.json({ error: "referenceVideoUrl is required" }, { status: 400 });
   }
+  const location: ShootingLocation | undefined =
+    body?.location === "indoor" || body?.location === "outdoor" ? body.location : undefined;
 
   const scriptIdx = video.generated_scripts.findIndex((s) => s.id === params.scriptId);
   if (scriptIdx === -1) return NextResponse.json({ error: "script not found" }, { status: 404 });
@@ -123,7 +125,7 @@ export async function POST(
 
     let shootingGuides: Record<string, ShootingGuideEntry> | null = null;
     try {
-      shootingGuides = await deriveShootingGuide(analysis.structure);
+      shootingGuides = await deriveShootingGuide(analysis.structure, location);
     } catch (guideErr) {
       console.error("deriveShootingGuide failed — continuing chain breakdown without a shooting guide:", guideErr);
     }
