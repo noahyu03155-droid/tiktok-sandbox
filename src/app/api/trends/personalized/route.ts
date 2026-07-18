@@ -4,9 +4,17 @@ import { getUserById, getVideo, getLatestTrendBatchByCategory } from "@/lib/db";
 import { buildFastmossVideoUrl, fetchCategoryTrendVideos, fetchFastMossCategories, formatUsd, toCreatorInfo } from "@/lib/fastmoss";
 import type { FastMossVideoResult } from "@/lib/fastmoss";
 import { enrichAndBackfillTop, ingestTrendBatch, TREND_FETCH_LIMIT, TREND_REFRESH_INTERVAL_MS, type RawTrendItem } from "@/lib/trends";
+import { ensureFullRefreshScheduler } from "@/lib/fastmossFullRefresh";
 import type { TrendBatch, TrendItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+
+// Boots the scheduled full-catalog refresh timer on first load of this
+// module (see the matching, more detailed comment in
+// /api/trends/full-refresh/route.ts for why this replaced
+// src/instrumentation.ts). Idempotent — safe to also call from other trend
+// routes.
+ensureFullRefreshScheduler();
 
 const REGION = process.env.FASTMOSS_REGION || "US";
 // Reuse a same-category batch pulled within the scheduled refresh window

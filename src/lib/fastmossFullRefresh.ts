@@ -16,11 +16,20 @@
 //
 // Runs as an in-process background job (same fire-and-forget + polled-status
 // pattern as fastmossCategoryScan.ts) rather than blocking any HTTP request
-// — this can take many minutes across dozens of categories. Started
-// automatically on server boot (see src/instrumentation.ts) and re-checked
-// hourly; only actually kicks off a run once TREND_REFRESH_INTERVAL_MS has
-// elapsed since the last completed run (persisted in db.json so the
-// schedule survives a restart/redeploy, not just kept in memory).
+// — this can take many minutes across dozens of categories. Started via
+// ensureFullRefreshScheduler(), called at module scope from the trend API
+// routes (NOT from a Next.js instrumentation.ts hook — that was tried first
+// but broke `next build` on Railway: webpack bundles instrumentation.ts's
+// register() for both the Node.js AND Edge runtimes, and this module's
+// dependency chain pulls in db.ts's fs/path/crypto imports, which don't
+// exist in the Edge bundle. A `NEXT_RUNTIME !== "nodejs"` guard around the
+// dynamic import didn't help — webpack still needed to resolve the import
+// target at build time. Every deploy from when instrumentation.ts was added
+// until it was removed failed outright, silently leaving the live site on
+// old code) and re-checked hourly; only actually kicks off a run once
+// TREND_REFRESH_INTERVAL_MS has elapsed since the last completed run
+// (persisted in db.json so the schedule survives a restart/redeploy, not
+// just kept in memory).
 
 import {
   fetchFastMossCategories,
@@ -252,9 +261,10 @@ function checkAndMaybeStart() {
   }
 }
 
-// Called once from src/instrumentation.ts when the server process boots.
-// Guarded against double-init (e.g. Next.js invoking register() more than
-// once) with the module-level schedulerStarted flag.
+// Called at module scope from several trend API routes (see e.g.
+// /api/trends/full-refresh/route.ts) so it boots on the first request to any
+// of them after a deploy. Guarded against double-init (multiple route
+// modules all call this) with the module-level schedulerStarted flag.
 export function ensureFullRefreshScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;

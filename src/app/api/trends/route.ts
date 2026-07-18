@@ -1,8 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteTrendBatch, listTrendBatches } from "@/lib/db";
 import { enrichAndBackfillTop, ingestTrendBatch } from "@/lib/trends";
+import { ensureFullRefreshScheduler } from "@/lib/fastmossFullRefresh";
 
 export const dynamic = "force-dynamic";
+
+// Boots the scheduled full-catalog refresh timer on first load of this
+// module (see the matching, more detailed comment in
+// /api/trends/full-refresh/route.ts for why this replaced
+// src/instrumentation.ts). Idempotent — safe to also call from other trend
+// routes.
+ensureFullRefreshScheduler();
 
 export async function GET() {
   const batches = listTrendBatches();

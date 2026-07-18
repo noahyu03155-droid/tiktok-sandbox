@@ -1827,7 +1827,16 @@ export default function StoryboardCanvas({
             return (
               <div
                 key={node.id}
-                className={`group absolute bg-panel border rounded-xl shadow-xl flex flex-col overflow-hidden ${
+                // Grab-anywhere dragging: mousedown anywhere on the card
+                // starts a drag, not just the header strip — every
+                // interactive element inside (buttons, text inputs,
+                // textareas, the resize grip, connection dots, video
+                // controls) already calls stopPropagation() on its own
+                // onMouseDown, so this bubbles up and fires only when the
+                // user grabs actual card background/header, exactly like a
+                // real desktop window.
+                onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                className={`group absolute bg-panel border rounded-xl shadow-xl flex flex-col overflow-hidden cursor-move ${
                   selectedIds.has(node.id) ? "border-brand-500 ring-2 ring-brand-500" : "border-edge"
                 }`}
                 style={{ left: node.x, top: node.y, width: nodeWidth(node), height: cardHeight(node) }}
@@ -1835,7 +1844,6 @@ export default function StoryboardCanvas({
                 {isPendingTiktokBreakdown(node) ? (
                   <>
                     <div
-                      onMouseDown={(e) => handleNodeMouseDown(e, node)}
                       className="px-3 py-1.5 border-b border-edge cursor-move flex items-center gap-2 shrink-0"
                       style={{ borderLeft: `3px solid ${accent}` }}
                     >
@@ -1855,7 +1863,11 @@ export default function StoryboardCanvas({
                         ✕
                       </button>
                     </div>
-                    <div className="relative bg-black shrink-0" style={{ height: TIKTOK_PREVIEW_VIDEO_H }}>
+                    <div
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="relative bg-black shrink-0"
+                      style={{ height: TIKTOK_PREVIEW_VIDEO_H }}
+                    >
                       {busy && (
                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
                           <span className="text-[11px] text-white animate-pulse">{estimateLabel("Working...", tick)}</span>
@@ -1866,7 +1878,7 @@ export default function StoryboardCanvas({
                         <video src={node.clip.url} controls className="w-full h-full object-contain bg-black" />
                       )}
                     </div>
-                    <div className="p-2 flex-1 flex flex-col justify-center gap-1.5">
+                    <div onMouseDown={(e) => e.stopPropagation()} className="p-2 flex-1 flex flex-col justify-center gap-1.5">
                       {connectedProductForVideo ? (
                         // Product already wired directly into this fresh
                         // video — one combined action instead of the usual
@@ -1916,7 +1928,6 @@ export default function StoryboardCanvas({
                 ) : isPendingProductCard(node) ? (
                   <>
                     <div
-                      onMouseDown={(e) => handleNodeMouseDown(e, node)}
                       className="px-3 py-1.5 border-b border-edge cursor-move flex items-center gap-2 shrink-0"
                       style={{ borderLeft: `3px solid ${accent}` }}
                     >
@@ -2005,7 +2016,6 @@ export default function StoryboardCanvas({
                 ) : (
                   <>
                 <div
-                  onMouseDown={(e) => handleNodeMouseDown(e, node)}
                   className="px-3 py-2 border-b border-edge cursor-move flex items-center gap-2 shrink-0"
                   style={{ borderLeft: `3px solid ${accent}` }}
                 >
