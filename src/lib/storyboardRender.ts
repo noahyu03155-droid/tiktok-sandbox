@@ -40,12 +40,37 @@ const H = 1280;
 const TRANSITION_SEC = 0.4;
 const FPS = 30;
 
-function runFfmpeg(args: string[]): Promise<void> {
+// A stuck ffmpeg process (bad input file, weird codec, a hung filter graph)
+// used to hang the entire render job forever — there's no HTTP request left
+// to time it out (this all runs in the fire-and-forget background job), and
+// job.step just sits on whatever it last was, which is exactly the "stuck at
+// Encoding shot 1 of 19 for 20 minutes" symptom this timeout was added to
+// fix. SIGKILL after timeoutMs guarantees every ffmpeg call resolves one way
+// or another. Per-shot encodes get a shorter budget; the final multi-input
+// crossfade assembly (proportional to shot count) gets a longer one — see
+// call sites below.
+const SINGLE_SHOT_TIMEOUT_MS = 120_000;
+
+function runFfmpeg(args: string[], timeoutMs: number = SINGLE_SHOT_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     const ff = spawn("ffmpeg", args);
     let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ff.kill("SIGKILL");
+    }, timeoutMs);
     ff.stderr.on("data", (d) => (stderr += d.toString()));
     ff.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(
+          new Error(
+            `The video encode for this shot got stuck and was stopped after ${Math.round(timeoutMs / 1000)}s with no progress — usually a corrupted or unusually large source clip. Try a different clip for this shot, or re-upload it.`
+          )
+        );
+        return;
+      }
       if (code === 0) {
         resolve();
         return;
@@ -72,10 +97,17 @@ function probeHasAudio(srcPath: string): Promise<boolean> {
       "-of", "csv=p=0",
       srcPath,
     ]);
+    const timer = setTimeout(() => p.kill("SIGKILL"), 15_000);
     let out = "";
     p.stdout.on("data", (d) => (out += d.toString()));
-    p.on("close", () => resolve(out.trim().length > 0));
-    p.on("error", () => resolve(false));
+    p.on("close", () => {
+      clearTimeout(timer);
+      resolve(out.trim().length > 0);
+    });
+    p.on("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
   });
 }
 
@@ -136,6 +168,31 @@ export function getRenderJob(key: string): RenderJob | null {
   return jobs.get(key) || null;
 }
 
+// Best-effort cleanup of `_render_*` tmp directories left behind by a PAST
+// render for this same outDir that never reached its finally block — e.g.
+// the server process got killed/restarted mid-render (OOM, deploy) before
+// the timeouts added elsewhere in this file existed, or before a hung
+// ffmpeg/OpenAI call was ever going to resolve on its own. Each one can hold
+// several full-resolution video segments plus extracted vision-model
+// frames, so a handful of these left over from repeated stuck attempts is a
+// real way to quietly fill up the disk (see the ENOSPC failures this was
+// added to help prevent from recurring). Safe to run right before starting
+// a new job for this outDir: if a job for this exact key were still
+// genuinely running, startRenderJob already returned early above instead of
+// reaching this point.
+function cleanupOrphanedTmpDirs(outDir: string) {
+  try {
+    if (!fs.existsSync(outDir)) return;
+    for (const entry of fs.readdirSync(outDir)) {
+      if (/^_render_\d+$/.test(entry)) {
+        fs.rmSync(path.join(outDir, entry), { recursive: true, force: true });
+      }
+    }
+  } catch {
+    // Best-effort — never let a cleanup failure block starting the new render.
+  }
+}
+
 // Fire-and-forget — starts the render in the background and returns
 // immediately with the job's initial state. If a render for this exact key
 // is already running, returns that existing job instead of starting a
@@ -193,6 +250,7 @@ export function startRenderJob(
   jobs.set(key, job);
 
   fs.mkdirSync(outDir, { recursive: true });
+  cleanupOrphanedTmpDirs(outDir);
   const tmpDir = path.join(outDir, `_render_${Date.now()}`);
   fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -332,15 +390,21 @@ export function startRenderJob(
           running = running + segDurations[i] - t;
         }
         const inputArgs = segmentPaths.flatMap((p) => ["-i", p]);
-        await runFfmpeg([
-          "-y",
-          ...inputArgs,
-          "-filter_complex", filterParts.join(";"),
-          "-map", `[${vLabel}]`, "-map", `[${aLabel}]`,
-          "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p",
-          ...AAC_OUT,
-          finalPath,
-        ]);
+        // Scales with shot count — a 19-shot crossfade assembly legitimately
+        // needs more time than the per-shot default budget.
+        const assemblyTimeoutMs = Math.max(SINGLE_SHOT_TIMEOUT_MS, segmentPaths.length * 20_000);
+        await runFfmpeg(
+          [
+            "-y",
+            ...inputArgs,
+            "-filter_complex", filterParts.join(";"),
+            "-map", `[${vLabel}]`, "-map", `[${aLabel}]`,
+            "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p",
+            ...AAC_OUT,
+            finalPath,
+          ],
+          assemblyTimeoutMs
+        );
       }
 
       job.result = {

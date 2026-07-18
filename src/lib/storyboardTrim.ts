@@ -25,6 +25,16 @@ export function estimateSpeechSeconds(text: string): number {
   return Math.min(MAX_DURATION_SEC, Math.max(MIN_DURATION_SEC, seconds));
 }
 
+// Every spawned ffmpeg/ffprobe call below is wrapped with a hard kill
+// timeout — a stuck child process (a corrupt/huge source file, a filesystem
+// hiccup, whatever) used to just hang the whole render job forever with no
+// way for the client to ever know, since there's nothing to time the
+// request out at HTTP level anymore (it's a background job — see
+// storyboardRender.ts's doc comment). SIGKILL after PROBE_TIMEOUT_MS is a
+// blunt but reliable way to guarantee this step always eventually resolves
+// one way or another.
+const PROBE_TIMEOUT_MS = 15_000;
+
 export function probeDurationSec(srcPath: string): Promise<number> {
   return new Promise((resolve) => {
     const p = spawn("ffprobe", [
@@ -33,13 +43,18 @@ export function probeDurationSec(srcPath: string): Promise<number> {
       "-of", "default=noprint_wrappers=1:nokey=1",
       srcPath,
     ]);
+    const timer = setTimeout(() => p.kill("SIGKILL"), PROBE_TIMEOUT_MS);
     let out = "";
     p.stdout.on("data", (d) => (out += d.toString()));
     p.on("close", () => {
+      clearTimeout(timer);
       const n = parseFloat(out.trim());
       resolve(Number.isFinite(n) && n > 0 ? n : 0);
     });
-    p.on("error", () => resolve(0));
+    p.on("error", () => {
+      clearTimeout(timer);
+      resolve(0);
+    });
   });
 }
 
@@ -51,8 +66,15 @@ export function extractFrame(srcPath: string, atSec: number, outPath: string): P
       "-q:v", "5",
       outPath,
     ]);
-    p.on("close", (code) => resolve(code === 0 && fs.existsSync(outPath)));
-    p.on("error", () => resolve(false));
+    const timer = setTimeout(() => p.kill("SIGKILL"), PROBE_TIMEOUT_MS);
+    p.on("close", (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 && fs.existsSync(outPath));
+    });
+    p.on("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
   });
 }
 
@@ -108,12 +130,21 @@ export async function pickBestSegment(opts: {
       })),
     ];
 
-    const res = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content }],
-      response_format: { type: "json_object" },
-      max_tokens: 50,
-    });
+    // Explicit timeout + single retry — the SDK's own default (10 min,
+    // 2 retries) is exactly what let one slow/hanging call stall an entire
+    // shot for way longer than this "nice to have" step is worth. 25s is
+    // generous for an 8-image vision call; if it's not back by then, bail
+    // to the try/catch's start=0 fallback below instead of blocking the rest
+    // of the render.
+    const res = await openai.chat.completions.create(
+      {
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content }],
+        response_format: { type: "json_object" },
+        max_tokens: 50,
+      },
+      { timeout: 25_000, maxRetries: 1 }
+    );
     const raw = res.choices[0]?.message?.content || "{}";
     const parsed = JSON.parse(raw);
     const startSec = Number(parsed?.start_sec);
