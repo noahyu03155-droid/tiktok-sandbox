@@ -374,37 +374,43 @@ export function startRenderJob(
         fs.copyFileSync(segmentPaths[0], finalPath);
       } else {
         job.step = "Assembling final video (transitions + audio crossfade)...";
-        const filterParts: string[] = [];
-        let vLabel = "0:v";
-        let aLabel = "0:a";
-        let running = segDurations[0];
+        // Used to build ONE filter_complex chaining every segment's
+        // xfade+acrossfade together, with all N segment files open as
+        // ffmpeg inputs simultaneously. That works for a few shots, but in
+        // production a longer board (19 shots -> 18 chained xfade/
+        // acrossfade pairs, 19 simultaneously-open decoders) reliably blew
+        // up with "Resource temporarily unavailable" / "Failed to inject
+        // frame into filter network" — ffmpeg running out of some resource
+        // (file descriptors / buffered frames) partway through such a deep
+        // graph. Folding left instead — merge 2 clips into an intermediate
+        // file, then merge that with the next clip, and so on — means
+        // ffmpeg only ever has 2 inputs open at once regardless of how many
+        // shots the board has. More individual ffmpeg calls, but each one
+        // is exactly as simple/robust as a normal 2-input crossfade, and
+        // the per-call SINGLE_SHOT_TIMEOUT_MS budget from runFfmpeg's
+        // default already comfortably covers one of these merges.
+        let current = segmentPaths[0];
+        let currentDur = segDurations[0];
         for (let i = 1; i < segmentPaths.length; i++) {
-          const t = Math.max(0.05, Math.min(effectiveTransitionSec, running / 2, segDurations[i] / 2));
-          const offset = Math.max(0, running - t);
-          const vOut = `v${i}`;
-          const aOut = `a${i}`;
-          filterParts.push(`[${vLabel}][${i}:v]xfade=transition=${effectiveTransition}:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[${vOut}]`);
-          filterParts.push(`[${aLabel}][${i}:a]acrossfade=d=${t.toFixed(3)}[${aOut}]`);
-          vLabel = vOut;
-          aLabel = aOut;
-          running = running + segDurations[i] - t;
-        }
-        const inputArgs = segmentPaths.flatMap((p) => ["-i", p]);
-        // Scales with shot count — a 19-shot crossfade assembly legitimately
-        // needs more time than the per-shot default budget.
-        const assemblyTimeoutMs = Math.max(SINGLE_SHOT_TIMEOUT_MS, segmentPaths.length * 20_000);
-        await runFfmpeg(
-          [
+          const nextDur = segDurations[i];
+          const t = Math.max(0.05, Math.min(effectiveTransitionSec, currentDur / 2, nextDur / 2));
+          const offset = Math.max(0, currentDur - t);
+          const mergedPath = path.join(tmpDir, `merged${i}.mp4`);
+          await runFfmpeg([
             "-y",
-            ...inputArgs,
-            "-filter_complex", filterParts.join(";"),
-            "-map", `[${vLabel}]`, "-map", `[${aLabel}]`,
+            "-i", current,
+            "-i", segmentPaths[i],
+            "-filter_complex",
+            `[0:v][1:v]xfade=transition=${effectiveTransition}:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[v];[0:a][1:a]acrossfade=d=${t.toFixed(3)}[a]`,
+            "-map", "[v]", "-map", "[a]",
             "-c:v", "libx264", "-preset", "veryfast", "-threads", "2", "-pix_fmt", "yuv420p",
             ...AAC_OUT,
-            finalPath,
-          ],
-          assemblyTimeoutMs
-        );
+            mergedPath,
+          ]);
+          current = mergedPath;
+          currentDur = currentDur + nextDur - t;
+        }
+        fs.copyFileSync(current, finalPath);
       }
 
       job.result = {
