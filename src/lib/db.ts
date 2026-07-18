@@ -429,6 +429,12 @@ export function createUser(username: string, password: string, role: UserRole = 
     username,
     passwordHash: hashPassword(password),
     role,
+    // Every freshly self-registered member starts on the VIP tab set
+    // (Video Analysis / Trend Analysis / Creation — see
+    // src/lib/accessTier.ts) rather than the "unset -> treated as business"
+    // fallback used for pre-existing accounts. An admin can still upgrade
+    // to Business (adds Creator Tracker) or tag as Admin from User Data.
+    accessTier: role === "member" ? "vip" : null,
     createdAt: new Date().toISOString(),
   };
   store.users[id] = user;

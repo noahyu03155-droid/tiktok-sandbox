@@ -37,7 +37,7 @@ function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="w-full max-w-sm bg-panel border border-edge rounded-xl p-6">
+    <form onSubmit={handleSubmit} className="relative z-10 w-full max-w-sm bg-panel/95 backdrop-blur-sm border border-edge rounded-xl p-6 shadow-2xl shadow-black/40">
       <div className="mb-6">
         <Logo />
         <p className="text-xs text-zinc-500 mt-2">{t("loginTitle")}</p>
@@ -76,7 +76,30 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-ink px-4">
+    <div className="relative min-h-screen flex items-center justify-center bg-ink px-4 overflow-hidden">
+      {/* Looping, blurred backdrop of a creator filming — purely ambiance
+          behind the login card, not interactive. object-cover fills the
+          viewport regardless of aspect ratio; scale-110 hides the soft
+          edge the blur filter would otherwise leave visible at the video's
+          actual boundary. Muted+playsInline is required for autoplay to be
+          allowed on mobile browsers. Hotlinked from Pexels (free-to-use,
+          no attribution required per their license) rather than bundled
+          into the repo, so there's no extra asset to ship/host ourselves. */}
+      <video
+        autoPlay
+        muted
+        loop
+        playsInline
+        poster="https://images.pexels.com/videos/7482042/pexels-photo-7482042.jpeg?auto=compress&cs=tinysrgb&w=1600"
+        className="absolute inset-0 w-full h-full object-cover scale-110 blur-md brightness-[0.55] saturate-[0.85]"
+      >
+        <source src="https://videos.pexels.com/video-files/7482042/7482042-uhd_1440_2560_25fps.mp4" type="video/mp4" />
+      </video>
+      {/* Dark + brand-tinted gradient wash on top of the blur for contrast
+          and a bit of tech/premium color, same navy-to-black direction as
+          the rest of the app's dark surfaces. */}
+      <div className="absolute inset-0 bg-gradient-to-b from-ink/70 via-ink/60 to-ink/85" />
+      <div className="absolute inset-0 bg-gradient-to-tr from-sky-500/10 via-transparent to-purple-500/10" />
       <Suspense fallback={null}>
         <LoginForm />
       </Suspense>
