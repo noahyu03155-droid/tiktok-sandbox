@@ -1901,7 +1901,7 @@ export default function StoryboardCanvas({
                     </div>
                     <div
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="relative bg-black shrink-0"
+                      className="relative bg-black shrink-0 cursor-default"
                       style={{ height: TIKTOK_PREVIEW_VIDEO_H }}
                     >
                       {busy && (
@@ -1914,7 +1914,7 @@ export default function StoryboardCanvas({
                         <video src={node.clip.url} controls className="w-full h-full object-contain bg-black" />
                       )}
                     </div>
-                    <div onMouseDown={(e) => e.stopPropagation()} className="p-2 flex-1 flex flex-col justify-center gap-1.5">
+                    <div onMouseDown={(e) => e.stopPropagation()} className="p-2 flex-1 flex flex-col justify-center gap-1.5 cursor-default">
                       {connectedProductForVideo ? (
                         // Product already wired directly into this fresh
                         // video — one combined action instead of the usual
@@ -2003,7 +2003,7 @@ export default function StoryboardCanvas({
                         </div>
                       )}
                     </div>
-                    <div onMouseDown={(e) => e.stopPropagation()} className="p-2 flex-1 min-h-0 flex flex-col gap-1.5 overflow-hidden">
+                    <div onMouseDown={(e) => e.stopPropagation()} className="p-2 flex-1 min-h-0 flex flex-col gap-1.5 overflow-hidden cursor-default">
                       {node.productRef!.scrapeFailed && (
                         <p className="text-[10px] text-zinc-500">Couldn't auto-fill from this link — enter the product details yourself.</p>
                       )}
@@ -2140,7 +2140,7 @@ export default function StoryboardCanvas({
 
                 <div
                   onMouseDown={(e) => e.stopPropagation()}
-                  className="relative border-b border-edge shrink-0 bg-black"
+                  className="relative border-b border-edge shrink-0 bg-black cursor-default"
                   style={{ height: nodeClipVideoH(node) }}
                 >
                   {busy && (
