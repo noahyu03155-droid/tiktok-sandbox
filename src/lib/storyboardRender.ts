@@ -34,7 +34,7 @@ import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/
 import { wrapCaption, CAPTION_FONT_FILE, type CaptionStylePreset } from "@/lib/storyboardCaptions";
 import { interpretEditingFeedback } from "@/lib/storyboardFeedback";
 import { transcribeAudio } from "@/lib/transcribe";
-import type { StoryboardState, StoryboardTransitionPreset } from "@/lib/types";
+import type { StoryboardState, StoryboardTransitionPreset, TranscriptSegment, StoryboardNode, CanvasConnection } from "@/lib/types";
 
 // "off" — no captions at all, burn nothing in (the default; captions are
 // opt-in, see the modal StoryboardCanvas.tsx shows before every render).
@@ -148,11 +148,23 @@ function extractAudioWindow(srcPath: string, startSec: number, durationSec: numb
 // Real speech-to-text captioning for "auto" mode — transcribes exactly what
 // the person says in this shot's selected window via Whisper (same
 // transcribeAudio used for video-analysis transcripts elsewhere in this
-// app), instead of just re-displaying the pre-written script text. Best
-// effort like pickBestSegment: a transcription hiccup (no API key, a
+// app), instead of just re-displaying the pre-written script text. Returns
+// the timestamped SEGMENTS (not just the joined text) so the caller can
+// burn in each phrase only while it's actually being said — see
+// timedCaptionFilter below. Timestamps come back relative to the extracted
+// audio window, which starts at the same t=0 as the shot's own encoded
+// segment (both are cut from srcPath at the same startSec), so they line up
+// with the final segment's timeline with no extra offset math needed.
+// Best effort like pickBestSegment: a transcription hiccup (no API key, a
 // network blip, a genuinely silent/unintelligible clip) just means this one
 // shot ends up with no caption — never worth failing the whole render over.
-async function transcribeShotAudio(srcPath: string, startSec: number, durationSec: number, tmpDir: string, index: number): Promise<string | null> {
+async function transcribeShotAudio(
+  srcPath: string,
+  startSec: number,
+  durationSec: number,
+  tmpDir: string,
+  index: number
+): Promise<TranscriptSegment[] | null> {
   if (!process.env.OPENAI_API_KEY) return null;
   try {
     const audioPath = path.join(tmpDir, `whisper_${index}.mp3`);
@@ -161,8 +173,8 @@ async function transcribeShotAudio(srcPath: string, startSec: number, durationSe
       transcribeAudio(audioPath),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Whisper transcription timed out")), 30_000)),
     ]);
-    const text = (result?.text || "").trim();
-    return text || null;
+    const segments = (result?.segments || []).filter((s) => s.text && s.text.trim());
+    return segments.length ? segments : null;
   } catch {
     return null;
   }
@@ -182,16 +194,38 @@ function mediaPathFromUrl(url: string): string | null {
 // to a sliver of the frame.
 const CAPTION_SCALE = H / 1280;
 
-function captionFilter(tmpDir: string, index: number, text: string, style: CaptionStylePreset): string | null {
-  const wrapped = wrapCaption(text, style);
-  if (!wrapped) return null;
-  const capPath = path.join(tmpDir, `cap${index}.txt`);
-  fs.writeFileSync(capPath, wrapped);
+// "auto" mode's caption builder — one drawtext filter per Whisper segment,
+// each gated to only display during its own [start,end) window via
+// ffmpeg's enable=between(t,...). Replaced an earlier single-static-block
+// captionFilter() (now removed) that burned in the WHOLE shot's transcript
+// as one fixed block for the shot's entire duration — which had two
+// problems: overly long transcripts got word-wrapped to 3 lines and
+// hard-truncated with "…" (Whisper transcribes the WHOLE shot's speech,
+// easily more than a 3-line caption can hold), and there was no sense of
+// the caption tracking what's being said moment-to-moment. This makes it
+// read like real subtitles, one phrase appearing exactly when it's spoken
+// and gone when it isn't.
+function timedCaptionFilter(tmpDir: string, shotIndex: number, segments: TranscriptSegment[], style: CaptionStylePreset): string | null {
   const fontsize = Math.round(32 * CAPTION_SCALE);
   const lineSpacing = Math.round(8 * CAPTION_SCALE);
   const boxBorder = Math.round(14 * CAPTION_SCALE);
   const bottomMargin = Math.round(90 * CAPTION_SCALE);
-  return `drawtext=fontfile=${CAPTION_FONT_FILE}:textfile=${capPath}:reload=0:fontcolor=white:fontsize=${fontsize}:line_spacing=${lineSpacing}:box=1:boxcolor=black@0.5:boxborderw=${boxBorder}:x=(w-text_w)/2:y=h-th-${bottomMargin}`;
+  const parts: string[] = [];
+  segments.forEach((seg, i) => {
+    const wrapped = wrapCaption(seg.text, style);
+    if (!wrapped) return;
+    const capPath = path.join(tmpDir, `cap${shotIndex}_${i}.txt`);
+    fs.writeFileSync(capPath, wrapped);
+    const start = Math.max(0, seg.start).toFixed(2);
+    const end = Math.max(seg.start + 0.1, seg.end).toFixed(2);
+    // Commas inside the between(...) call must be backslash-escaped —
+    // ffmpeg's filtergraph parser otherwise reads them as filter-chain
+    // separators, same reason the outer filters are joined with plain ','.
+    parts.push(
+      `drawtext=fontfile=${CAPTION_FONT_FILE}:textfile=${capPath}:reload=0:fontcolor=white:fontsize=${fontsize}:line_spacing=${lineSpacing}:box=1:boxcolor=black@0.5:boxborderw=${boxBorder}:x=(w-text_w)/2:y=h-th-${bottomMargin}:enable='between(t\\,${start}\\,${end})'`
+    );
+  });
+  return parts.length ? parts.join(",") : null;
 }
 
 function withCaption(baseFilter: string, caption: string | null): string {
@@ -257,6 +291,51 @@ function cleanupOrphanedTmpDirs(outDir: string) {
   }
 }
 
+// Finds the largest connected component in the board's connection graph
+// (undirected — a card is "in" a component if it's reachable via ANY
+// connection, forwards or backwards) and returns its node ids, or null if
+// there's no real multi-node chain anywhere (either zero connections at
+// all, or every node is its own disconnected singleton). Used to scope a
+// render to just the ONE chain the creator is actually working on: a board
+// can accumulate a second, unrelated wired-up chain left over from testing
+// a completely different idea (a different product's shots, all connected
+// to each other but not to the real chain) — that's a real connected
+// component too, so a simple "exclude nodes with zero connections" check
+// (this function's predecessor) didn't catch it. Only the single biggest
+// component survives; every other component, including true zero-
+// connection orphans (each its own size-1 component), gets excluded from
+// the render the same way.
+function largestComponentIds(nodes: StoryboardNode[], connections: Pick<CanvasConnection, "fromId" | "toId">[]): Set<string> | null {
+  if (connections.length === 0) return null; // nothing wired up at all — don't filter anything
+  const adjacency = new Map<string, Set<string>>();
+  for (const n of nodes) adjacency.set(n.id, new Set());
+  for (const c of connections) {
+    adjacency.get(c.fromId)?.add(c.toId);
+    adjacency.get(c.toId)?.add(c.fromId);
+  }
+  const seen = new Set<string>();
+  let best: Set<string> = new Set();
+  for (const n of nodes) {
+    if (seen.has(n.id)) continue;
+    const component = new Set<string>();
+    const stack = [n.id];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (component.has(cur)) continue;
+      component.add(cur);
+      seen.add(cur);
+      for (const next of adjacency.get(cur) || []) {
+        if (!component.has(next)) stack.push(next);
+      }
+    }
+    if (component.size > best.size) best = component;
+  }
+  // If the biggest component is still just 1 node, nothing is actually
+  // wired into a real chain (every node is its own singleton) — don't
+  // filter, same as the zero-connections case above.
+  return best.size >= 2 ? best : null;
+}
+
 // Fire-and-forget — starts the render in the background and returns
 // immediately with the job's initial state. If a render for this exact key
 // is already running, returns that existing job instead of starting a
@@ -274,17 +353,15 @@ export function startRenderJob(
   }
 
   const order = resolveStoryboardOrder(board.nodes, board.connections);
-  // resolveStoryboardOrder deliberately appends orphan nodes (not reachable
-  // from any connected chain) at the end, sorted by x — the right call for
-  // rendering an UNWIRED single-shot board, but wrong once the board also
-  // has a real wired chain: any leftover/unrelated card from testing a
-  // different idea (a different product's reference video, a stray import)
-  // has no connections either, so it used to render as an extra unwanted
-  // clip too. Only exempt orphans from exclusion when the board has NO
-  // connections anywhere — i.e. nothing has been wired up at all yet, so
-  // there's no "real chain" for a stray card to be mistaken as part of.
-  const hasAnyConnection = board.connections.length > 0;
-  const connectedIds = new Set(board.connections.flatMap((c) => [c.fromId, c.toId]));
+  // resolveStoryboardOrder deliberately appends every disconnected chain it
+  // finds (including true zero-connection orphans) in x-order — the right
+  // call for rendering an UNWIRED single-shot board, but wrong once the
+  // board also has a real wired chain: a leftover, fully-wired-up-to-itself
+  // chain from testing a completely different idea (different product,
+  // different shots) is just as "connected" as the real chain, so a simple
+  // "has at least one connection" check isn't enough to exclude it — only
+  // scoping to the single LARGEST connected component actually does.
+  const primaryChainIds = largestComponentIds(board.nodes, board.connections);
   const skipped: string[] = [];
   const usable = order.filter((n) => {
     if (!n.clip) {
@@ -305,8 +382,8 @@ export function startRenderJob(
       skipped.push(`${n.label || "reference video"} (reference clip — not one of your filmed shots, excluded from the render)`);
       return false;
     }
-    if (hasAnyConnection && !connectedIds.has(n.id)) {
-      skipped.push(`${n.label || "untitled card"} (not connected into your script chain — excluded from the render)`);
+    if (primaryChainIds && !primaryChainIds.has(n.id)) {
+      skipped.push(`${n.label || "untitled card"} (belongs to a different, disconnected chain on this board — excluded from the render)`);
       return false;
     }
     return true;
@@ -422,8 +499,8 @@ export function startRenderJob(
               : 0;
           const hasAudio = await probeHasAudio(srcPath);
           if (captionsMode === "auto" && hasAudio) {
-            const transcribed = await transcribeShotAudio(srcPath, startSec, targetSec, tmpDir, i);
-            if (transcribed) caption = captionFilter(tmpDir, i, transcribed, captionStyle);
+            const segments = await transcribeShotAudio(srcPath, startSec, targetSec, tmpDir, i);
+            if (segments) caption = timedCaptionFilter(tmpDir, i, segments, captionStyle);
           }
           if (hasAudio) {
             await runFfmpeg([
