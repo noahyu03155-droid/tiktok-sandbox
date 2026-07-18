@@ -123,7 +123,7 @@ export default function RegisterForm() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="w-full max-w-sm bg-panel border-2 border-zinc-900 rounded-2xl p-6"
+      className="w-full max-w-sm bg-white border border-edge rounded-2xl shadow-xl shadow-zinc-900/10 p-6"
     >
       <div className="mb-6">
         <Logo />

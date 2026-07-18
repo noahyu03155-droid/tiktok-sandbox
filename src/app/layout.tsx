@@ -1,19 +1,9 @@
 import type { Metadata } from "next";
-import { Orbitron } from "next/font/google";
 import "./globals.css";
 import { LocaleProvider } from "@/lib/i18n";
 import HeaderBar from "@/components/HeaderBar";
 import MainShell from "@/components/MainShell";
 import { getCurrentUser } from "@/lib/session";
-
-// A geometric/technical display face used ONLY for the COTORX wordmark
-// (see Logo.tsx) and the register page's hero headline — everything else
-// (body copy, buttons, dense dashboard UI) stays on the default sans so
-// long-form/data-heavy screens (Trends, Creation, User Data) stay readable.
-// Exposed as a CSS variable on <body> so any component can opt in with
-// `style={{ fontFamily: "var(--font-display)" }}` without every page
-// needing to import next/font itself.
-const displayFont = Orbitron({ subsets: ["latin"], weight: ["700", "800", "900"], variable: "--font-display" });
 
 // Core selling-point pitch, used both as the page <meta description> and as
 // the Open Graph title/description so link previews (iMessage, Messenger,
@@ -50,7 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const user = getCurrentUser();
   return (
     <html lang="en">
-      <body className={displayFont.variable}>
+      <body>
         <LocaleProvider>
           <div className="min-h-screen bg-ink">
             <HeaderBar role={user?.role ?? null} />
