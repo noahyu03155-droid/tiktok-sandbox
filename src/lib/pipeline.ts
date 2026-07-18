@@ -5,6 +5,22 @@ import { fetchTikTokVideo } from "./tiktok";
 import { extractAudio, transcribeAudio } from "./transcribe";
 import { analyzeVideo } from "./analyze";
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A lot of what shows up as a permanent "error" card (especially in bulk
+// trend imports pulling dozens of videos at once) is actually a transient
+// hiccup — a brief network blip, TikTok momentarily rate-limiting a burst of
+// near-simultaneous fetches, a Whisper subprocess that stumbled once. Retrying
+// the whole fetch+transcribe attempt a couple of times with a short backoff
+// self-heals most of those without any user action, instead of immediately
+// surfacing a dead "Analysis failed" tile. A genuinely permanent failure
+// (video deleted/private, malformed URL) just fails the same way three times
+// and still ends up status:"error" — this only changes the timing, not the
+// eventual outcome, for the ones that were never going to work.
+const MAX_ATTEMPTS = 3;
+
 /**
  * Fetches the video + metadata and transcribes it, but stops short of the
  * AI breakdown step (leaves analysis: null). Status ends at "done" either
@@ -16,42 +32,53 @@ import { analyzeVideo } from "./analyze";
  */
 export async function fetchAndTranscribe(id: string, url: string): Promise<void> {
   const mediaDir = getMediaDir();
-  try {
-    updateVideoRecord(id, { status: "fetching" });
-    const fetched = await fetchTikTokVideo(url, mediaDir, id);
+  let lastErr: any = null;
 
-    updateVideoRecord(id, {
-      status: "transcribing",
-      webpage_url: fetched.webpage_url,
-      title: fetched.title,
-      description: fetched.description,
-      author: fetched.author,
-      author_id: fetched.author_id,
-      duration_sec: fetched.duration_sec,
-      stats: fetched.stats,
-      hashtags: fetched.hashtags,
-      video_path: fetched.video_path,
-      thumbnail_path: fetched.thumbnail_path,
-    });
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      updateVideoRecord(id, { status: "fetching" });
+      const fetched = await fetchTikTokVideo(url, mediaDir, id);
 
-    let transcriptText = "";
-    let segments: any[] = [];
-    if (fetched.video_path && fs.existsSync(fetched.video_path)) {
-      const audioPath = path.join(mediaDir, `${id}.mp3`);
-      await extractAudio(fetched.video_path, audioPath);
-      const transcript = await transcribeAudio(audioPath);
-      transcriptText = transcript.text;
-      segments = transcript.segments;
+      updateVideoRecord(id, {
+        status: "transcribing",
+        webpage_url: fetched.webpage_url,
+        title: fetched.title,
+        description: fetched.description,
+        author: fetched.author,
+        author_id: fetched.author_id,
+        duration_sec: fetched.duration_sec,
+        stats: fetched.stats,
+        hashtags: fetched.hashtags,
+        video_path: fetched.video_path,
+        thumbnail_path: fetched.thumbnail_path,
+      });
+
+      let transcriptText = "";
+      let segments: any[] = [];
+      if (fetched.video_path && fs.existsSync(fetched.video_path)) {
+        const audioPath = path.join(mediaDir, `${id}.mp3`);
+        await extractAudio(fetched.video_path, audioPath);
+        const transcript = await transcribeAudio(audioPath);
+        transcriptText = transcript.text;
+        segments = transcript.segments;
+      }
+
+      updateVideoRecord(id, {
+        status: "done",
+        transcript_text: transcriptText,
+        transcript_segments: segments,
+      });
+      return;
+    } catch (err: any) {
+      lastErr = err;
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(2000 * attempt); // 2s, then 4s
+        continue;
+      }
     }
-
-    updateVideoRecord(id, {
-      status: "done",
-      transcript_text: transcriptText,
-      transcript_segments: segments,
-    });
-  } catch (err: any) {
-    updateVideoRecord(id, { status: "error", error_message: String(err?.message || err) });
   }
+
+  updateVideoRecord(id, { status: "error", error_message: String(lastErr?.message || lastErr) });
 }
 
 /**

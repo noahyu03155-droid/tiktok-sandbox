@@ -1,21 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteTrendBatch, getVideo, listTrendBatches } from "@/lib/db";
-import { ingestTrendBatch } from "@/lib/trends";
+import { deleteTrendBatch, listTrendBatches } from "@/lib/db";
+import { enrichAndBackfillTop, ingestTrendBatch } from "@/lib/trends";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const batches = listTrendBatches();
+  // Skip any video that permanently failed to fetch/transcribe and promote
+  // a lower-ranked candidate in its place instead of showing a dead
+  // "Analysis failed" tile — see enrichAndBackfillTop in trends.ts. Each
+  // stored batch already holds a buffer past the displayed 20 specifically
+  // for this.
   const enriched = batches.map((batch) => ({
     ...batch,
-    top_by_views: batch.top_by_views.map((item) => ({
-      ...item,
-      video: item.video_id ? getVideo(item.video_id) : null,
-    })),
-    top_by_sales: batch.top_by_sales.map((item) => ({
-      ...item,
-      video: item.video_id ? getVideo(item.video_id) : null,
-    })),
+    top_by_views: enrichAndBackfillTop(batch.top_by_views),
+    top_by_sales: enrichAndBackfillTop(batch.top_by_sales),
   }));
   return NextResponse.json({ batches: enriched });
 }

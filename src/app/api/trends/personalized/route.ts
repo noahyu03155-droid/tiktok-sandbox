@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/session";
 import { getUserById, getVideo, getLatestTrendBatchByCategory } from "@/lib/db";
 import { buildFastmossVideoUrl, fetchCategoryTrendVideos, fetchFastMossCategories, formatUsd, toCreatorInfo } from "@/lib/fastmoss";
 import type { FastMossVideoResult } from "@/lib/fastmoss";
-import { ingestTrendBatch, TREND_REFRESH_INTERVAL_MS, type RawTrendItem } from "@/lib/trends";
+import { enrichAndBackfillTop, ingestTrendBatch, TREND_FETCH_LIMIT, TREND_REFRESH_INTERVAL_MS, type RawTrendItem } from "@/lib/trends";
 import type { TrendBatch, TrendItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -119,8 +119,8 @@ export async function GET(req: NextRequest) {
       const now = new Date();
       const from = new Date(now.getTime() - days * 86400 * 1000);
       const [byViews, bySales] = await Promise.all([
-        fetchCategoryTrendVideos("play_count", { days, region: REGION, limit: 20, categoryId }),
-        fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit: 20, categoryId }),
+        fetchCategoryTrendVideos("play_count", { days, region: REGION, limit: TREND_FETCH_LIMIT, categoryId }),
+        fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit: TREND_FETCH_LIMIT, categoryId }),
       ]);
       if (byViews.length > 0 || bySales.length > 0) {
         batch = ingestTrendBatch({
@@ -147,8 +147,8 @@ export async function GET(req: NextRequest) {
             let parentBatch = parentCached;
             if (!parentBatch || !parentIsFresh) {
               const [parentByViews, parentBySales] = await Promise.all([
-                fetchCategoryTrendVideos("play_count", { days, region: REGION, limit: 20, categoryId: Number(parent.id) }),
-                fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit: 20, categoryId: Number(parent.id) }),
+                fetchCategoryTrendVideos("play_count", { days, region: REGION, limit: TREND_FETCH_LIMIT, categoryId: Number(parent.id) }),
+                fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit: TREND_FETCH_LIMIT, categoryId: Number(parent.id) }),
               ]);
               if (parentByViews.length > 0 || parentBySales.length > 0) {
                 parentBatch = ingestTrendBatch({
@@ -194,8 +194,14 @@ export async function GET(req: NextRequest) {
   }
 
   const enrichItem = (item: TrendItem) => ({ ...item, video: item.video_id ? getVideo(item.video_id) : null });
-  const topByViews = batch.top_by_views.map(enrichItem);
-  const topBySales = batch.top_by_sales.map(enrichItem);
+  // Video lists get the "skip permanently-failed, backfill from the next-
+  // ranked candidate" treatment (see enrichAndBackfillTop in trends.ts) —
+  // each category pull now fetches a buffer past the displayed 20
+  // specifically so this has spare candidates to promote. Products don't
+  // need this: a ProductCard shows fine even if its representative video
+  // never resolved.
+  const topByViews = enrichAndBackfillTop(batch.top_by_views);
+  const topBySales = enrichAndBackfillTop(batch.top_by_sales);
   const topProducts = deriveTopProducts([...batch.top_by_views, ...batch.top_by_sales], 20).map(enrichItem);
 
   return NextResponse.json({

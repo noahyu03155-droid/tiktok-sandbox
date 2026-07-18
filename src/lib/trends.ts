@@ -9,6 +9,7 @@ import {
   createTrendBatch,
   createVideoRecord,
   findVideoByUrl,
+  getVideo,
   updateVideoRecord,
 } from "@/lib/db";
 import { queueFetchAndTranscribe } from "@/lib/fetchQueue";
@@ -23,6 +24,37 @@ import type { CreatorInfo, TrendBatch, TrendItem, VideoRecord } from "@/lib/type
 // re-pulled on the next page visit — see the doc comment on
 // FRESH_MS/personalized/route.ts for the original motivation.
 export const TREND_REFRESH_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
+// How many cards a "Top ___" list actually shows vs. how many candidates get
+// pulled from FastMoss per list. A video-fetch/transcribe attempt can still
+// end in status:"error" even after fetchAndTranscribe's own internal retries
+// (pipeline.ts) — a deleted/private video, a malformed URL, etc. Rather than
+// showing that dead "Analysis failed" tile as one of the 20, every category
+// pull requests TREND_FETCH_LIMIT candidates (a buffer past the displayed
+// 20) so enrichAndBackfillTop below can drop any that failed and promote the
+// next-ranked usable one (#21, #22, ...) to fill the gap instead.
+export const TREND_DISPLAY_LIMIT = 20;
+export const TREND_FETCH_LIMIT = 30;
+
+// Enriches a rank-ordered pool of TrendItems with their linked VideoRecord,
+// drops any whose video permanently failed (status:"error"), and returns
+// the first `limit` of what's left with rank renumbered 1..limit — see
+// TREND_FETCH_LIMIT's doc comment above for why the pool is deliberately
+// larger than `limit`. An item with no linked video at all (video_id is
+// null — some sales-ranked FastMoss results have no resolvable TikTok URL)
+// is treated as usable, same as before this backfill behavior existed;
+// only a confirmed failure gets skipped.
+export function enrichAndBackfillTop(
+  items: TrendItem[],
+  limit: number = TREND_DISPLAY_LIMIT
+): (TrendItem & { video: VideoRecord | null })[] {
+  const enriched = items.map((item) => ({
+    ...item,
+    video: item.video_id ? getVideo(item.video_id) : null,
+  }));
+  const usable = enriched.filter((it) => !it.video || it.video.status !== "error");
+  return usable.slice(0, limit).map((it, i) => ({ ...it, rank: i + 1 }));
+}
 
 export interface RawTrendItem {
   rank?: number;

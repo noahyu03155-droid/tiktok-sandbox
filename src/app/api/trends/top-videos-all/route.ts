@@ -29,28 +29,38 @@ export async function GET(req: NextRequest) {
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 40;
 
   const latestPerCategory = listLatestTrendBatchPerCategory();
-  const byVideoKey = new Map<string, TrendItem>();
+  const byVideoKey = new Map<string, { item: TrendItem; video: ReturnType<typeof getVideo> }>();
   for (const batch of latestPerCategory) {
+    // Each category's stored top_by_sales is already a buffer past what any
+    // single category displays (TREND_FETCH_LIMIT candidates vs.
+    // TREND_DISPLAY_LIMIT shown) — a video that permanently failed to
+    // fetch/transcribe is skipped here rather than merged in, so a
+    // lower-ranked-but-usable item (from this category or another) fills
+    // the slot instead. Same "Analysis failed" tile avoidance as
+    // enrichAndBackfillTop in trends.ts, just applied across categories
+    // instead of within one.
     for (const item of batch.top_by_sales) {
       const key = item.video_id || item.fastmoss_url;
       if (!key) continue;
+      const video = item.video_id ? getVideo(item.video_id) : null;
+      if (video && video.status === "error") continue;
       const existing = byVideoKey.get(key);
-      if (!existing || numericSales(item) > numericSales(existing)) {
-        byVideoKey.set(key, item);
+      if (!existing || numericSales(item) > numericSales(existing.item)) {
+        byVideoKey.set(key, { item, video });
       }
     }
   }
 
   const merged = Array.from(byVideoKey.values())
-    .sort((a, b) => numericSales(b) - numericSales(a))
+    .sort((a, b) => numericSales(b.item) - numericSales(a.item))
     .slice(0, limit)
-    .map((item, index) => ({
+    .map(({ item, video }, index) => ({
       ...item,
       // Re-rank within the merged/sorted feed — the original per-category
       // rank (#1-#20 within that one category) isn't meaningful once
       // multiple categories are pooled together.
       rank: index + 1,
-      video: item.video_id ? getVideo(item.video_id) : null,
+      video,
     }));
 
   return NextResponse.json({ items: merged, categoriesCount: latestPerCategory.length });

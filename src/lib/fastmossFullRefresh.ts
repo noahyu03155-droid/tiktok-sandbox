@@ -30,7 +30,7 @@ import {
   toCreatorInfo,
 } from "./fastmoss";
 import type { FastMossVideoResult } from "./fastmoss";
-import { ingestTrendBatch, TREND_REFRESH_INTERVAL_MS, type RawTrendItem } from "./trends";
+import { ingestTrendBatch, TREND_FETCH_LIMIT, TREND_REFRESH_INTERVAL_MS, type RawTrendItem } from "./trends";
 import { getFastmossCategoryValidity, getLastTrendFullRefresh, setLastTrendFullRefresh } from "./db";
 
 interface CategoryNode {
@@ -125,8 +125,8 @@ async function pullCategoryWithRetry(id: string, name: string): Promise<boolean>
       const now = new Date();
       const from = new Date(now.getTime() - DAYS * 86400 * 1000);
       const [byViews, bySales] = await Promise.all([
-        fetchCategoryTrendVideos("play_count", { days: DAYS, region: REGION, limit: 20, categoryId: Number(id) }),
-        fetchCategoryTrendVideos("units_sold", { days: DAYS, region: REGION, limit: 20, categoryId: Number(id) }),
+        fetchCategoryTrendVideos("play_count", { days: DAYS, region: REGION, limit: TREND_FETCH_LIMIT, categoryId: Number(id) }),
+        fetchCategoryTrendVideos("units_sold", { days: DAYS, region: REGION, limit: TREND_FETCH_LIMIT, categoryId: Number(id) }),
       ]);
       if (byViews.length === 0 && bySales.length === 0) return true; // nothing this window, not an error
       ingestTrendBatch({

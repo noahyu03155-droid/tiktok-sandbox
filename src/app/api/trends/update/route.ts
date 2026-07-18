@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildFastmossVideoUrl, fetchCategoryTrendVideos, formatUsd, toCreatorInfo } from "@/lib/fastmoss";
 import type { FastMossVideoResult } from "@/lib/fastmoss";
-import { ingestTrendBatch, type RawTrendItem } from "@/lib/trends";
+import { ingestTrendBatch, TREND_FETCH_LIMIT, type RawTrendItem } from "@/lib/trends";
 
 export const dynamic = "force-dynamic";
 
@@ -60,9 +60,13 @@ export async function POST(req: NextRequest) {
   const date_to = now.toISOString().slice(0, 10);
 
   try {
+    // Pulls TREND_FETCH_LIMIT (a buffer past the 20 actually displayed) so
+    // any that fail to fetch/transcribe can be backfilled with a
+    // lower-ranked candidate at read time — see enrichAndBackfillTop in
+    // trends.ts.
     const [byViews, bySales] = await Promise.all([
-      fetchCategoryTrendVideos("play_count", { days, region: REGION, limit: 20, categoryId }),
-      fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit: 20, categoryId }),
+      fetchCategoryTrendVideos("play_count", { days, region: REGION, limit: TREND_FETCH_LIMIT, categoryId }),
+      fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit: TREND_FETCH_LIMIT, categoryId }),
     ]);
 
     if (byViews.length === 0 && bySales.length === 0) {
