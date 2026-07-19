@@ -28,12 +28,12 @@
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import OpenAI from "openai";
 import { getMediaDir } from "@/lib/db";
 import { resolveStoryboardOrder } from "@/lib/storyboard";
 import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/storyboardTrim";
 import { wrapCaption, CAPTION_FONT_FILE, type CaptionStylePreset } from "@/lib/storyboardCaptions";
 import { interpretEditingFeedback } from "@/lib/storyboardFeedback";
-import { transcribeAudio } from "@/lib/transcribe";
 import type { StoryboardState, StoryboardTransitionPreset, TranscriptSegment, StoryboardNode, CanvasConnection } from "@/lib/types";
 
 // "off" — no captions at all, burn nothing in (the default; captions are
@@ -54,7 +54,15 @@ export type CaptionsMode = "off" | "auto";
 // that needs to change.
 const W = 1440;
 const H = 2560;
-const TRANSITION_SEC = 0.4;
+// Default crossfade length between shots. Was 0.4s — reported as feeling
+// "too aggressive" (a longer blend window means two differently-framed
+// shots visibly ghost/swim through each other mid-transition, which reads
+// as jarring rather than smooth, especially between close-ups shot from
+// different angles). Shortening the blend window doesn't remove the
+// crossfade, just tightens how long the ghosting is visible for — a
+// snappier, less "swimmy" cut. Still overridden by a reference video's
+// styleProfile.transitionSec when one's been imported.
+const TRANSITION_SEC = 0.25;
 const FPS = 30;
 
 // A stuck ffmpeg process (bad input file, weird codec, a hung filter graph)
@@ -145,11 +153,76 @@ function extractAudioWindow(srcPath: string, startSec: number, durationSec: numb
   ]);
 }
 
+interface WhisperWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+// WORD-level Whisper transcription (timestamp_granularities: ["word"]) —
+// deliberately not the shared transcribeAudio() from @/lib/transcribe,
+// which only requests segment-level timestamps. Whisper's "segment"
+// granularity groups by pause detection, not sentence length — a person
+// talking continuously through a whole 15-20s shot with no real pause can
+// come back as ONE giant segment, which just moved the original "one huge
+// static caption block" problem from render-time (script text) to
+// transcribe-time (a still-too-long transcribed block, still needing
+// wrapCaption's 3-line truncate-with-"…"). Word-level timestamps let
+// groupWordsIntoCaptions below re-chunk the transcript into genuinely short,
+// speech-paced captions instead.
+async function transcribeShotWords(audioPath: string): Promise<WhisperWord[] | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  const client = new OpenAI({ apiKey });
+  const resp = (await client.audio.transcriptions.create(
+    {
+      file: fs.createReadStream(audioPath),
+      model: "whisper-1",
+      response_format: "verbose_json",
+      timestamp_granularities: ["word"],
+    } as any,
+    { timeout: 25_000, maxRetries: 1 }
+  )) as any;
+  const words: WhisperWord[] = (resp?.words || [])
+    .map((w: any) => ({ word: String(w.word || "").trim(), start: Number(w.start), end: Number(w.end) }))
+    .filter((w: WhisperWord) => w.word && Number.isFinite(w.start) && Number.isFinite(w.end));
+  return words.length ? words : null;
+}
+
+// Groups words into short, punctuation-aware caption chunks instead of one
+// long block — a new chunk starts whenever the current one hits
+// MAX_WORDS_PER_CAPTION words, OR the word just added ends a clause (,) or
+// sentence (. ! ?). This is what makes captions "follow the person's actual
+// speaking pace, one phrase at a time" instead of dumping everything said
+// in the shot onto screen at once.
+const MAX_WORDS_PER_CAPTION = 6;
+
+function groupWordsIntoCaptions(words: WhisperWord[]): { start: number; end: number; text: string }[] {
+  const out: { start: number; end: number; text: string }[] = [];
+  let bucket: WhisperWord[] = [];
+  const flush = () => {
+    if (bucket.length === 0) return;
+    out.push({
+      start: bucket[0].start,
+      end: bucket[bucket.length - 1].end,
+      text: bucket.map((w) => w.word).join(" "),
+    });
+    bucket = [];
+  };
+  for (const w of words) {
+    bucket.push(w);
+    if (/[.!?,]$/.test(w.word) || bucket.length >= MAX_WORDS_PER_CAPTION) {
+      flush();
+    }
+  }
+  flush();
+  return out;
+}
+
 // Real speech-to-text captioning for "auto" mode — transcribes exactly what
-// the person says in this shot's selected window via Whisper (same
-// transcribeAudio used for video-analysis transcripts elsewhere in this
-// app), instead of just re-displaying the pre-written script text. Returns
-// the timestamped SEGMENTS (not just the joined text) so the caller can
+// the person says in this shot's selected window via Whisper, instead of
+// just re-displaying the pre-written script text, then re-chunks it into
+// short speech-paced phrases (see groupWordsIntoCaptions) so the caller can
 // burn in each phrase only while it's actually being said — see
 // timedCaptionFilter below. Timestamps come back relative to the extracted
 // audio window, which starts at the same t=0 as the shot's own encoded
@@ -169,12 +242,13 @@ async function transcribeShotAudio(
   try {
     const audioPath = path.join(tmpDir, `whisper_${index}.mp3`);
     await extractAudioWindow(srcPath, startSec, durationSec, audioPath);
-    const result = await Promise.race([
-      transcribeAudio(audioPath),
+    const words = await Promise.race([
+      transcribeShotWords(audioPath),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Whisper transcription timed out")), 30_000)),
     ]);
-    const segments = (result?.segments || []).filter((s) => s.text && s.text.trim());
-    return segments.length ? segments : null;
+    if (!words) return null;
+    const grouped = groupWordsIntoCaptions(words);
+    return grouped.length ? grouped : null;
   } catch {
     return null;
   }

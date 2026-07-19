@@ -125,10 +125,16 @@ export async function pickBestSegment(opts: {
           `These ${frames.length} frames are sampled evenly across a ${clipDurationSec.toFixed(1)}s video clip, ` +
           `at these timestamps (seconds): ${frames.map((f) => f.t.toFixed(1)).join(", ")}.\n\n` +
           `This clip needs to be trimmed down to a ${targetSec.toFixed(1)}s segment for one shot of a short-form ` +
-          `product video. What's happening / being said in this shot: "${text.trim()}"\n\n` +
+          `UGC product video. What's happening / being said in this shot: "${text.trim()}"\n\n` +
           `Look at the frames and pick the single best start time (in seconds, between 0 and ${latestStart.toFixed(1)}) ` +
-          `for a ${targetSec.toFixed(1)}s window that best matches that content — e.g. the moment the described ` +
+          `for a ${targetSec.toFixed(1)}s window that best matches that content — the moment the described ` +
           `action/reaction is actually happening on screen, not a dead or transitional moment. ` +
+          `UGC lives or dies on genuine emotional payoff: if this shot is about a reaction, result, or outcome ` +
+          `(the person or pet's response AFTER using/trying the product — excitement, delight, relief, surprise), ` +
+          `favor whichever sampled moment shows that reaction most visibly — a real smile, laugh, or animated ` +
+          `expression — over an earlier, calmer moment in the clip that's technically on-topic but emotionally flat. ` +
+          `Don't just pick the first frame where the right action starts; scan ALL the frames for where the payoff ` +
+          `actually peaks, even if that's later in the clip. ` +
           `Respond with ONLY a JSON object: {"start_sec": <number>}`,
       },
       ...frames.map((f) => ({
