@@ -345,7 +345,7 @@ function groupWordsIntoCaptions(words: WhisperWord[]): { start: number; end: num
 // Best effort like pickBestSegment: a transcription hiccup (no API key, a
 // network blip, a genuinely silent/unintelligible clip) just means this one
 // shot ends up with no caption — never worth failing the whole render over.
-async function transcribeShotAudio(
+export async function transcribeShotAudio(
   srcPath: string,
   startSec: number,
   durationSec: number,
@@ -395,7 +395,7 @@ async function transcribeShotAudio(
   }
 }
 
-function mediaPathFromUrl(url: string): string | null {
+export function mediaPathFromUrl(url: string): string | null {
   if (!url.startsWith("/api/media/")) return null;
   const rel = url.slice("/api/media/".length).split("/").filter(Boolean);
   const p = path.join(getMediaDir(), ...rel);
@@ -878,22 +878,90 @@ export interface ManualEditTextOverlay {
   // this clip starts playing, after trimming).
   startSec: number;
   endSec: number;
+  // Both optional, default to "bottom"/"medium" if omitted — kept optional
+  // so older client payloads (pre-styling) still work.
+  position?: "top" | "center" | "bottom";
+  size?: "small" | "medium" | "large";
 }
+
+// One entry per boundary BETWEEN adjacent clips in the manual-edit timeline
+// (so `clips.length - 1` entries) — lets the creator pick a different
+// transition at each cut, unlike the AI render pipeline's one preset for
+// the whole video. "hard_cut" is approximated the same way the AI pipeline
+// does it (see startRenderJob): a very short 0.05s fade rather than a true
+// zero-duration cut, since ffmpeg's xfade needs a nonzero duration.
+export interface ManualEditTransition {
+  preset: StoryboardTransitionPreset;
+  sec: number;
+}
+
+const OVERLAY_SIZE_PX: Record<NonNullable<ManualEditTextOverlay["size"]>, number> = { small: 26, medium: 36, large: 50 };
 
 function manualCaptionFilter(tmpDir: string, clipIndex: number, overlays: ManualEditTextOverlay[]): string | null {
   const forThisClip = overlays.filter((o) => o.clipIndex === clipIndex && o.text.trim());
   if (forThisClip.length === 0) return null;
-  const fontsize = Math.round(36 * CAPTION_SCALE);
   const boxBorder = Math.round(14 * CAPTION_SCALE);
-  const bottomMargin = Math.round(90 * CAPTION_SCALE);
+  const margin = Math.round(90 * CAPTION_SCALE);
   const parts = forThisClip.map((o, i) => {
     const capPath = path.join(tmpDir, `mcap${clipIndex}_${i}.txt`);
     fs.writeFileSync(capPath, wrapCaption(o.text, "descriptive"));
     const start = Math.max(0, o.startSec).toFixed(2);
     const end = Math.max(o.startSec + 0.1, o.endSec).toFixed(2);
-    return `drawtext=fontfile=${CAPTION_FONT_FILE}:textfile=${capPath}:reload=0:fontcolor=white:fontsize=${fontsize}:box=1:boxcolor=black@0.5:boxborderw=${boxBorder}:x=(w-text_w)/2:y=h-th-${bottomMargin}:enable='between(t\\,${start}\\,${end})'`;
+    const fontsize = Math.round((OVERLAY_SIZE_PX[o.size || "medium"]) * CAPTION_SCALE);
+    const yExpr = o.position === "top" ? `${margin}` : o.position === "center" ? `(h-th)/2` : `h-th-${margin}`;
+    return `drawtext=fontfile=${CAPTION_FONT_FILE}:textfile=${capPath}:reload=0:fontcolor=white:fontsize=${fontsize}:box=1:boxcolor=black@0.5:boxborderw=${boxBorder}:x=(w-text_w)/2:y=${yExpr}:enable='between(t\\,${start}\\,${end})'`;
   });
   return parts.join(",");
+}
+
+// Merges segments STRICTLY in order, left to right, using a possibly
+// DIFFERENT transition preset/duration at each boundary — unlike
+// assembleFinalVideo's balanced binary-tree merge (which is order-agnostic
+// about WHICH transition plays where, since the AI pipeline only ever
+// applies one uniform transition to the whole video), a per-boundary
+// transition choice only makes sense merged in the original left-to-right
+// order. Manual-edit timelines are also typically much shorter than a full
+// AI-rendered board (a handful of curated clips, not up to 19 auto-picked
+// shots), so the "first segment gets re-encoded once per remaining
+// segment" generation-loss concern that forced the AI pipeline off linear
+// merging is a much smaller tradeoff here — and giving the creator control
+// over each individual cut's transition is worth it for this path.
+async function mergeSequentialWithTransitions(
+  segmentPaths: string[],
+  segDurations: number[],
+  transitions: ManualEditTransition[],
+  tmpDir: string,
+  finalPath: string
+): Promise<void> {
+  if (segmentPaths.length === 1) {
+    fs.copyFileSync(segmentPaths[0], finalPath);
+    return;
+  }
+  let accPath = segmentPaths[0];
+  let accDur = segDurations[0];
+  for (let i = 1; i < segmentPaths.length; i++) {
+    const nextPath = segmentPaths[i];
+    const nextDur = segDurations[i];
+    const trans = transitions[i - 1] || { preset: "fade", sec: TRANSITION_SEC };
+    const preset = trans.preset === "hard_cut" ? "fade" : trans.preset;
+    const t = trans.preset === "hard_cut" ? 0.05 : Math.max(0.05, Math.min(trans.sec, accDur / 2, nextDur / 2));
+    const offset = Math.max(0, accDur - t);
+    const mergedPath = path.join(tmpDir, `mmerged${i}.mp4`);
+    await runFfmpeg([
+      "-y",
+      "-i", accPath,
+      "-i", nextPath,
+      "-filter_complex",
+      `[0:v][1:v]xfade=transition=${preset}:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[v];[0:a][1:a]acrossfade=d=${t.toFixed(3)}[a]`,
+      "-map", "[v]", "-map", "[a]",
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2", "-pix_fmt", "yuv420p",
+      ...AAC_OUT,
+      mergedPath,
+    ]);
+    accPath = mergedPath;
+    accDur = accDur + nextDur - t;
+  }
+  fs.copyFileSync(accPath, finalPath);
 }
 
 // Fire-and-forget, same shape as startRenderJob — starts in the background,
@@ -905,6 +973,7 @@ export function startManualRenderJob(
   key: string,
   clips: ManualEditClipInput[],
   textOverlays: ManualEditTextOverlay[],
+  transitions: ManualEditTransition[],
   outDir: string,
   publicUrlPrefix: string
 ): { started: boolean; job: RenderJob } {
@@ -1029,10 +1098,10 @@ export function startManualRenderJob(
       // finishes last silently clobber the other's output on disk.
       const finalPath = path.join(outDir, "manual-render.mp4");
       job.step = "Assembling final video...";
-      // Fixed, simple crossfade — this path is about honoring the creator's
-      // exact manual cuts, not AI-tuned pacing/transition choices, so there's
-      // no styleProfile/feedback-interpreted transition to defer to here.
-      await assembleFinalVideo(segmentPaths, segDurations, tmpDir, finalPath, "fade", TRANSITION_SEC);
+      // Per-boundary transitions, in original order — see
+      // mergeSequentialWithTransitions's doc comment for why this path uses
+      // a different merge strategy than the AI pipeline's binary tree.
+      await mergeSequentialWithTransitions(segmentPaths, segDurations, transitions, tmpDir, finalPath);
 
       job.result = { url: `${publicUrlPrefix}/manual-render.mp4`, skipped, styleApplied: null, appliedFeedback: null };
       job.status = "done";

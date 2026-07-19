@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { getMediaDir, getVideo } from "@/lib/db";
 import { videoAccessError } from "@/lib/videoAuth";
-import { startManualRenderJob, getRenderJob, type ManualEditClipInput, type ManualEditTextOverlay } from "@/lib/storyboardRender";
+import { startManualRenderJob, getRenderJob, type ManualEditClipInput, type ManualEditTextOverlay, type ManualEditTransition } from "@/lib/storyboardRender";
 
 export const dynamic = "force-dynamic";
 
@@ -27,12 +27,14 @@ export async function POST(
   const body = await req.json().catch(() => ({}));
   const clips: ManualEditClipInput[] = Array.isArray(body?.clips) ? body.clips : [];
   const textOverlays: ManualEditTextOverlay[] = Array.isArray(body?.textOverlays) ? body.textOverlays : [];
+  const transitions: ManualEditTransition[] = Array.isArray(body?.transitions) ? body.transitions : [];
 
   const outDir = path.join(getMediaDir(), "storyboard", params.scriptId);
   const { job } = startManualRenderJob(
     jobKey(params.id, params.scriptId),
     clips,
     textOverlays,
+    transitions,
     outDir,
     `/api/media/storyboard/${params.scriptId}`
   );
