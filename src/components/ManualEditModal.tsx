@@ -114,24 +114,42 @@ interface BRollItem {
   trimStart: number; // in-point within the SOURCE clip (video only)
 }
 
+// A single background-music slot — spans the whole render (looped/trimmed to
+// match the final duration server-side) rather than being placed at a
+// specific point, since that's how virtually every short-form editor treats
+// background music. `volume` is a 0-1 multiplier mixed under the clips' own
+// audio.
+interface MusicTrack {
+  url: string;
+  label: string;
+  volume: number;
+}
+
 const DEFAULT_IMAGE_DURATION = 4;
 const DEFAULT_BROLL_DURATION = 2.5;
+const DEFAULT_MUSIC_VOLUME = 0.4;
+const MUSIC_MIME_OK = /^audio\/(mpeg|mp3|wav|x-wav|mp4|x-m4a|m4a|aac)$/;
 const MIN_ZOOM = 15;
 const MAX_ZOOM = 140;
 const DEFAULT_ZOOM = 46; // pixels per second
 const DEFAULT_TRANSITION: BoundaryTransition = { preset: "fade", sec: 0.25 };
 
-// Timeline track layout (three stacked rows inside one scroll container) —
+// Timeline track layout (four stacked rows inside one scroll container) —
 // B-roll sits ABOVE the base video row, both because that's roughly where
 // CapCut puts an overlay/PIP track and because it visually reinforces "this
-// plays ON TOP of the video below it".
-const BROLL_ROW_TOP = 10;
-const BROLL_ROW_H = 30;
-const VIDEO_ROW_TOP = BROLL_ROW_TOP + BROLL_ROW_H + 8;
-const VIDEO_ROW_H = 58;
-const TEXT_ROW_TOP = VIDEO_ROW_TOP + VIDEO_ROW_H + 10;
-const TEXT_ROW_H = 24;
-const TRACK_HEIGHT = TEXT_ROW_TOP + TEXT_ROW_H + 10;
+// plays ON TOP of the video below it". Music sits below the text row (see
+// MUSIC_ROW_H below). These are the BASE (1x) sizes — the actual on-screen
+// row heights are these multiplied by `rowScale` state, which the resize
+// handle above the timeline drags between MIN/MAX_ROW_SCALE — see that
+// handle's own comment for why (clips read as cramped/thin at the fixed
+// size once there could be up to 4 stacked rows).
+const BASE_BROLL_ROW_H = 30;
+const BASE_VIDEO_ROW_H = 58;
+const BASE_TEXT_ROW_H = 24;
+const BASE_MUSIC_ROW_H = 26;
+const MIN_ROW_SCALE = 0.8;
+const MAX_ROW_SCALE = 2.4;
+const DEFAULT_ROW_SCALE = 1;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -201,6 +219,9 @@ export default function ManualEditModal({
   const [selectedBrollId, setSelectedBrollId] = useState<string | null>(null);
   const [brollDragOver, setBrollDragOver] = useState(false);
   const [binDragOver, setBinDragOver] = useState(false);
+  const [music, setMusic] = useState<MusicTrack | null>(null);
+  const [musicSelected, setMusicSelected] = useState(false);
+  const [musicDragOver, setMusicDragOver] = useState(false);
   // Locally-uploaded clips (dragged/dropped in from the user's own computer,
   // not already sitting on the board) — merged with `boardClips` into
   // `binClips` below wherever the Media panel's contents are rendered from.
@@ -219,6 +240,11 @@ export default function ManualEditModal({
   const [openTransitionAt, setOpenTransitionAt] = useState<number | null>(null);
   const [autoCaptioning, setAutoCaptioning] = useState(false);
   const [autoCaptionError, setAutoCaptionError] = useState<string | null>(null);
+  // Row-height scale — dragged via the resize handle above the timeline (see
+  // beginRowResizeDrag) so the user can pull the whole track area taller
+  // when there's a lot stacked up (B-roll + video + text + music).
+  const [rowScale, setRowScale] = useState(DEFAULT_ROW_SCALE);
+  const rowResizeStart = useRef<{ y: number; scale: number } | null>(null);
 
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -239,6 +265,7 @@ export default function ManualEditModal({
   // leak into an unrelated later drop.
   const draggedBinClipRef = useRef<ManualEditSourceClip | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const musicInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => stopPoll, []);
   useEffect(() => stopPlayback, []);
@@ -259,6 +286,44 @@ export default function ManualEditModal({
   }, [items.length]);
 
   const total = useMemo(() => totalDur(items), [items]);
+
+  // Actual on-screen row layout — BASE_*_H constants scaled by rowScale
+  // (dragged via the resize handle at the top of the timeline section).
+  // Recomputed every render (cheap arithmetic) rather than memoized so the
+  // drag feels immediate.
+  const brollRowH = Math.round(BASE_BROLL_ROW_H * rowScale);
+  const videoRowH = Math.round(BASE_VIDEO_ROW_H * rowScale);
+  const textRowH = Math.round(BASE_TEXT_ROW_H * rowScale);
+  const musicRowH = Math.round(BASE_MUSIC_ROW_H * rowScale);
+  const brollRowTop = 10;
+  const videoRowTop = brollRowTop + brollRowH + 8;
+  const textRowTop = videoRowTop + videoRowH + 10;
+  const musicRowTop = textRowTop + textRowH + 10;
+  const trackHeight = musicRowTop + musicRowH + 10;
+
+  // Resize handle drag: mousedown on the thin bar above the timeline starts
+  // tracking, mousemove converts vertical drag distance into a rowScale
+  // delta (dragging UP/toward negative dy makes rows bigger, matching "拉
+  // 窗口往上拉加大工作栏" — pulling the top edge upward enlarges the area
+  // below it), mouseup cleans up. Mirrors the existing beginTrimDrag /
+  // beginBrollMoveDrag window-listener pattern used elsewhere in this file.
+  function beginRowResizeDrag(e: React.MouseEvent) {
+    e.preventDefault();
+    rowResizeStart.current = { y: e.clientY, scale: rowScale };
+    function onMove(ev: MouseEvent) {
+      if (!rowResizeStart.current) return;
+      const dy = rowResizeStart.current.y - ev.clientY; // positive when dragging up
+      const next = rowResizeStart.current.scale + dy / 160;
+      setRowScale(Math.max(MIN_ROW_SCALE, Math.min(MAX_ROW_SCALE, next)));
+    }
+    function onUp() {
+      rowResizeStart.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
 
   function updateItem(id: string, patch: Partial<TimelineItem>) {
     setItems((cur) => cur.map((it) => (it.id === id ? { ...it, ...patch } : it)));
@@ -286,6 +351,7 @@ export default function ManualEditModal({
     };
     setItems((cur) => [...cur, newItem]);
     setSelectedId(newItem.id);
+    setMusicSelected(false);
   }
 
   // ---- B-roll overlay track ----
@@ -306,6 +372,7 @@ export default function ManualEditModal({
     setSelectedId(null);
     setSelectedOverlayId(null);
     setSelectedBrollId(newBroll.id);
+    setMusicSelected(false);
   }
   function updateBroll(id: string, patch: Partial<BRollItem>) {
     setBroll((cur) => cur.map((b) => (b.id === id ? { ...b, ...patch } : b)));
@@ -313,6 +380,44 @@ export default function ManualEditModal({
   function removeBroll(id: string) {
     setBroll((cur) => cur.filter((b) => b.id !== id));
     setSelectedBrollId((cur) => (cur === id ? null : cur));
+  }
+
+  // ---- Background music track — a single optional slot, looped/trimmed to
+  // the final render length on export, mixed under the existing clip audio
+  // at `volume` (0-1). ----
+  async function uploadMusicFile(file: File) {
+    if (!MUSIC_MIME_OK.test(file.type)) {
+      setUploadError("Unsupported audio type — use mp3, wav, or m4a for background music.");
+      return;
+    }
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const nodeId = `manual-music-${uid()}`;
+      const form = new FormData();
+      form.append("file", file);
+      form.append("nodeId", nodeId);
+      const res = await fetch(`${apiBase}/upload`, { method: "POST", body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setUploadError(data.error || `Failed to upload ${file.name}`);
+        return;
+      }
+      setMusic({ url: data.url, label: file.name.replace(/\.[^.]+$/, "") || "Background music", volume: DEFAULT_MUSIC_VOLUME });
+      setSelectedId(null);
+      setSelectedOverlayId(null);
+      setSelectedBrollId(null);
+      setMusicSelected(true);
+    } finally {
+      setUploading(false);
+    }
+  }
+  function updateMusic(patch: Partial<MusicTrack>) {
+    setMusic((cur) => (cur ? { ...cur, ...patch } : cur));
+  }
+  function removeMusic() {
+    setMusic(null);
+    setMusicSelected(false);
   }
 
   // Media panel contents = whatever's already wired into this chain on the
@@ -449,6 +554,7 @@ export default function ManualEditModal({
       setSelectedId(null);
       setSelectedOverlayId(null);
       setSelectedBrollId(b.id);
+      setMusicSelected(false);
       const startX = e.clientX;
       const startSec0 = b.startSec;
       function onMove(ev: MouseEvent) {
@@ -557,31 +663,69 @@ export default function ManualEditModal({
   }
 
   // ---- AI auto-caption (real speech-to-text on this clip's actual audio) ----
+  // Shared transcribe call, factored out of autoCaption below so
+  // autoCaptionAll (the whole-timeline "AI Generate Subtitle" button) can
+  // reuse it per-clip without duplicating the fetch/mapping logic.
+  async function transcribeClip(item: TimelineItem): Promise<TextOverlay[]> {
+    if (item.kind !== "video") return [];
+    const res = await fetch(`${apiBase}/manual-transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: item.url, trimStart: item.trimStart, trimEnd: item.trimEnd }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Auto-caption failed");
+    const segs: { start: number; end: number; text: string }[] = Array.isArray(data.segments) ? data.segments : [];
+    return segs.map((s) => ({ id: uid(), itemId: item.id, text: s.text, startSec: s.start, endSec: s.end, position: "bottom" as const, size: "medium" as const, bold: false, color: "#ffffff" }));
+  }
+
   async function autoCaption(item: TimelineItem) {
     if (item.kind !== "video") return;
     setAutoCaptioning(true);
     setAutoCaptionError(null);
     try {
-      const res = await fetch(`${apiBase}/manual-transcribe`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: item.url, trimStart: item.trimStart, trimEnd: item.trimEnd }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Auto-caption failed");
-      const segs: { start: number; end: number; text: string }[] = Array.isArray(data.segments) ? data.segments : [];
-      if (segs.length === 0) {
+      const newOverlays = await transcribeClip(item);
+      if (newOverlays.length === 0) {
         setAutoCaptionError("No clear speech detected in this clip's trimmed range.");
         return;
       }
-      setOverlays((cur) => [
-        // Replaces any overlays already on this clip rather than piling
-        // AI-generated ones on top of hand-written ones.
-        ...cur.filter((o) => o.itemId !== item.id),
-        ...segs.map((s) => ({ id: uid(), itemId: item.id, text: s.text, startSec: s.start, endSec: s.end, position: "bottom" as const, size: "medium" as const, bold: false, color: "#ffffff" })),
-      ]);
+      // Replaces any overlays already on this clip rather than piling
+      // AI-generated ones on top of hand-written ones.
+      setOverlays((cur) => [...cur.filter((o) => o.itemId !== item.id), ...newOverlays]);
     } catch (err: any) {
       setAutoCaptionError(err.message || "Auto-caption failed");
+    } finally {
+      setAutoCaptioning(false);
+    }
+  }
+
+  // "AI Generate Subtitle" toolbar button — captions EVERY video clip on the
+  // timeline in one action, instead of requiring the user to select each
+  // clip and hit the per-clip mic button one at a time. Runs sequentially
+  // (not Promise.all) so autoCaptionError can report which specific clip(s)
+  // failed rather than one race-y combined error, and so the transcription
+  // server isn't hit with N simultaneous requests.
+  async function autoCaptionAll() {
+    const videoItems = items.filter((it) => it.kind === "video");
+    if (videoItems.length === 0) {
+      setAutoCaptionError("Add a video clip to the timeline first.");
+      return;
+    }
+    setAutoCaptioning(true);
+    setAutoCaptionError(null);
+    const failed: string[] = [];
+    try {
+      for (const item of videoItems) {
+        try {
+          const newOverlays = await transcribeClip(item);
+          if (newOverlays.length > 0) {
+            setOverlays((cur) => [...cur.filter((o) => o.itemId !== item.id), ...newOverlays]);
+          }
+        } catch {
+          failed.push(item.label || "a clip");
+        }
+      }
+      if (failed.length) setAutoCaptionError(`Couldn't auto-caption: ${failed.join(", ")}.`);
     } finally {
       setAutoCaptioning(false);
     }
@@ -766,7 +910,13 @@ export default function ManualEditModal({
       const res = await fetch(`${apiBase}/manual-render`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clips, textOverlays, transitions, broll: brollPayload }),
+        body: JSON.stringify({
+          clips,
+          textOverlays,
+          transitions,
+          broll: brollPayload,
+          music: music ? { url: music.url, volume: music.volume } : null,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Export failed");
@@ -919,6 +1069,16 @@ export default function ManualEditModal({
                 e.target.value = "";
               }}
             />
+            <input
+              ref={musicInputRef}
+              type="file"
+              accept="audio/mpeg,audio/mp3,audio/wav,audio/mp4,audio/x-m4a,audio/aac"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length) uploadMusicFile(e.target.files[0]);
+                e.target.value = "";
+              }}
+            />
             <div className="px-3 py-2.5 flex items-center justify-between shrink-0 border-b border-white/5">
               <span className="text-[10px] uppercase tracking-widest text-slate-500 font-medium">📁 Media</span>
               <button
@@ -1048,9 +1208,18 @@ export default function ManualEditModal({
                 🗑
               </IconBtn>
               <IconBtn onClick={() => selected && addOverlay(selected.id, itemDur(selected))} disabled={!selected} title="Add text to selected clip">+T</IconBtn>
-              <IconBtn onClick={() => selected && autoCaption(selected)} disabled={!selected || selected.kind !== "video" || autoCaptioning} title="AI auto-caption selected clip">
+              <IconBtn onClick={() => selected && autoCaption(selected)} disabled={!selected || selected.kind !== "video" || autoCaptioning} title="AI auto-caption selected clip only">
                 {autoCaptioning ? "…" : "🎙"}
               </IconBtn>
+              <button
+                onClick={autoCaptionAll}
+                disabled={autoCaptioning || items.every((it) => it.kind !== "video")}
+                title="AI-generate subtitles for every clip on the timeline"
+                className="h-8 px-2.5 rounded-lg flex items-center gap-1 text-[11px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+                style={{ background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)", color: "#67e8f9" }}
+              >
+                {autoCaptioning ? "Captioning…" : "🪄 AI Subtitles"}
+              </button>
               <div className="flex-1" />
               {autoCaptionError && <span className="text-[10.5px] text-rose-400 mr-2">{autoCaptionError}</span>}
               <span className="text-[10px] text-slate-500">🔍</span>
@@ -1058,7 +1227,18 @@ export default function ManualEditModal({
             </div>
 
             {/* timeline */}
-            <div className="shrink-0 px-4 py-3" style={{ height: TRACK_HEIGHT + 24 }}>
+            {/* Resize handle — drag up to enlarge every row (rowScale),
+                drag down to shrink back toward the default. A thin bar
+                sitting right above the track container so it reads as "pull
+                this edge" rather than a random control. */}
+            <div
+              onMouseDown={beginRowResizeDrag}
+              className="shrink-0 mx-4 h-2.5 rounded-full cursor-ns-resize flex items-center justify-center group"
+              title="Drag to resize timeline rows"
+            >
+              <div className="w-10 h-1 rounded-full bg-white/15 group-hover:bg-cyan-400/70 transition-colors" />
+            </div>
+            <div className="shrink-0 px-4 py-3" style={{ height: trackHeight + 24 }}>
               <div
                 ref={trackRef}
                 onClick={onTrackClick}
@@ -1129,8 +1309,8 @@ export default function ManualEditModal({
                       style={{
                         left: 0,
                         width: Math.max(400, total * zoom + 60),
-                        top: BROLL_ROW_TOP,
-                        height: BROLL_ROW_H,
+                        top: brollRowTop,
+                        height: brollRowH,
                         background: brollDragOver ? "rgba(34,211,238,0.10)" : "rgba(255,255,255,0.02)",
                         border: brollDragOver ? "1px dashed rgba(34,211,238,0.6)" : "1px dashed rgba(255,255,255,0.08)",
                       }}
@@ -1156,14 +1336,15 @@ export default function ManualEditModal({
                           setSelectedBrollId(b.id);
                           setSelectedId(null);
                           setSelectedOverlayId(null);
+                          setMusicSelected(false);
                         }}
                         title={b.label}
                         className="absolute rounded-md overflow-hidden cursor-grab active:cursor-grabbing"
                         style={{
                           left,
                           width,
-                          top: BROLL_ROW_TOP,
-                          height: BROLL_ROW_H,
+                          top: brollRowTop,
+                          height: brollRowH,
                           boxShadow: isSel ? "0 0 0 2px #a78bfa, 0 0 12px -2px rgba(167,139,250,0.8)" : "0 0 0 1px rgba(255,255,255,0.18)",
                           background: "linear-gradient(135deg, rgba(167,139,250,0.9), rgba(139,92,246,0.85))",
                           backgroundImage: thumb ? `linear-gradient(to top, rgba(2,6,23,.55), rgba(2,6,23,.1) 60%), url(${thumb})` : undefined,
@@ -1179,7 +1360,7 @@ export default function ManualEditModal({
                     );
                   })}
                   {items.length > 0 && (
-                    <div className="absolute left-2 text-[9px] text-slate-600 uppercase tracking-wide pointer-events-none" style={{ top: BROLL_ROW_TOP - 12 }}>
+                    <div className="absolute left-2 text-[9px] text-slate-600 uppercase tracking-wide pointer-events-none" style={{ top: brollRowTop - 12 }}>
                       B-roll
                     </div>
                   )}
@@ -1201,13 +1382,15 @@ export default function ManualEditModal({
                           e.stopPropagation();
                           setSelectedId(it.id);
                           setSelectedOverlayId(null);
+                          setSelectedBrollId(null);
+                          setMusicSelected(false);
                         }}
                         className="absolute rounded-lg overflow-hidden cursor-grab active:cursor-grabbing transition-shadow"
                         style={{
                           left,
                           width,
-                          top: VIDEO_ROW_TOP,
-                          height: VIDEO_ROW_H,
+                          top: videoRowTop,
+                          height: videoRowH,
                           boxShadow: isSelected ? "0 0 0 2px #22d3ee, 0 0 16px -2px rgba(34,211,238,0.7)" : "0 0 0 1px rgba(255,255,255,0.08)",
                         }}
                       >
@@ -1238,7 +1421,7 @@ export default function ManualEditModal({
                     const x = offsetOfItem(items, i + 1) * zoom;
                     const trans = transitions[i] || DEFAULT_TRANSITION;
                     return (
-                      <div key={`boundary-${i}`} className="absolute z-20" style={{ left: x - 9, top: VIDEO_ROW_TOP + VIDEO_ROW_H / 2 - 9 }}>
+                      <div key={`boundary-${i}`} className="absolute z-20" style={{ left: x - 9, top: videoRowTop + videoRowH / 2 - 9 }}>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1306,13 +1489,15 @@ export default function ManualEditModal({
                           e.stopPropagation();
                           setSelectedId(o.itemId);
                           setSelectedOverlayId(o.id);
+                          setSelectedBrollId(null);
+                          setMusicSelected(false);
                         }}
                         className="absolute rounded px-1.5 flex items-center text-[9px] text-slate-100 truncate cursor-pointer transition-colors"
                         style={{
                           left,
                           width,
-                          top: TEXT_ROW_TOP,
-                          height: TEXT_ROW_H,
+                          top: textRowTop,
+                          height: textRowH,
                           background: isSel ? "rgba(34,211,238,0.28)" : "rgba(255,255,255,0.06)",
                           border: isSel ? "1px solid rgba(34,211,238,0.7)" : "1px solid rgba(255,255,255,0.12)",
                         }}
@@ -1323,8 +1508,67 @@ export default function ManualEditModal({
                     );
                   })}
                   {items.length > 0 && (
-                    <div className="absolute left-2 text-[9px] text-slate-600 uppercase tracking-wide pointer-events-none" style={{ top: TEXT_ROW_TOP - 12 }}>
+                    <div className="absolute left-2 text-[9px] text-slate-600 uppercase tracking-wide pointer-events-none" style={{ top: textRowTop - 12 }}>
                       Text
+                    </div>
+                  )}
+
+                  {/* music row — a single background-music slot dropped/
+                      uploaded here, spans the whole track width (loops or
+                      trims to match on export) with a volume slider in the
+                      Properties panel when selected. */}
+                  {items.length > 0 && (
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "copy";
+                        setMusicDragOver(true);
+                      }}
+                      onDragLeave={() => setMusicDragOver(false)}
+                      onDrop={async (e) => {
+                        e.preventDefault();
+                        setMusicDragOver(false);
+                        if (e.dataTransfer.files && e.dataTransfer.files.length) {
+                          await uploadMusicFile(e.dataTransfer.files[0]);
+                        }
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (music) {
+                          setSelectedId(null);
+                          setSelectedOverlayId(null);
+                          setSelectedBrollId(null);
+                          setMusicSelected(true);
+                        } else {
+                          musicInputRef.current?.click();
+                        }
+                      }}
+                      className="absolute rounded-lg transition-colors cursor-pointer overflow-hidden"
+                      style={{
+                        left: 0,
+                        width: Math.max(400, total * zoom + 60),
+                        top: musicRowTop,
+                        height: musicRowH,
+                        background: musicSelected
+                          ? "rgba(52,211,153,0.22)"
+                          : musicDragOver
+                          ? "rgba(52,211,153,0.14)"
+                          : "rgba(255,255,255,0.02)",
+                        border: musicSelected
+                          ? "1px solid rgba(52,211,153,0.7)"
+                          : musicDragOver
+                          ? "1px dashed rgba(52,211,153,0.6)"
+                          : "1px dashed rgba(255,255,255,0.08)",
+                      }}
+                    >
+                      <span className="absolute inset-0 flex items-center px-2 text-[9.5px] text-slate-300 pointer-events-none truncate gap-1">
+                        {music ? `🎵 ${music.label}` : "Drop or click to add background music"}
+                      </span>
+                    </div>
+                  )}
+                  {items.length > 0 && (
+                    <div className="absolute left-2 text-[9px] text-slate-600 uppercase tracking-wide pointer-events-none" style={{ top: musicRowTop - 12 }}>
+                      Music
                     </div>
                   )}
 
@@ -1342,7 +1586,44 @@ export default function ManualEditModal({
           <div className="w-72 shrink-0 border-l border-white/10 flex flex-col min-h-0">
             <div className="px-3 py-2.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium shrink-0 border-b border-white/5">⚙️ Properties</div>
             <div className="flex-1 overflow-y-auto p-3">
-              {selectedBrollId && !selected ? (
+              {musicSelected && !selected && !selectedBrollId && music ? (
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <span className="text-sm text-slate-100 font-medium block truncate">🎵 {music.label}</span>
+                    <span className="text-[10.5px] text-slate-500">Background music</span>
+                  </div>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10.5px] text-slate-500">Volume — {Math.round(music.volume * 100)}%</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={music.volume}
+                      onChange={(e) => updateMusic({ volume: Number(e.target.value) })}
+                      className="accent-emerald-400"
+                    />
+                  </label>
+                  <p className="text-[10px] text-slate-600">
+                    Plays under the clips' own audio for the whole video, looping or trimming to match the final length.
+                  </p>
+                  <button
+                    onClick={() => musicInputRef.current?.click()}
+                    disabled={uploading}
+                    className="text-[11px] px-3 py-1.5 rounded-lg text-cyan-300 hover:text-cyan-200 disabled:opacity-40 transition-colors self-start"
+                    style={{ background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)" }}
+                  >
+                    Replace track
+                  </button>
+                  <button
+                    onClick={removeMusic}
+                    className="text-[11px] px-3 py-1.5 rounded-lg text-rose-300 hover:text-rose-200 transition-colors self-start"
+                    style={{ background: "rgba(244,63,94,0.1)", border: "1px solid rgba(244,63,94,0.3)" }}
+                  >
+                    Remove music
+                  </button>
+                </div>
+              ) : selectedBrollId && !selected ? (
                 (() => {
                   const b = broll.find((x) => x.id === selectedBrollId);
                   if (!b) return null;

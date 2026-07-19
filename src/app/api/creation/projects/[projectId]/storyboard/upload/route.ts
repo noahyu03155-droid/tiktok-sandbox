@@ -18,6 +18,14 @@ const EXT_BY_MIME: Record<string, string> = {
   "image/png": "png",
   "image/webp": "webp",
   "image/gif": "gif",
+  // Background-music uploads for Manual Edit's music track.
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/aac": "aac",
 };
 
 export async function POST(req: NextRequest, { params }: { params: { projectId: string } }) {
@@ -38,7 +46,11 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
       { status: 400 }
     );
   }
-  const kind: "video" | "image" = file.type.startsWith("video/") ? "video" : "image";
+  const kind: "video" | "image" | "audio" = file.type.startsWith("video/")
+    ? "video"
+    : file.type.startsWith("audio/")
+    ? "audio"
+    : "image";
 
   const dir = path.join(getMediaDir(), "storyboard", params.projectId);
   fs.mkdirSync(dir, { recursive: true });

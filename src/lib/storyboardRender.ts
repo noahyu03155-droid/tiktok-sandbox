@@ -931,6 +931,17 @@ export interface ManualEditBRollInput {
   label: string;
 }
 
+// A single optional background-music track for the whole manual-edit export
+// — unlike B-roll (positioned at a specific point) this spans the entire
+// final video, looped if shorter than the render or trimmed if longer (see
+// the `-stream_loop -1` + `amix=duration=first` mixing pass at the end of
+// startManualRenderJob), mixed under whatever audio the clips themselves
+// already have at `volume` (0-1).
+export interface ManualEditMusicInput {
+  url: string;
+  volume: number;
+}
+
 // One entry per boundary BETWEEN adjacent clips in the manual-edit timeline
 // (so `clips.length - 1` entries) — lets the creator pick a different
 // transition at each cut, unlike the AI render pipeline's one preset for
@@ -1083,6 +1094,7 @@ export function startManualRenderJob(
   textOverlays: ManualEditTextOverlay[],
   transitions: ManualEditTransition[],
   broll: ManualEditBRollInput[],
+  music: ManualEditMusicInput | null,
   outDir: string,
   publicUrlPrefix: string
 ): { started: boolean; job: RenderJob } {
@@ -1323,6 +1335,45 @@ export function startManualRenderJob(
       // mergeSequentialWithTransitions's doc comment for why this path uses
       // a different merge strategy than the AI pipeline's binary tree.
       await mergeSequentialWithTransitions(segmentPaths, segDurations, transitions, tmpDir, finalPath);
+
+      // Background music — mixed in as a final pass over the assembled
+      // video rather than per-clip, since it's meant to play continuously
+      // underneath the whole thing regardless of where cuts/transitions
+      // land. `-stream_loop -1` on the music input loops it indefinitely so
+      // a short track still covers a longer video; `amix=duration=first`
+      // then trims the mixed audio back down to the video's own (first
+      // input's) length either way, so it works whether the track is
+      // shorter OR longer than the final render. Best-effort: a bad/missing
+      // music file just means the export ships without it rather than
+      // failing the whole render.
+      if (music && music.url) {
+        const musicSrc = mediaPathFromUrl(music.url);
+        if (musicSrc && fs.existsSync(musicSrc)) {
+          job.step = "Mixing background music...";
+          try {
+            const mixedPath = path.join(tmpDir, "final_with_music.mp4");
+            const vol = Math.max(0, Math.min(1, music.volume));
+            await runFfmpeg(
+              [
+                "-y",
+                "-i", finalPath,
+                "-stream_loop", "-1", "-i", musicSrc,
+                "-filter_complex",
+                `[1:a]volume=${vol.toFixed(2)}[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0[aout]`,
+                "-map", "0:v:0", "-map", "[aout]",
+                "-c:v", "copy",
+                ...AAC_OUT,
+                "-shortest",
+                mixedPath,
+              ],
+              SINGLE_SHOT_TIMEOUT_MS
+            );
+            fs.copyFileSync(mixedPath, finalPath);
+          } catch {
+            // Ship without music rather than failing the export.
+          }
+        }
+      }
 
       job.result = { url: `${publicUrlPrefix}/manual-render.mp4`, skipped, styleApplied: null, appliedFeedback: null };
       job.status = "done";
