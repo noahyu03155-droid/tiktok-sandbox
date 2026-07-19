@@ -488,6 +488,21 @@ export interface StoryboardState {
   // reference's *editing rhythm*, then applies that rhythm to the user's
   // own footage.
   styleProfile?: StoryboardStyleProfile | null;
+  // The most recent AI render's result card — persisted here (part of the
+  // normal autosaved board) rather than kept as purely local React state, so
+  // the finished-video card stays visible on the canvas across a reload/
+  // revisit instead of vanishing the moment the tab closes. Cleared only
+  // when the user explicitly dismisses the card (✕) or a new render for the
+  // same chain replaces it. chainTailId records which chain-tail's card this
+  // belongs to, so StoryboardCanvas.tsx can re-anchor it under the right
+  // Generate button on load.
+  lastRenderResult?: {
+    chainTailId: string;
+    url: string;
+    skipped: string[];
+    styleApplied: { pacing: string; transition: string; notes: string } | null;
+    appliedFeedback: { notes: string } | null;
+  } | null;
 }
 
 export type StoryboardPacing = "fast" | "medium" | "slow";

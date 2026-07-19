@@ -426,7 +426,15 @@ export default function StoryboardCanvas({
   // the question is asked fresh every time Generate/Regenerate is clicked.
   const [captionsPromptOpen, setCaptionsPromptOpen] = useState(false);
   const [rendering, setRendering] = useState(false);
-  const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null>(null);
+  // Seeded from board.lastRenderResult (part of the persisted, autosaved
+  // board — see StoryboardState in types.ts) rather than starting blank, so
+  // a finished render's card is still there after a reload/revisit instead
+  // of vanishing the moment the tab closed. Kept in sync with board on every
+  // completed render (see applyRenderJob) and cleared from both places
+  // together when the user explicitly dismisses the card.
+  const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null>(
+    () => (initialStoryboard?.lastRenderResult ? { ...initialStoryboard.lastRenderResult } : null)
+  );
   const [renderError, setRenderError] = useState<string | null>(null);
   // Which chain-tail node the current/last render belongs to — the render
   // result card is drawn on the canvas anchored under THIS tail's Generate
@@ -436,7 +444,9 @@ export default function StoryboardCanvas({
   // Generate/Regenerate is clicked, before the captions modal even resolves,
   // so chooseCaptionsAndRender knows which tail to actually send.
   const [pendingRenderTailId, setPendingRenderTailId] = useState<string | null>(null);
-  const [renderChainTailId, setRenderChainTailId] = useState<string | null>(null);
+  const [renderChainTailId, setRenderChainTailId] = useState<string | null>(
+    () => initialStoryboard?.lastRenderResult?.chainTailId ?? null
+  );
   // "✂️ Manual Edit" — a simplified in-website timeline editor (see
   // ManualEditModal.tsx) for creators who want more precise hands-on control
   // than the AI render gives them, without needing a separate app like
@@ -1333,15 +1343,26 @@ export default function StoryboardCanvas({
   // returns (see src/lib/storyboardRender.ts's RenderJob) — this both
   // updates the live progress display and, once the job leaves "running",
   // stops polling and resolves renderVideo()'s outer busy state.
-  function applyRenderJob(job: {
-    status: "running" | "done" | "error";
-    totalShots: number;
-    completedShots: number;
-    step: string;
-    avgSecPerShot: number | null;
-    result: { url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null;
-    error: string | null;
-  } | null | undefined) {
+  //
+  // `tailId` is passed explicitly by the caller (renderVideo) rather than
+  // read off the renderChainTailId state var — state updates from
+  // setRenderChainTailId are async/batched, so a closure over the state
+  // value here could still see the PREVIOUS chain's id if this fires very
+  // soon after Generate/Regenerate was clicked. Threading it through as a
+  // real parameter instead means the board always gets tagged with the
+  // chain this specific job actually belongs to, no race possible.
+  function applyRenderJob(
+    job: {
+      status: "running" | "done" | "error";
+      totalShots: number;
+      completedShots: number;
+      step: string;
+      avgSecPerShot: number | null;
+      result: { url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null;
+      error: string | null;
+    } | null | undefined,
+    tailId: string | null
+  ) {
     if (!job) return;
     setRenderProgress({
       completedShots: job.completedShots,
@@ -1361,6 +1382,12 @@ export default function StoryboardCanvas({
       // Download link to actually fetch the file that was just generated.
       const result = job.result ? { ...job.result, url: `${job.result.url}?t=${Date.now()}` } : job.result;
       setRenderResult(result);
+      // Persist onto the board (autosaved like everything else) so this
+      // card survives a reload instead of only living in local React state
+      // — the user has to explicitly dismiss it (✕) for it to go away.
+      if (result && tailId) {
+        setBoard((b) => ({ ...b, lastRenderResult: { chainTailId: tailId, ...result } }));
+      }
       stopRenderPoll();
       setRendering(false);
     } else if (job.status === "error") {
@@ -1377,12 +1404,12 @@ export default function StoryboardCanvas({
     }
   }
 
-  async function pollRenderStatus() {
+  async function pollRenderStatus(tailId: string | null) {
     try {
       const res = await fetch(`${apiBase}/render`, { cache: "no-store" });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Failed to check render status");
-      applyRenderJob(data.job);
+      applyRenderJob(data.job, tailId);
     } catch {
       // A single poll failing (network blip) isn't fatal — the next tick 2s
       // later just tries again. Only an error the SERVER actually reports
@@ -1424,12 +1451,12 @@ export default function StoryboardCanvas({
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Render failed");
-      applyRenderJob(data.job);
+      applyRenderJob(data.job, chainTailId);
       // Only keep polling if the job is still running after this first
       // response — a 1-shot render can already be "done" by the time the
       // POST itself returns.
       if (data.job?.status === "running") {
-        renderPollTimer.current = setInterval(pollRenderStatus, 2000);
+        renderPollTimer.current = setInterval(() => pollRenderStatus(chainTailId), 2000);
       }
     } catch (err: any) {
       setRenderError(err.message || "Render failed");
@@ -1540,6 +1567,15 @@ export default function StoryboardCanvas({
   const chainTails = resolveChainTails(board.nodes, board.connections).filter(
     (t) => t.chainLength >= MIN_CHAIN_LENGTH_FOR_GENERATE
   );
+
+  // Every real, non-reference clip attached anywhere on the board (not just
+  // the chain Manual Edit was opened from) — ManualEditModal's "+ Add clip"
+  // picker lets the user pull any of these into their manual timeline, same
+  // idea as CapCut's own media library panel but backed by clips already
+  // uploaded in this project instead of a fresh import flow.
+  const boardClips: ManualEditSourceClip[] = board.nodes
+    .filter((n) => n.clip && n.clip.source !== "tiktok")
+    .map((n) => ({ nodeId: n.id, url: n.clip!.url, kind: n.clip!.kind, label: n.label || "Untitled shot" }));
 
   // Chain HEADS — the mirror-image anchor point of chainTails above: a node
   // with an outgoing connection but no incoming one, i.e. the start of a
@@ -2366,6 +2402,10 @@ export default function StoryboardCanvas({
                           setRenderError(null);
                           setRenderResult(null);
                           setRenderChainTailId(null);
+                          // Explicit dismiss is the only thing that clears
+                          // the persisted card — a reload/revisit should
+                          // still show it otherwise (see applyRenderJob).
+                          setBoard((b) => ({ ...b, lastRenderResult: null }));
                         }}
                         className="text-zinc-500 hover:text-zinc-900 shrink-0"
                       >
@@ -2645,7 +2685,12 @@ export default function StoryboardCanvas({
         })()}
 
       {manualEditClips && (
-        <ManualEditModal apiBase={apiBase} initialClips={manualEditClips} onClose={() => setManualEditClips(null)} />
+        <ManualEditModal
+          apiBase={apiBase}
+          initialClips={manualEditClips}
+          boardClips={boardClips}
+          onClose={() => setManualEditClips(null)}
+        />
       )}
 
       {captionsPromptOpen && (
