@@ -42,10 +42,16 @@ Output ONLY a single JSON object (no text outside the JSON, no markdown code fen
   ]
 }
 
+Writing principles — every line you write should be doing a specific sales job, not just filling space:
+- Function over detail: before writing each stage's script, decide what job it needs to do (plant a want, name a pain, offer proof, hand a reason to buy) — write to accomplish that job, don't pad with decorative scene-setting or generic adjectives that don't do anything.
+- Never write filler: a line of hollow self-praise standing alone ("I'm obsessed with this", "this is my favorite ever", "so good") with no concrete claim, benefit, or result attached is filler — it does no sales work. If you want an enthusiastic beat, attach it to something real (a specific benefit, a visible result, a reason).
+- The "Desired Outcome" stage is the aspiration — the state the customer wants but doesn't have yet — not a rehash of product Benefits. It often lands harder visually than verbally: for this stage specifically, use the "direction" field to suggest an actual on-camera demonstration or visible reaction (e.g. "show the product actually working — a close-up of the result" / "cut to a genuine, unscripted-looking reaction after trying it") rather than just describing more spoken lines. A shown payoff sells the outcome better than a told one.
+- The "CTA" stage's script must contain an explicit call to buy (mentioning a link, "go grab it", "order now", a discount code) — not just a warm closing thought or a benefits recap with no actual purchase prompt.
+
 Requirements:
 - The "script" field should be conversational and ready to read aloud, roughly the same length as the corresponding stage in the original video.
 - Selling points and pain points must come from our product's actual info — don't invent features the original video's product had but ours doesn't.
-- The "direction" field should be one short, actionable filming tip.
+- The "direction" field should be one short, actionable filming tip — for the Desired Outcome stage in particular, favor a visual/demonstration direction over a purely verbal one (see writing principles above).
 - Write everything in English.
 - Target a natural total spoken duration across all 6 stages of roughly 40-50 seconds when read aloud (rarely more than 60) — pace each stage's script length accordingly; don't pad any stage just to fill time.
 - The "Reaction" stage's script should be a single sharp reactive beat, roughly 2-3 seconds when read aloud — a short exclamation or visible reaction, not an explanation.
@@ -163,10 +169,16 @@ Output ONLY a single JSON object (no text outside the JSON, no markdown code fen
   ]
 }
 
+Writing principles — every line should be doing a specific sales job, not just filling space:
+- Function over detail: decide what job each stage's script needs to do (plant a want, name a pain, offer proof, hand a reason to buy) and write to accomplish that, not to decorate with scene-setting or generic adjectives.
+- Never write filler: hollow self-praise standing alone ("I'm obsessed", "this is amazing") with no concrete claim/benefit/result attached does no sales work — skip it, or attach the enthusiasm to something real.
+- "Desired Outcome" is the not-yet-achieved aspiration, not a Benefits rehash, and it usually lands better shown than told: use "direction" to suggest an actual on-camera demonstration or visible reaction for this stage specifically, rather than only more spoken lines.
+- "CTA" must contain an explicit call to buy (a link, "go grab it", "order now", a code) — not just a warm closing thought with no real purchase prompt.
+
 Requirements:
 - The "script" field should be conversational and ready to read aloud.
 - Selling points must come from our product's actual info — don't invent features the reference's product had but ours doesn't.
-- The "direction" field should be one short, actionable filming tip.
+- The "direction" field should be one short, actionable filming tip — for Desired Outcome, favor a visual/demonstration direction (see writing principles above).
 - Write everything in English.
 - Target a natural total spoken duration across all 6 stages of roughly 40-50 seconds when read aloud (rarely more than 60).
 - The "Reaction" stage's script should be a single sharp reactive beat, roughly 2-3 seconds when read aloud.
@@ -268,6 +280,7 @@ Requirements:
 - Directly address the feedback given — don't just lightly reword the original.
 - Keep it grounded in the product's actual info; don't invent features.
 - Keep roughly the same length/pacing as the original unless the feedback asks for a length change.
+- Every line should do a specific sales job (plant a want, name a pain, offer proof, hand a reason to buy) — avoid hollow filler like unattached self-praise ("I love this so much") that doesn't actually claim or prove anything.
 - Write in English.`;
 
 interface RefineStageInput {

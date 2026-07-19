@@ -147,6 +147,12 @@ export async function pickBestSegment(opts: {
           `similarly on-topic, or you're unsure, default to the LATER one rather than the earlier one. Don't just ` +
           `pick the first frame where the right action starts; the payoff is very often several seconds after ` +
           `that, sometimes near the very end of the clip. ` +
+          `A genuine reaction is emotion attached to something actually being shown or achieved (a visible result, ` +
+          `the product working, a before/after) — that's the strongest signal to look for, not just an animated ` +
+          `expression in isolation. If the shot's text above includes an explicit filming/camera direction (often ` +
+          `marked with 🎬, e.g. "show a close-up reaction after trying it" or "demonstrate the product working") ` +
+          `treat that as a literal, high-priority instruction for which visual moment to find — it's telling you ` +
+          `exactly what should be on screen. ` +
           `Respond with ONLY a JSON object: {"start_sec": <number>}`,
       },
       ...frames.map((f) => ({
