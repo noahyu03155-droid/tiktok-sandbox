@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { getMediaDir, getVideo } from "@/lib/db";
 import { videoAccessError } from "@/lib/videoAuth";
-import { startManualRenderJob, getRenderJob, type ManualEditClipInput, type ManualEditTextOverlay, type ManualEditTransition } from "@/lib/storyboardRender";
+import { startManualRenderJob, getRenderJob, type ManualEditClipInput, type ManualEditTextOverlay, type ManualEditTransition, type ManualEditBRollInput } from "@/lib/storyboardRender";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +28,7 @@ export async function POST(
   const clips: ManualEditClipInput[] = Array.isArray(body?.clips) ? body.clips : [];
   const textOverlays: ManualEditTextOverlay[] = Array.isArray(body?.textOverlays) ? body.textOverlays : [];
   const transitions: ManualEditTransition[] = Array.isArray(body?.transitions) ? body.transitions : [];
+  const broll: ManualEditBRollInput[] = Array.isArray(body?.broll) ? body.broll : [];
 
   const outDir = path.join(getMediaDir(), "storyboard", params.scriptId);
   const { job } = startManualRenderJob(
@@ -35,6 +36,7 @@ export async function POST(
     clips,
     textOverlays,
     transitions,
+    broll,
     outDir,
     `/api/media/storyboard/${params.scriptId}`
   );

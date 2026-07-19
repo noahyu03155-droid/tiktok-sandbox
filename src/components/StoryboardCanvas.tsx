@@ -483,12 +483,44 @@ export default function StoryboardCanvas({
   // this is what ManualEditModal starts its timeline from, so "Manual Edit"
   // always opens already populated with whatever this chain currently
   // renders, not an empty project.
+  // Best-effort title for a "Your Works" entry — prefers a connected
+  // product's title (most Generate chains are built around one), falls
+  // back to the tail node's own label, then a generic placeholder. Never
+  // throws; this only feeds a nice-to-have list label, not anything
+  // functional.
+  function deriveWorkTitle(tailId: string): string {
+    try {
+      const scopedIds = resolveChainNodeIds(tailId, board.connections);
+      const scoped = board.nodes.filter((n) => scopedIds.has(n.id));
+      const withProduct = scoped.find((n) => n.productRef?.title);
+      if (withProduct?.productRef?.title) return withProduct.productRef.title;
+      const tail = board.nodes.find((n) => n.id === tailId);
+      if (tail?.label) return tail.label;
+      return "Storyboard video";
+    } catch {
+      return "Storyboard video";
+    }
+  }
+
+  // Auto-save every finished render into "Your Works" (src/app/favorites'
+  // 3rd tab) — fire-and-forget, no UI feedback needed since this isn't a
+  // user-initiated action, just a side effect of a render finishing. Best
+  // effort: if this POST fails the render itself is completely unaffected,
+  // the user just won't see this particular cut listed under Your Works.
+  function saveToWorks(url: string, title: string, source: "storyboard" | "manual-edit") {
+    fetch("/api/works", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, title, source }),
+    }).catch(() => {});
+  }
+
   function openManualEdit(tailId: string) {
     const scopedIds = resolveChainNodeIds(tailId, board.connections);
     const ordered = resolveStoryboardOrder(board.nodes, board.connections).filter((n) => scopedIds.has(n.id));
     const clips: ManualEditSourceClip[] = ordered
       .filter((n) => n.clip && n.clip.source !== "tiktok")
-      .map((n) => ({ nodeId: n.id, url: n.clip!.url, kind: n.clip!.kind, label: n.label || "Untitled shot" }));
+      .map((n) => ({ nodeId: n.id, url: n.clip!.url, kind: n.clip!.kind, label: n.label || "Untitled shot", script: n.instruction || undefined }));
     setManualEditClips(clips);
   }
 
@@ -1473,6 +1505,7 @@ export default function StoryboardCanvas({
         // away. Keyed by chain, so a DIFFERENT chain's already-finished
         // card is untouched by this write.
         setBoard((b) => ({ ...b, lastRenderResults: { ...(b.lastRenderResults || {}), [tailId]: result } }));
+        saveToWorks(result.url, deriveWorkTitle(tailId), "storyboard");
       }
       stopRenderPoll();
       setRendering(false);
@@ -1678,7 +1711,7 @@ export default function StoryboardCanvas({
   });
   const boardClips: ManualEditSourceClip[] = board.nodes
     .filter((n) => n.clip && n.clip.source !== "tiktok" && connectedNodeIds.has(n.id))
-    .map((n) => ({ nodeId: n.id, url: n.clip!.url, kind: n.clip!.kind, label: n.label || "Untitled shot" }));
+    .map((n) => ({ nodeId: n.id, url: n.clip!.url, kind: n.clip!.kind, label: n.label || "Untitled shot", script: n.instruction || undefined }));
 
   // Chain HEADS — the mirror-image anchor point of chainTails above: a node
   // with an outgoing connection but no incoming one, i.e. the start of a

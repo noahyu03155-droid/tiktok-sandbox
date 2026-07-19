@@ -420,7 +420,14 @@ const CAPTION_SCALE = H / 1280;
 // the caption tracking what's being said moment-to-moment. This makes it
 // read like real subtitles, one phrase appearing exactly when it's spoken
 // and gone when it isn't.
-function timedCaptionFilter(tmpDir: string, shotIndex: number, segments: TranscriptSegment[], style: CaptionStylePreset): string | null {
+// `clipStartSec` is the SAME value passed to this shot's own `-ss` when
+// encoding the segment below (`startSec` in the video branch of the loop
+// this is called from) — see the doc comment on the call site for why it
+// has to be added in here rather than left at 0. Segments come in already
+// shot-relative (0 = startSec, per transcribeShotAudio's own doc comment),
+// so this just re-expresses that shot-relative time in the absolute source
+// timeline drawtext's `enable=between(t,...)` actually evaluates against.
+function timedCaptionFilter(tmpDir: string, shotIndex: number, segments: TranscriptSegment[], style: CaptionStylePreset, clipStartSec: number): string | null {
   const fontsize = Math.round(32 * CAPTION_SCALE);
   const lineSpacing = Math.round(8 * CAPTION_SCALE);
   const boxBorder = Math.round(14 * CAPTION_SCALE);
@@ -431,8 +438,8 @@ function timedCaptionFilter(tmpDir: string, shotIndex: number, segments: Transcr
     if (!wrapped) return;
     const capPath = path.join(tmpDir, `cap${shotIndex}_${i}.txt`);
     fs.writeFileSync(capPath, wrapped);
-    const start = Math.max(0, seg.start).toFixed(2);
-    const end = Math.max(seg.start + 0.1, seg.end).toFixed(2);
+    const start = Math.max(0, clipStartSec + seg.start).toFixed(2);
+    const end = Math.max(clipStartSec + seg.start + 0.1, clipStartSec + seg.end).toFixed(2);
     // Commas inside the between(...) call must be backslash-escaped —
     // ffmpeg's filtergraph parser otherwise reads them as filter-chain
     // separators, same reason the outer filters are joined with plain ','.
@@ -770,7 +777,20 @@ export function startRenderJob(
           intendedSec = targetSec;
           if (captionsMode === "auto" && hasAudio) {
             const segments = await transcribeShotAudio(srcPath, startSec, targetSec, clipDurationSec, tmpDir, i);
-            if (segments) caption = timedCaptionFilter(tmpDir, i, segments, captionStyle);
+            // `startSec` here is the SAME value fed to `-ss` below. Passed
+            // through so timedCaptionFilter can express its drawtext
+            // enable= windows in absolute source time — see that function's
+            // doc comment for why: `-ss` positioned after `-vf` (as it is
+            // here) trims the OUTPUT after filtering runs, so drawtext's own
+            // internal `t` clock is measured against the untrimmed source,
+            // not the trimmed shot. Confirmed by direct ffmpeg testing
+            // (enable='between(t,0,dur)' with a trailing `-ss startSec`
+            // stayed invisible the whole trimmed clip; only
+            // between(t,startSec,startSec+dur) actually showed it) — without
+            // this, any shot where the AI picked a non-zero start point
+            // (i.e. most shots on a source video longer than the target
+            // speech length) would burn captions in at the wrong moment.
+            if (segments) caption = timedCaptionFilter(tmpDir, i, segments, captionStyle, startSec);
           }
           if (hasAudio) {
             await runFfmpeg([
@@ -890,6 +910,27 @@ export interface ManualEditTextOverlay {
   color?: string;
 }
 
+// A clip dropped onto ManualEditModal.tsx's B-roll row — positioned by
+// absolute time on the GLOBAL timeline (unlike ManualEditClipInput, which is
+// ordered/concatenated end-to-end), so it can overlap whichever base clip(s)
+// happen to be playing during [startSec, startSec+duration). Composited on
+// top of the base video during that window via ffmpeg's `overlay` filter —
+// see the B-roll handling inside startManualRenderJob's per-clip loop below.
+// v1 simplification: a B-roll segment spanning a cut between two base clips
+// is truncated to just the first clip's remaining time rather than split
+// across the boundary (splitting would mean building the SAME overlay twice
+// against two different clip segments, correctly time-shifted in each —
+// doable but not worth the complexity for how rarely a dragged B-roll clip
+// would land exactly on a cut).
+export interface ManualEditBRollInput {
+  url: string;
+  kind: "video" | "image";
+  startSec: number; // position on the whole timeline's global clock
+  duration: number;
+  trimStart: number; // in-point within the broll's OWN source (video only)
+  label: string;
+}
+
 // One entry per boundary BETWEEN adjacent clips in the manual-edit timeline
 // (so `clips.length - 1` entries) — lets the creator pick a different
 // transition at each cut, unlike the AI render pipeline's one preset for
@@ -912,7 +953,18 @@ function toFfmpegColor(hex: string | undefined): string {
   return "white";
 }
 
-function manualCaptionFilter(tmpDir: string, clipIndex: number, overlays: ManualEditTextOverlay[]): string | null {
+// `clipTrimStart` is the SAME value this clip's own `-ss` uses below (see
+// startManualRenderJob's call site) — required for the same reason
+// timedCaptionFilter (the AI-render pipeline's equivalent, above) takes a
+// `clipStartSec` param: an output-positioned `-ss` trims AFTER filtering
+// runs, so drawtext's `enable=between(t,...)` is evaluated against the
+// UNTRIMMED source's own timeline, not the trimmed clip's — confirmed by
+// direct ffmpeg testing. o.startSec/o.endSec are authored as "seconds after
+// this clip's own trim point" (per TextOverlay's doc comment on the client),
+// so clipTrimStart has to be added back in here to land at the right
+// absolute moment. Without this, any clip trimmed at the start (trimStart >
+// 0) would burn its captions in `trimStart` seconds too late.
+function manualCaptionFilter(tmpDir: string, clipIndex: number, overlays: ManualEditTextOverlay[], clipTrimStart: number): string | null {
   const forThisClip = overlays.filter((o) => o.clipIndex === clipIndex && o.text.trim());
   if (forThisClip.length === 0) return null;
   const boxBorder = Math.round(14 * CAPTION_SCALE);
@@ -920,8 +972,8 @@ function manualCaptionFilter(tmpDir: string, clipIndex: number, overlays: Manual
   const parts = forThisClip.map((o, i) => {
     const capPath = path.join(tmpDir, `mcap${clipIndex}_${i}.txt`);
     fs.writeFileSync(capPath, wrapCaption(o.text, "descriptive"));
-    const start = Math.max(0, o.startSec).toFixed(2);
-    const end = Math.max(o.startSec + 0.1, o.endSec).toFixed(2);
+    const start = Math.max(0, clipTrimStart + o.startSec).toFixed(2);
+    const end = Math.max(clipTrimStart + o.startSec + 0.1, clipTrimStart + o.endSec).toFixed(2);
     const fontsize = Math.round((OVERLAY_SIZE_PX[o.size || "medium"]) * CAPTION_SCALE);
     const yExpr = o.position === "top" ? `${margin}` : o.position === "center" ? `(h-th)/2` : `h-th-${margin}`;
     const fontFile = o.bold ? CAPTION_FONT_FILE_BOLD : CAPTION_FONT_FILE;
@@ -929,6 +981,45 @@ function manualCaptionFilter(tmpDir: string, clipIndex: number, overlays: Manual
     return `drawtext=fontfile=${fontFile}:textfile=${capPath}:reload=0:fontcolor=${fontColor}:fontsize=${fontsize}:box=1:boxcolor=black@0.5:boxborderw=${boxBorder}:x=(w-text_w)/2:y=${yExpr}:enable='between(t\\,${start}\\,${end})'`;
   });
   return parts.join(",");
+}
+
+// Builds a filter_complex graph that composites 0+ B-roll segments on top of
+// a single base clip (input 0) — one `overlay` step per segment, each gated
+// to its own [absStart, absEnd) window via `enable=between(t,...)`, same
+// time-gating pattern (and same absolute-source-time basis — see
+// manualCaptionFilter's doc comment above) as the caption drawtext filters.
+// Only called when there's at least one B-roll segment overlapping this
+// clip; otherwise the caller keeps using the plain, single-input `-vf` path
+// unchanged. Returns the name of the final composited (and, if `caption` is
+// set, captioned) video pad to `-map`.
+function buildBrollFilterComplex(
+  baseFilter: string,
+  brollScalePad: string,
+  caption: string | null,
+  firstBrollInputIndex: number,
+  segments: { absStart: number; absEnd: number }[]
+): { filterComplex: string; videoPad: string } {
+  const parts: string[] = [`[0:v]${baseFilter}[base]`];
+  let cur = "base";
+  segments.forEach((seg, i) => {
+    const inIdx = firstBrollInputIndex + i;
+    const brollPad = `broll${i}`;
+    const overlayPad = `ov${i}`;
+    // Always scaled/padded to the same WxH output canvas as the base clip
+    // and drawn at 0,0 — a full-frame cutaway rather than a corner
+    // picture-in-picture, the more common B-roll convention and much
+    // simpler to get right than a scaled/positioned inset.
+    parts.push(`[${inIdx}:v]${brollScalePad}[${brollPad}]`);
+    parts.push(
+      `[${cur}][${brollPad}]overlay=0:0:enable='between(t\\,${seg.absStart.toFixed(2)}\\,${seg.absEnd.toFixed(2)})'[${overlayPad}]`
+    );
+    cur = overlayPad;
+  });
+  if (caption) {
+    parts.push(`[${cur}]${caption}[capped]`);
+    cur = "capped";
+  }
+  return { filterComplex: parts.join(";"), videoPad: cur };
 }
 
 // Merges segments STRICTLY in order, left to right, using a possibly
@@ -991,6 +1082,7 @@ export function startManualRenderJob(
   clips: ManualEditClipInput[],
   textOverlays: ManualEditTextOverlay[],
   transitions: ManualEditTransition[],
+  broll: ManualEditBRollInput[],
   outDir: string,
   publicUrlPrefix: string
 ): { started: boolean; job: RenderJob } {
@@ -1042,6 +1134,11 @@ export function startManualRenderJob(
     try {
       const segmentPaths: string[] = [];
       const segDurations: number[] = [];
+      // Nominal-duration accumulator matching the CLIENT's own timeline math
+      // (itemDur/offsetOfItem in ManualEditModal.tsx) — this is what lets a
+      // B-roll block dropped at, say, "6.2s into the whole sequence" get
+      // matched back to whichever base clip actually covers that moment.
+      let clipGlobalStart = 0;
 
       for (let i = 0; i < clips.length; i++) {
         const clip = clips[i];
@@ -1052,50 +1149,157 @@ export function startManualRenderJob(
           job.completedShots++;
           continue;
         }
-        const caption = manualCaptionFilter(tmpDir, i, textOverlays);
+        // Images always play from their own t=0 (no trim-start concept for
+        // a still), so only video clips need the offset.
+        const clipTrimStart = clip.kind === "video" ? clip.trimStart : 0;
+        const caption = manualCaptionFilter(tmpDir, i, textOverlays, clipTrimStart);
         const segPath = path.join(tmpDir, `mseg${i}.mp4`);
         const videoOut = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2", "-pix_fmt", "yuv420p"];
 
+        const nominalDur = clip.kind === "video" ? Math.max(0.3, clip.trimEnd - clip.trimStart) : Math.max(0.3, clip.trimEnd);
+        const clipStart = clipGlobalStart;
+        const clipEnd = clipStart + nominalDur;
+        clipGlobalStart = clipEnd;
+
+        // Which B-roll segments (if any) fall inside this clip's window,
+        // clamped to it and re-expressed in the clip's own absolute-source
+        // time (0 = clip's untrimmed source start — see manualCaptionFilter's
+        // doc comment for why that's the basis `enable=between(t,...)` needs).
+        const brollHits = broll
+          .map((b) => {
+            const overlapStart = Math.max(b.startSec, clipStart);
+            const overlapEnd = Math.min(b.startSec + b.duration, clipEnd);
+            if (overlapEnd - overlapStart < 0.05) return null;
+            return {
+              b,
+              absStart: clipTrimStart + (overlapStart - clipStart),
+              absEnd: clipTrimStart + (overlapEnd - clipStart),
+            };
+          })
+          .filter((h): h is { b: ManualEditBRollInput; absStart: number; absEnd: number } => h !== null);
+        // Cap each VIDEO B-roll hit's visible window to however much of its
+        // own source footage actually exists past its trim-in point — a
+        // duration dragged out further than the source's real length would
+        // otherwise leave the overlay filter waiting on frames that were
+        // never going to arrive.
+        for (const hit of brollHits) {
+          if (hit.b.kind !== "video") continue;
+          const brollSrc = mediaPathFromUrl(hit.b.url);
+          if (!brollSrc || !fs.existsSync(brollSrc)) continue;
+          const srcDur = await probeDurationSec(brollSrc);
+          if (srcDur > 0) {
+            const available = Math.max(0.3, srcDur - hit.b.trimStart);
+            hit.absEnd = Math.min(hit.absEnd, hit.absStart + available);
+          }
+        }
+        const validHits = brollHits.filter((h) => {
+          const p = mediaPathFromUrl(h.b.url);
+          return !!p && fs.existsSync(p) && h.absEnd - h.absStart > 0.05;
+        });
+        const brollInputArgs: string[] = [];
+        validHits.forEach((hit) => {
+          const brollSrc = mediaPathFromUrl(hit.b.url)!;
+          if (hit.b.kind === "image") {
+            brollInputArgs.push("-loop", "1", "-itsoffset", hit.absStart.toFixed(3), "-i", brollSrc);
+          } else {
+            // -itsoffset delays this input's OWN presented timestamps so it
+            // starts showing ITS OWN frame 0 exactly when the overlay window
+            // opens, rather than already being `absStart` seconds into
+            // itself the moment it becomes visible.
+            brollInputArgs.push("-ss", String(hit.b.trimStart), "-itsoffset", hit.absStart.toFixed(3), "-i", brollSrc);
+          }
+        });
+
         if (clip.kind === "video") {
-          const dur = Math.max(0.3, clip.trimEnd - clip.trimStart);
+          const dur = nominalDur;
           const hasAudio = await probeHasAudio(srcPath);
-          if (hasAudio) {
+          if (validHits.length === 0) {
+            // No B-roll on this clip — the original, simpler single-input
+            // path, unchanged.
+            if (hasAudio) {
+              await runFfmpeg([
+                "-y", "-i", srcPath,
+                "-vf", withCaption(scalePad, caption),
+                ...videoOut,
+                ...AAC_OUT,
+                "-ss", String(clip.trimStart), "-t", String(dur),
+                segPath,
+              ]);
+            } else {
+              await runFfmpeg([
+                "-y", "-i", srcPath, ...SILENT_AUDIO,
+                "-vf", withCaption(scalePad, caption),
+                "-map", "0:v:0", "-map", "1:a:0",
+                ...videoOut,
+                ...AAC_OUT,
+                "-ss", String(clip.trimStart), "-t", String(dur), "-shortest",
+                segPath,
+              ]);
+            }
+          } else {
+            // base=0, [silent-audio lavfi=1 if this clip has no audio of its
+            // own], B-roll input(s) after that.
+            const firstBrollIdx = hasAudio ? 1 : 2;
+            const { filterComplex, videoPad } = buildBrollFilterComplex(
+              scalePad,
+              scalePad,
+              caption,
+              firstBrollIdx,
+              validHits.map((h) => ({ absStart: h.absStart, absEnd: h.absEnd }))
+            );
             await runFfmpeg([
               "-y", "-i", srcPath,
-              "-vf", withCaption(scalePad, caption),
+              ...(hasAudio ? [] : SILENT_AUDIO),
+              ...brollInputArgs,
+              "-filter_complex", filterComplex,
+              "-map", `[${videoPad}]`, "-map", hasAudio ? "0:a:0" : "1:a:0",
               ...videoOut,
               ...AAC_OUT,
               "-ss", String(clip.trimStart), "-t", String(dur),
-              segPath,
-            ]);
-          } else {
-            await runFfmpeg([
-              "-y", "-i", srcPath, ...SILENT_AUDIO,
-              "-vf", withCaption(scalePad, caption),
-              "-map", "0:v:0", "-map", "1:a:0",
-              ...videoOut,
-              ...AAC_OUT,
-              "-ss", String(clip.trimStart), "-t", String(dur), "-shortest",
+              ...(hasAudio ? [] : ["-shortest"]),
               segPath,
             ]);
           }
         } else {
-          const dur = Math.max(0.3, clip.trimEnd);
+          const dur = nominalDur;
           const marginW = Math.round(W * 1.2);
           const marginH = Math.round(H * 1.2);
           const frames = Math.max(1, Math.round(FPS * dur));
           const kenBurns =
             `scale=${marginW}:${marginH}:force_original_aspect_ratio=increase,crop=${marginW}:${marginH},` +
             `zoompan=z='min(zoom+0.0008,1.15)':d=${frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=${W}x${H}:fps=${FPS}`;
-          await runFfmpeg([
-            "-y", "-loop", "1", "-i", srcPath, ...SILENT_AUDIO,
-            "-vf", withCaption(kenBurns, caption),
-            "-map", "0:v:0", "-map", "1:a:0",
-            ...videoOut,
-            ...AAC_OUT,
-            "-t", String(dur), "-shortest",
-            segPath,
-          ]);
+          if (validHits.length === 0) {
+            await runFfmpeg([
+              "-y", "-loop", "1", "-i", srcPath, ...SILENT_AUDIO,
+              "-vf", withCaption(kenBurns, caption),
+              "-map", "0:v:0", "-map", "1:a:0",
+              ...videoOut,
+              ...AAC_OUT,
+              "-t", String(dur), "-shortest",
+              segPath,
+            ]);
+          } else {
+            // base=0, silent-audio lavfi=1 (images always need it), B-roll
+            // input(s) from 2 onward.
+            const { filterComplex, videoPad } = buildBrollFilterComplex(
+              kenBurns,
+              scalePad,
+              caption,
+              2,
+              validHits.map((h) => ({ absStart: h.absStart, absEnd: h.absEnd }))
+            );
+            await runFfmpeg([
+              "-y", "-loop", "1", "-i", srcPath,
+              ...SILENT_AUDIO,
+              ...brollInputArgs,
+              "-filter_complex", filterComplex,
+              "-map", `[${videoPad}]`, "-map", "1:a:0",
+              ...videoOut,
+              ...AAC_OUT,
+              "-t", String(dur), "-shortest",
+              segPath,
+            ]);
+          }
         }
         segmentPaths.push(segPath);
         const realDur = await probeDurationSec(segPath);

@@ -143,6 +143,27 @@ export interface User {
     price: string | null;
     addedAt: string;
   }[];
+  // ---- "Your Works" ("我的作品") — src/app/api/works, the 3rd tab on
+  // src/app/favorites alongside Videos/Products. Unlike favoriteVideos
+  // (which bookmarks an existing VideoRecord the user chooses to save),
+  // this is auto-populated: every AI-rendered storyboard chain and every
+  // Manual Edit export gets pushed here automatically the moment it
+  // finishes, with no action required — see the saveToWorks() call sites
+  // in StoryboardCanvas.tsx's applyRenderJob and ManualEditModal.tsx's
+  // applyJob. The rendered file itself lives under /api/media/... (the
+  // same storage every render already uses); this entry just snapshots
+  // enough (url/title/timestamp) to list and play it back later, since
+  // there's no other durable "list of videos I've generated" anywhere
+  // else in the app (a storyboard's lastRenderResults only lives inside
+  // that one board and disappears once the user dismisses the card or
+  // re-renders that chain).
+  myWorks?: {
+    id: string;
+    url: string;
+    title: string;
+    source: "storyboard" | "manual-edit";
+    createdAt: string;
+  }[];
   // How many times this member has picked each reaction emotion when
   // generating a new script (see REACTION_EMOTIONS above) — used purely to
   // sort their own picker list so whichever they reach for most floats to

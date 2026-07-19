@@ -3,7 +3,7 @@ export type Locale = "en" | "zh";
 export const translations = {
   en: {
     appName: "COTORX",
-    appTagline: "Video Script Breakdown Workbench",
+    appTagline: "Turn viral TikToks into your next shoppable script",
     navVideoAnalysis: "Video Analysis",
     navTrendAnalysis: "Trend Analysis",
     navFavorites: "Favorites",
@@ -13,9 +13,13 @@ export const translations = {
     favoritesPageSubtitle: "Videos and products you've bookmarked, all in one place.",
     favoritesTabVideos: "Videos",
     favoritesTabProducts: "Products",
+    favoritesTabWorks: "Your Works",
     favoritesLoading: "Loading...",
     favoritesEmptyVideos: "No favorited videos yet — tap the star on any video card to save it here.",
     favoritesEmptyProducts: "No favorited products yet — tap the star on any product card to save it here.",
+    favoritesEmptyWorks: "No generated videos yet — every storyboard render and Manual Edit export is saved here automatically.",
+    workDownload: "Download",
+    workRemove: "Remove",
 
     pasteHeading: "Paste a video, get an instant breakdown",
     pasteSubheading:
@@ -425,7 +429,7 @@ export const translations = {
   },
   zh: {
     appName: "COTORX",
-    appTagline: "视频话术拆解工作台",
+    appTagline: "拆解爆款视频，生成你的带货脚本",
     navVideoAnalysis: "视频分析",
     navTrendAnalysis: "趋势分析",
     navFavorites: "收藏库",
@@ -435,9 +439,13 @@ export const translations = {
     favoritesPageSubtitle: "你收藏的视频和产品，都在这里。",
     favoritesTabVideos: "视频",
     favoritesTabProducts: "产品",
+    favoritesTabWorks: "我的作品",
     favoritesLoading: "加载中...",
     favoritesEmptyVideos: "还没有收藏任何视频 — 点击视频卡片上的星标即可收藏。",
     favoritesEmptyProducts: "还没有收藏任何产品 — 点击产品卡片上的星标即可收藏。",
+    favoritesEmptyWorks: "还没有生成任何视频 — 每次Storyboard渲染和手动剪辑导出都会自动保存在这里。",
+    workDownload: "下载",
+    workRemove: "移除",
 
     pasteHeading: "粘贴视频，自动拆解",
     pasteSubheading:

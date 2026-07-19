@@ -28,6 +28,11 @@ export interface ManualEditSourceClip {
   url: string;
   kind: "video" | "image";
   label: string;
+  // The shot's script/voiceover text (StoryboardNode.instruction on the
+  // canvas) — carried through so the Properties panel can show it as a
+  // reference while cutting (see the "idle" state below), instead of
+  // wasting that space on a "select a clip" placeholder.
+  script?: string;
 }
 
 type TransitionPreset =
@@ -66,6 +71,7 @@ interface TimelineItem {
   url: string;
   kind: "video" | "image";
   label: string;
+  script?: string; // see ManualEditSourceClip.script
   duration: number; // full source duration; 0 until probed for video, fixed for images
   trimStart: number;
   trimEnd: number;
@@ -88,14 +94,40 @@ interface BoundaryTransition {
   sec: number;
 }
 
+// A clip dropped onto the B-roll row — sits on its OWN track, positioned by
+// absolute time on the GLOBAL timeline (unlike TimelineItem, which is
+// ordered/concatenated end-to-end), so it can freely overlap whichever base
+// clip(s) happen to play underneath it during [startSec, startSec+duration).
+// Rendered on top of the base video during that window (see
+// storyboardRender.ts's manual render pipeline, which clamps each B-roll
+// segment to the single base clip it starts within — a B-roll spanning a cut
+// is truncated to the first clip's remaining time, a known v1 simplification
+// rather than splitting it across the boundary).
+interface BRollItem {
+  id: string;
+  nodeId: string;
+  url: string;
+  kind: "video" | "image";
+  label: string;
+  startSec: number; // position on the whole sequence's global timeline
+  duration: number; // how long it's shown for
+  trimStart: number; // in-point within the SOURCE clip (video only)
+}
+
 const DEFAULT_IMAGE_DURATION = 4;
+const DEFAULT_BROLL_DURATION = 2.5;
 const MIN_ZOOM = 15;
 const MAX_ZOOM = 140;
 const DEFAULT_ZOOM = 46; // pixels per second
 const DEFAULT_TRANSITION: BoundaryTransition = { preset: "fade", sec: 0.25 };
 
-// Timeline track layout (two stacked rows inside one scroll container)
-const VIDEO_ROW_TOP = 10;
+// Timeline track layout (three stacked rows inside one scroll container) —
+// B-roll sits ABOVE the base video row, both because that's roughly where
+// CapCut puts an overlay/PIP track and because it visually reinforces "this
+// plays ON TOP of the video below it".
+const BROLL_ROW_TOP = 10;
+const BROLL_ROW_H = 30;
+const VIDEO_ROW_TOP = BROLL_ROW_TOP + BROLL_ROW_H + 8;
 const VIDEO_ROW_H = 58;
 const TEXT_ROW_TOP = VIDEO_ROW_TOP + VIDEO_ROW_H + 10;
 const TEXT_ROW_H = 24;
@@ -161,10 +193,13 @@ export default function ManualEditModal({
     }))
   );
   const [overlays, setOverlays] = useState<TextOverlay[]>([]);
+  const [broll, setBroll] = useState<BRollItem[]>([]);
   const [transitions, setTransitions] = useState<BoundaryTransition[]>([]);
   const [thumbsByUrl, setThumbsByUrl] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
+  const [selectedBrollId, setSelectedBrollId] = useState<string | null>(null);
+  const [brollDragOver, setBrollDragOver] = useState(false);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [playheadSec, setPlayheadSec] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -222,6 +257,7 @@ export default function ManualEditModal({
       url: clip.url,
       kind: clip.kind,
       label: clip.label,
+      script: clip.script,
       duration: clip.kind === "image" ? DEFAULT_IMAGE_DURATION : existingWithSameUrl?.duration || 0,
       trimStart: 0,
       trimEnd:
@@ -229,6 +265,33 @@ export default function ManualEditModal({
     };
     setItems((cur) => [...cur, newItem]);
     setSelectedId(newItem.id);
+  }
+
+  // ---- B-roll overlay track ----
+  function addBrollFromBoard(clip: ManualEditSourceClip, dropAtSec: number) {
+    const clamped = Math.max(0, Math.min(dropAtSec, Math.max(0, total - 0.2)));
+    const dur = clip.kind === "image" ? DEFAULT_IMAGE_DURATION : DEFAULT_BROLL_DURATION;
+    const newBroll: BRollItem = {
+      id: uid(),
+      nodeId: clip.nodeId,
+      url: clip.url,
+      kind: clip.kind,
+      label: clip.label,
+      startSec: clamped,
+      duration: Math.min(dur, Math.max(0.3, total - clamped)),
+      trimStart: 0,
+    };
+    setBroll((cur) => [...cur, newBroll]);
+    setSelectedId(null);
+    setSelectedOverlayId(null);
+    setSelectedBrollId(newBroll.id);
+  }
+  function updateBroll(id: string, patch: Partial<BRollItem>) {
+    setBroll((cur) => cur.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  }
+  function removeBroll(id: string) {
+    setBroll((cur) => cur.filter((b) => b.id !== id));
+    setSelectedBrollId((cur) => (cur === id ? null : cur));
   }
 
   // ---- thumbnail capture (client-side, no backend probe needed) ----
@@ -303,11 +366,58 @@ export default function ManualEditModal({
     };
   }
 
+  // ---- B-roll (drag the whole block to reposition, or its right edge to
+  // resize how long it's shown) — mouse-based like beginTrimDrag above,
+  // rather than the video row's native HTML5 drag/drop, since a B-roll
+  // block moves freely by TIME rather than swapping places in a list.
+  function beginBrollMoveDrag(b: BRollItem) {
+    return (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setSelectedId(null);
+      setSelectedOverlayId(null);
+      setSelectedBrollId(b.id);
+      const startX = e.clientX;
+      const startSec0 = b.startSec;
+      function onMove(ev: MouseEvent) {
+        const deltaSec = (ev.clientX - startX) / zoom;
+        const next = Math.max(0, Math.min(Math.max(0, total - b.duration), startSec0 + deltaSec));
+        updateBroll(b.id, { startSec: next });
+      }
+      function onUp() {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      }
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+  }
+  function beginBrollResizeDrag(b: BRollItem) {
+    return (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startDur = b.duration;
+      function onMove(ev: MouseEvent) {
+        const deltaSec = (ev.clientX - startX) / zoom;
+        const maxDur = Math.max(0.3, total - b.startSec);
+        const next = Math.max(0.3, Math.min(maxDur, startDur + deltaSec));
+        updateBroll(b.id, { duration: next });
+      }
+      function onUp() {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      }
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+  }
+
   // ---- draggable/scrubbable playhead ----
   function beginPlayheadDrag(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    if (playing) {
+    if (playTickTimer.current) {
       stopPlayback();
       setPlaying(false);
     }
@@ -436,7 +546,13 @@ export default function ManualEditModal({
   }
 
   function togglePlay() {
-    if (playing) {
+    // Checks the ACTUAL running timer (a ref, always current) rather than
+    // the `playing` React state — state updates inside the 100ms tick
+    // interval below are batched together with a nested setPlayheadSec
+    // call, and under rapid clicks that could leave `playing` reporting
+    // stale by one render. Clicking Pause must always stop whatever is
+    // really running, so it keys off the ref instead.
+    if (playTickTimer.current) {
       stopPlayback();
       setPlaying(false);
       return;
@@ -502,7 +618,22 @@ export default function ManualEditModal({
     if (!job) return;
     setExportProgress({ completedShots: job.completedShots, totalShots: job.totalShots, step: job.step });
     if (job.status === "done") {
-      setExportResult(job.result ? { url: `${job.result.url}?t=${Date.now()}` } : null);
+      if (job.result) {
+        const url = `${job.result.url}?t=${Date.now()}`;
+        setExportResult({ url });
+        // Auto-save into "Your Works" (src/app/favorites 3rd tab) — same
+        // fire-and-forget treatment as the AI-render path in
+        // StoryboardCanvas.tsx's applyRenderJob. Title falls back to the
+        // first clip's label since this modal has no product/chain title
+        // context of its own.
+        fetch("/api/works", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, title: items[0]?.label || "Manual edit", source: "manual-edit" }),
+        }).catch(() => {});
+      } else {
+        setExportResult(null);
+      }
       stopPoll();
       setExporting(false);
     } else if (job.status === "error") {
@@ -551,11 +682,19 @@ export default function ManualEditModal({
             : { clipIndex, text: o.text, startSec: o.startSec, endSec: o.endSec, position: o.position, size: o.size, bold: o.bold, color: o.color };
         })
         .filter((o): o is NonNullable<typeof o> => o !== null);
+      const brollPayload = broll.map((b) => ({
+        url: b.url,
+        kind: b.kind,
+        startSec: b.startSec,
+        duration: b.duration,
+        trimStart: b.trimStart,
+        label: b.label,
+      }));
 
       const res = await fetch(`${apiBase}/manual-render`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clips, textOverlays, transitions }),
+        body: JSON.stringify({ clips, textOverlays, transitions, broll: brollPayload }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Export failed");
@@ -709,8 +848,17 @@ export default function ManualEditModal({
                     <button
                       key={c.nodeId}
                       onClick={() => addFromBoard(c)}
-                      title={`Add "${c.label}" to the timeline`}
-                      className="group relative rounded-lg overflow-hidden aspect-[3/4] text-left"
+                      draggable
+                      onDragStart={(e) => {
+                        // Drag target for the B-roll row below — clicking
+                        // still adds to the main timeline as before; dragging
+                        // onto the B-roll row instead drops it as an overlay
+                        // at that time position (see the row's onDrop).
+                        e.dataTransfer.setData("application/x-broll-clip", JSON.stringify(c));
+                        e.dataTransfer.effectAllowed = "copy";
+                      }}
+                      title={`Add "${c.label}" to the timeline, or drag onto the B-roll row to overlay it`}
+                      className="group relative rounded-lg overflow-hidden aspect-[3/4] text-left cursor-grab active:cursor-grabbing"
                       style={{ border: "1px solid rgba(255,255,255,0.08)" }}
                     >
                       <div
@@ -763,7 +911,16 @@ export default function ManualEditModal({
               </span>
               <div className="w-px h-5 bg-white/10 mx-1" />
               <IconBtn onClick={splitAtPlayhead} disabled={!canSplit()} title="Split at playhead">✂</IconBtn>
-              <IconBtn onClick={() => selected && removeItem(selected.id)} disabled={!selected} title="Delete selected clip">🗑</IconBtn>
+              <IconBtn
+                onClick={() => {
+                  if (selected) removeItem(selected.id);
+                  else if (selectedBrollId) removeBroll(selectedBrollId);
+                }}
+                disabled={!selected && !selectedBrollId}
+                title="Delete selected clip"
+              >
+                🗑
+              </IconBtn>
               <IconBtn onClick={() => selected && addOverlay(selected.id, itemDur(selected))} disabled={!selected} title="Add text to selected clip">+T</IconBtn>
               <IconBtn onClick={() => selected && autoCaption(selected)} disabled={!selected || selected.kind !== "video" || autoCaptioning} title="AI auto-caption selected clip">
                 {autoCaptioning ? "…" : "🎙"}
@@ -791,6 +948,96 @@ export default function ManualEditModal({
                       Drag a clip from Media on the left to start building your timeline.
                     </p>
                   )}
+
+                  {/* B-roll row — an overlay track sitting on top of the base
+                      video during whatever time window it's placed at. Drop
+                      target for a Media bin thumbnail dragged down from the
+                      left (see the bin button's onDragStart above); dropping
+                      elsewhere on the page does nothing since only this band
+                      listens for the "application/x-broll-clip" payload. */}
+                  {items.length > 0 && (
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "copy";
+                        setBrollDragOver(true);
+                      }}
+                      onDragLeave={() => setBrollDragOver(false)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setBrollDragOver(false);
+                        const raw = e.dataTransfer.getData("application/x-broll-clip");
+                        if (!raw) return;
+                        try {
+                          const clip: ManualEditSourceClip = JSON.parse(raw);
+                          const rect = trackRef.current?.getBoundingClientRect();
+                          if (!rect) return;
+                          const sec = (e.clientX - rect.left + (trackRef.current?.scrollLeft || 0)) / zoom;
+                          addBrollFromBoard(clip, sec);
+                        } catch {
+                          // Malformed drag payload (e.g. something dragged in
+                          // from outside this app) — silently ignore.
+                        }
+                      }}
+                      className="absolute rounded-lg transition-colors"
+                      style={{
+                        left: 0,
+                        width: Math.max(400, total * zoom + 60),
+                        top: BROLL_ROW_TOP,
+                        height: BROLL_ROW_H,
+                        background: brollDragOver ? "rgba(34,211,238,0.10)" : "rgba(255,255,255,0.02)",
+                        border: brollDragOver ? "1px dashed rgba(34,211,238,0.6)" : "1px dashed rgba(255,255,255,0.08)",
+                      }}
+                    >
+                      {broll.length === 0 && (
+                        <span className="absolute inset-0 flex items-center px-2 text-[9.5px] text-slate-600 pointer-events-none truncate">
+                          Drag a clip here to overlay it as B-roll
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {broll.map((b) => {
+                    const left = b.startSec * zoom;
+                    const width = Math.max(6, b.duration * zoom);
+                    const isSel = b.id === selectedBrollId;
+                    const thumb = b.kind === "video" ? thumbsByUrl[b.url] : b.url;
+                    return (
+                      <div
+                        key={b.id}
+                        onMouseDown={beginBrollMoveDrag(b)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedBrollId(b.id);
+                          setSelectedId(null);
+                          setSelectedOverlayId(null);
+                        }}
+                        title={b.label}
+                        className="absolute rounded-md overflow-hidden cursor-grab active:cursor-grabbing"
+                        style={{
+                          left,
+                          width,
+                          top: BROLL_ROW_TOP,
+                          height: BROLL_ROW_H,
+                          boxShadow: isSel ? "0 0 0 2px #a78bfa, 0 0 12px -2px rgba(167,139,250,0.8)" : "0 0 0 1px rgba(255,255,255,0.18)",
+                          background: "linear-gradient(135deg, rgba(167,139,250,0.9), rgba(139,92,246,0.85))",
+                          backgroundImage: thumb ? `linear-gradient(to top, rgba(2,6,23,.55), rgba(2,6,23,.1) 60%), url(${thumb})` : undefined,
+                          backgroundSize: "cover",
+                          backgroundPosition: "center",
+                        }}
+                      >
+                        <span className="absolute left-1 top-0.5 text-[8.5px] text-white/90 truncate drop-shadow-sm" style={{ maxWidth: "calc(100% - 8px)" }}>
+                          {b.label}
+                        </span>
+                        <div onMouseDown={beginBrollResizeDrag(b)} className="absolute top-0 bottom-0 right-0 w-1.5 bg-white/0 hover:bg-white/50 cursor-ew-resize" />
+                      </div>
+                    );
+                  })}
+                  {items.length > 0 && (
+                    <div className="absolute left-2 text-[9px] text-slate-600 uppercase tracking-wide pointer-events-none" style={{ top: BROLL_ROW_TOP - 12 }}>
+                      B-roll
+                    </div>
+                  )}
+
                   {/* video row */}
                   {items.map((it, i) => {
                     const left = offsetOfItem(items, i) * zoom;
@@ -949,8 +1196,79 @@ export default function ManualEditModal({
           <div className="w-72 shrink-0 border-l border-white/10 flex flex-col min-h-0">
             <div className="px-3 py-2.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium shrink-0 border-b border-white/5">⚙️ Properties</div>
             <div className="flex-1 overflow-y-auto p-3">
-              {!selected ? (
-                <p className="text-xs text-slate-500">Select a clip on the timeline to trim it, caption it, or add text.</p>
+              {selectedBrollId && !selected ? (
+                (() => {
+                  const b = broll.find((x) => x.id === selectedBrollId);
+                  if (!b) return null;
+                  return (
+                    <div className="flex flex-col gap-3">
+                      <div>
+                        <span className="text-sm text-slate-100 font-medium block truncate">{b.label}</span>
+                        <span className="text-[10.5px] text-slate-500">B-roll overlay · {b.kind}</span>
+                      </div>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10.5px] text-slate-500">Starts at (sec)</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          value={Number(b.startSec.toFixed(2))}
+                          onChange={(e) => updateBroll(b.id, { startSec: Math.max(0, Math.min(total - 0.1, Number(e.target.value) || 0)) })}
+                          className="text-xs rounded-lg px-2 py-1.5 outline-none"
+                          style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", color: "#e2e8f0" }}
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10.5px] text-slate-500">Duration (sec)</span>
+                        <input
+                          type="number"
+                          min={0.3}
+                          step={0.1}
+                          value={Number(b.duration.toFixed(2))}
+                          onChange={(e) => updateBroll(b.id, { duration: Math.max(0.3, Number(e.target.value) || 0.3) })}
+                          className="text-xs rounded-lg px-2 py-1.5 outline-none"
+                          style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", color: "#e2e8f0" }}
+                        />
+                      </label>
+                      <p className="text-[10px] text-slate-600">
+                        Shown ON TOP of whatever base clip is playing during this window. Drag the block to reposition it, or its right edge to resize.
+                      </p>
+                      <button
+                        onClick={() => removeBroll(b.id)}
+                        className="text-[11px] px-3 py-1.5 rounded-lg text-rose-300 hover:text-rose-200 transition-colors self-start"
+                        style={{ background: "rgba(244,63,94,0.1)", border: "1px solid rgba(244,63,94,0.3)" }}
+                      >
+                        Remove B-roll
+                      </button>
+                    </div>
+                  );
+                })()
+              ) : !selected ? (
+                // Idle state — instead of wasting this space on a bare
+                // placeholder, show the chain's script/voiceover text
+                // (one card per shot, in timeline order) so it's readable
+                // as a reference while cutting, same way a script
+                // supervisor's sheet sits next to an editor's timeline.
+                items.length === 0 ? (
+                  <p className="text-xs text-slate-500">Add clips to the timeline, then select one to trim it, caption it, or add text.</p>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    <p className="text-[10px] uppercase tracking-widest text-slate-500 font-medium">📝 Script</p>
+                    {items.map((it, i) => (
+                      <div key={it.id} className="rounded-lg p-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                        <p className="text-[10.5px] text-cyan-300/90 font-medium mb-1 truncate">
+                          {i + 1}. {it.label}
+                        </p>
+                        <p className="text-[11px] text-slate-400 leading-relaxed whitespace-pre-wrap">
+                          {it.script?.trim() || "(no script text for this shot)"}
+                        </p>
+                      </div>
+                    ))}
+                    <p className="text-[10px] text-slate-600 mt-1 pt-2 border-t border-white/5">
+                      Select a clip on the timeline to trim it, caption it, or add text.
+                    </p>
+                  </div>
+                )
               ) : (
                 <div className="flex flex-col gap-3">
                   <div>

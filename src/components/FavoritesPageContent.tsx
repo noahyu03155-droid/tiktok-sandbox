@@ -33,6 +33,18 @@ interface FavoriteProductEntry {
   addedAt: string;
 }
 
+// "Your Works" entries — see the User.myWorks doc comment in
+// src/lib/types.ts. Auto-populated (storyboard renders + Manual Edit
+// exports), unlike the two favorites lists above which are user-initiated
+// bookmarks.
+interface WorkEntry {
+  id: string;
+  url: string;
+  title: string;
+  source: "storyboard" | "manual-edit";
+  createdAt: string;
+}
+
 function FavoriteProductCard({
   entry,
   onRemove,
@@ -89,11 +101,46 @@ function FavoriteProductCard({
   );
 }
 
+function WorkCard({ entry, onRemove }: { entry: WorkEntry; onRemove: () => void }) {
+  const { t } = useLocale();
+  return (
+    <div className="rounded-xl overflow-hidden bg-panel border border-edge hover:border-brand-500 transition-colors">
+      <div className="relative aspect-[9/16] bg-black">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onRemove();
+          }}
+          title={t("workRemove")}
+          className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full flex items-center justify-center leading-none bg-black/70 text-white hover:bg-black/90"
+        >
+          <span className="text-[11px]">✕</span>
+        </button>
+        <video src={entry.url} controls preload="metadata" className="w-full h-full object-cover" />
+      </div>
+      <div className="p-3">
+        <p className="text-sm text-zinc-900 line-clamp-2 min-h-[2.5rem]" title={entry.title}>
+          {entry.title}
+        </p>
+        <div className="flex items-center justify-between mt-1">
+          <span className="text-[11px] text-zinc-500">{entry.source === "manual-edit" ? "Manual Edit" : "AI Render"}</span>
+          <a href={entry.url} download className="text-[11px] text-brand-500 hover:underline">
+            {t("workDownload")}
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FavoritesPageContent() {
   const { t } = useLocale();
-  const [tab, setTab] = useState<"videos" | "products">("videos");
+  const [tab, setTab] = useState<"videos" | "products" | "works">("videos");
   const [videos, setVideos] = useState<FavoriteVideoEntry[] | null>(null);
   const [products, setProducts] = useState<FavoriteProductEntry[] | null>(null);
+  const [works, setWorks] = useState<WorkEntry[] | null>(null);
 
   useEffect(() => {
     fetch("/api/favorites/videos", { cache: "no-store" })
@@ -104,6 +151,10 @@ export default function FavoritesPageContent() {
       .then((res) => (res.ok ? res.json() : { products: [] }))
       .then((data) => setProducts(data.products || []))
       .catch(() => setProducts([]));
+    fetch("/api/works", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : { works: [] }))
+      .then((data) => setWorks(data.works || []))
+      .catch(() => setWorks([]));
   }, []);
 
   async function removeVideo(videoId: string) {
@@ -124,8 +175,18 @@ export default function FavoritesPageContent() {
     }
   }
 
+  async function removeWork(id: string) {
+    setWorks((prev) => (prev ? prev.filter((w) => w.id !== id) : prev));
+    try {
+      await fetch(`/api/works/${id}`, { method: "DELETE" });
+    } catch {
+      // Best-effort, same as removeVideo/removeProduct above.
+    }
+  }
+
   const videoCount = videos?.length ?? 0;
   const productCount = products?.length ?? 0;
+  const workCount = works?.length ?? 0;
 
   return (
     <div>
@@ -148,6 +209,14 @@ export default function FavoritesPageContent() {
           }`}
         >
           {t("favoritesTabProducts")} {products && `(${productCount})`}
+        </button>
+        <button
+          onClick={() => setTab("works")}
+          className={`text-sm px-4 py-2 transition-colors ${
+            tab === "works" ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-900"
+          }`}
+        >
+          {t("favoritesTabWorks")} {works && `(${workCount})`}
         </button>
       </div>
 
@@ -178,6 +247,19 @@ export default function FavoritesPageContent() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
             {products.map((entry) => (
               <FavoriteProductCard key={entry.id} entry={entry} onRemove={() => removeProduct(entry.productId)} />
+            ))}
+          </div>
+        ))}
+
+      {tab === "works" &&
+        (works === null ? (
+          <p className="text-sm text-zinc-500">{t("favoritesLoading")}</p>
+        ) : works.length === 0 ? (
+          <div className="text-center py-24 text-zinc-500 text-sm">{t("favoritesEmptyWorks")}</div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            {works.map((entry) => (
+              <WorkCard key={entry.id} entry={entry} onRemove={() => removeWork(entry.id)} />
             ))}
           </div>
         ))}
