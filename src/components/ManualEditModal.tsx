@@ -310,6 +310,41 @@ function UndoIcon() {
   );
 }
 
+// Hoisted to MODULE scope (was previously declared inside ManualEditModal's
+// render body) — that was the actual root cause of "Pause doesn't respond":
+// a component function re-declared fresh on every render is a NEW type as
+// far as React's reconciler is concerned, so every single re-render of the
+// modal (which happens ~24x/sec while playing, via the rAF tick loop in
+// togglePlay) forced React to unmount and remount every IconBtn-based
+// button — including Play/Pause itself — instead of just updating props on
+// the existing DOM node. A click landing mid-unmount/remount can be lost
+// entirely, which reads exactly as "I pressed it and nothing happened."
+// Throttling the tick loop's commits (COMMIT_INTERVAL_MS) made this less
+// frequent but never fixed the underlying thrashing. A plain, stable,
+// module-level function component never has this problem.
+function IconBtn({ onClick, disabled, title, children, active }: { onClick?: () => void; disabled?: boolean; title: string; children: React.ReactNode; active?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="w-8 h-8 rounded-lg flex items-center justify-center text-sm disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
+      style={{
+        color: active ? "#22d3ee" : "#cbd5e1",
+        background: active ? "rgba(34,211,238,0.12)" : "transparent",
+      }}
+      onMouseEnter={(e) => {
+        if (!disabled) e.currentTarget.style.background = "rgba(255,255,255,0.08)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = active ? "rgba(34,211,238,0.12)" : "transparent";
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -480,6 +515,37 @@ export default function ManualEditModal({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [undo]);
+
+  // Delete/Backspace removes whatever's currently selected (a timeline
+  // clip, a B-roll block, a text overlay, or the music track) — previously
+  // the ONLY way to delete a selected B-roll clip was the trash icon in the
+  // toolbar (which only handled `selected`/`selectedBrollId`, or a
+  // per-block delete button buried in the Properties panel; there was no
+  // keyboard shortcut at all, which read as "the Delete key doesn't work."
+  // Resubscribes whenever the selection changes rather than mounting once,
+  // so it always has the right id — cheap (just add/removeEventListener).
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      if (selectedId) {
+        e.preventDefault();
+        removeItem(selectedId);
+      } else if (selectedBrollId) {
+        e.preventDefault();
+        removeBroll(selectedBrollId);
+      } else if (selectedOverlayId) {
+        e.preventDefault();
+        removeOverlay(selectedOverlayId);
+      } else if (musicSelected) {
+        e.preventDefault();
+        removeMusic();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedId, selectedBrollId, selectedOverlayId, musicSelected]);
 
   const trackRef = useRef<HTMLDivElement>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
@@ -1397,29 +1463,6 @@ export default function ManualEditModal({
     binClips.forEach((c) => c.kind === "video" && s.add(c.url));
     return Array.from(s);
   }, [items, binClips]);
-
-  function IconBtn({ onClick, disabled, title, children, active }: { onClick?: () => void; disabled?: boolean; title: string; children: React.ReactNode; active?: boolean }) {
-    return (
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        title={title}
-        className="w-8 h-8 rounded-lg flex items-center justify-center text-sm disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
-        style={{
-          color: active ? "#22d3ee" : "#cbd5e1",
-          background: active ? "rgba(34,211,238,0.12)" : "transparent",
-        }}
-        onMouseEnter={(e) => {
-          if (!disabled) e.currentTarget.style.background = "rgba(255,255,255,0.08)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = active ? "rgba(34,211,238,0.12)" : "transparent";
-        }}
-      >
-        {children}
-      </button>
-    );
-  }
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 p-3 md:p-6 flex items-center justify-center">

@@ -875,7 +875,9 @@ export default function StoryboardCanvas({
           ? new Map(board.nodes.filter((n) => selectedIds.has(n.id)).map((n) => [n.id, { x: n.x, y: n.y }] as const))
           : null;
     }
+    let maxTravel = 0;
     function onMove(ev: MouseEvent) {
+      maxTravel = Math.max(maxTravel, Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY));
       const dx = (ev.clientX - startX) / board.zoom;
       const dy = (ev.clientY - startY) / board.zoom;
       if (groupOrigins) {
@@ -896,6 +898,13 @@ export default function StoryboardCanvas({
     function onUp() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      // A plain click (no real drag, no modifier) single-selects this card —
+      // previously a click on a card set no selection at all (only
+      // shift-marquee and Ctrl/Cmd+drag-chain did), so there was no way to
+      // pick one card and Ctrl+C it without first marquee-selecting it.
+      if (maxTravel < 4 && !e.metaKey && !e.ctrlKey) {
+        setSelectedIds(new Set([node.id]));
+      }
     }
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -958,15 +967,157 @@ export default function StoryboardCanvas({
     setBoard((b) => ({ ...b, connections: b.connections.filter((c) => c.id !== id) }));
   }
 
+  // ---- viewport-aware placement + copy/paste ----
+  // boardRef/selectedIdsRef mirror the live state for the mount-once
+  // keydown listener below (same pattern as brollRef in
+  // ManualEditModal.tsx's rAF playback loop) — a listener attached once at
+  // mount would otherwise freeze at whatever `board`/`selectedIds` were on
+  // that first render.
+  const boardRef = useRef(board);
+  useEffect(() => {
+    boardRef.current = board;
+  }, [board]);
+  const selectedIdsRef = useRef(selectedIds);
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
+
+  // World-space coordinates of the CENTER of whatever's currently visible
+  // in the viewport — reads pan/zoom off boardRef (not the `board` closure)
+  // so it stays correct even when called from the long-lived keydown
+  // listener. Same math as toWorld, just for the container's own center
+  // point instead of a specific mouse event.
+  function viewportCenterWorld(): { x: number; y: number } {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 200, y: 200 };
+    const b = boardRef.current;
+    return { x: (rect.width / 2 - b.pan.x) / b.zoom, y: (rect.height / 2 - b.pan.y) / b.zoom };
+  }
+
+  // Finds a spot near (desiredX, desiredY) for a box of size (w, h) that
+  // doesn't land on top of any EXISTING card — checked against boardRef
+  // (live board) via an expanding ring search, first trying the desired
+  // spot itself, then stepping outward by a full card-width/height at a
+  // time so new content never overlaps what's already on the board.
+  function findFreeSpot(desiredX: number, desiredY: number, w: number, h: number): { x: number; y: number } {
+    const nodes = boardRef.current.nodes;
+    function overlaps(x: number, y: number) {
+      return nodes.some((n) => x < n.x + nodeWidth(n) && x + w > n.x && y < n.y + cardHeight(n) && y + h > n.y);
+    }
+    if (!overlaps(desiredX, desiredY)) return { x: desiredX, y: desiredY };
+    const stepX = w + GAP_X;
+    const stepY = h + 40;
+    for (let radius = 1; radius <= 20; radius++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dy = -radius; dy <= radius; dy++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue; // only test the ring's perimeter, not its interior (already covered by smaller radii)
+          const x = desiredX + dx * stepX;
+          const y = desiredY + dy * stepY;
+          if (!overlaps(x, y)) return { x, y };
+        }
+      }
+    }
+    return { x: desiredX, y: desiredY }; // gave up — just land on the desired spot even if it overlaps
+  }
+
+  // Ctrl/Cmd+C / Ctrl/Cmd+V — in-memory clipboard only (not the OS
+  // clipboard, so no permissions prompt and no risk of clobbering whatever
+  // the user has really copied elsewhere). Stores the copied nodes'
+  // positions RELATIVE to their own group's top-left corner, plus only the
+  // connections that exist BETWEEN two copied nodes (a connection to a node
+  // that wasn't copied is dropped, same as pasting a subgraph elsewhere
+  // would do). Paste re-anchors the group so it lands centered in the
+  // user's current viewport, nudged by findFreeSpot so it doesn't overlap
+  // existing cards.
+  const clipboardRef = useRef<{
+    nodes: StoryboardNode[]; // x/y here are offsets from the group's own top-left, not absolute board coords
+    connections: { fromIdx: number; toIdx: number }[];
+    width: number;
+    height: number;
+  } | null>(null);
+
+  function copySelection() {
+    const ids = selectedIdsRef.current;
+    if (ids.size === 0) return;
+    const nodes = boardRef.current.nodes.filter((n) => ids.has(n.id));
+    if (nodes.length === 0) return;
+    const minX = Math.min(...nodes.map((n) => n.x));
+    const minY = Math.min(...nodes.map((n) => n.y));
+    const maxX = Math.max(...nodes.map((n) => n.x + nodeWidth(n)));
+    const maxY = Math.max(...nodes.map((n) => n.y + cardHeight(n)));
+    const relNodes = nodes.map((n) => ({ ...n, x: n.x - minX, y: n.y - minY }));
+    const idSet = new Set(nodes.map((n) => n.id));
+    const connections = boardRef.current.connections
+      .filter((c) => idSet.has(c.fromId) && idSet.has(c.toId))
+      .map((c) => ({ fromIdx: nodes.findIndex((n) => n.id === c.fromId), toIdx: nodes.findIndex((n) => n.id === c.toId) }));
+    clipboardRef.current = { nodes: relNodes, connections, width: maxX - minX, height: maxY - minY };
+  }
+
+  function pasteClipboard() {
+    const clip = clipboardRef.current;
+    if (!clip || clip.nodes.length === 0) return;
+    const center = viewportCenterWorld();
+    const desiredX = center.x - clip.width / 2;
+    const desiredY = center.y - clip.height / 2;
+    const { x: anchorX, y: anchorY } = findFreeSpot(desiredX, desiredY, clip.width, clip.height);
+    const newNodes: StoryboardNode[] = clip.nodes.map((n) => ({
+      ...n,
+      id: crypto.randomUUID(),
+      x: anchorX + n.x,
+      y: anchorY + n.y,
+    }));
+    const newConnections = clip.connections.map((c) => ({
+      id: crypto.randomUUID(),
+      fromId: newNodes[c.fromIdx].id,
+      toId: newNodes[c.toIdx].id,
+    }));
+    setBoard((b) => ({ ...b, nodes: [...b.nodes, ...newNodes], connections: [...b.connections, ...newConnections] }));
+    setSelectedIds(new Set(newNodes.map((n) => n.id))); // the freshly pasted copies become the new selection, so an immediate Ctrl+V again pastes a copy-of-the-copy in the right spot rather than the original
+  }
+
+  // Mount once — copySelection/pasteClipboard/findFreeSpot/
+  // viewportCenterWorld all read live state via boardRef/selectedIdsRef and
+  // call stable setters, so this listener never goes stale despite never
+  // re-subscribing. Skips when focus is inside a text field so native
+  // browser copy/paste in the Script/Notes boxes keeps working untouched.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      if (key !== "c" && key !== "v") return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      if (key === "c") {
+        if (selectedIdsRef.current.size === 0) return;
+        e.preventDefault();
+        copySelection();
+      } else {
+        if (!clipboardRef.current) return;
+        e.preventDefault();
+        pasteClipboard();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   // ---- node CRUD ----
+  // New nodes (single "+ Shot", the 6-card template, and pasted groups) all
+  // land INSIDE the user's current viewport instead of off at the
+  // ever-growing "rightmost" edge of the board — on a board the user has
+  // panned far away from its origin, the old rightmost-of-all-nodes
+  // convention meant every insert appeared somewhere the user couldn't see
+  // without scrolling to hunt for it. See viewportCenterWorld/findFreeSpot
+  // below (also used by copy/paste).
   function addNode() {
-    const rightmost = board.nodes.reduce((max, n) => Math.max(max, n.x), 0);
+    const center = viewportCenterWorld();
+    const { x, y } = findFreeSpot(center.x - NODE_W / 2, center.y - NODE_H / 2, NODE_W, NODE_H);
     const node: StoryboardNode = {
       id: crypto.randomUUID(),
       label: `Shot ${board.nodes.length + 1}`,
       instruction: "",
-      x: board.nodes.length === 0 ? 60 : rightmost + NODE_W + GAP_X,
-      y: 120,
+      x,
+      y,
       clip: null,
     };
     setBoard((b) => ({ ...b, nodes: [...b.nodes, node] }));
@@ -974,19 +1125,20 @@ export default function StoryboardCanvas({
 
   // "Insert template" — instantly drops 6 blank funnel-stage cards (one per
   // REQUIRED_STAGE_SEQUENCE entry, pre-tagged and auto-connected in order),
-  // purely client-side: no API call, no AI. Placed as a horizontal row using
-  // the same rightmost + NODE_W + GAP_X convention addNode uses, so the row
-  // lands next to the existing cards; persists via the normal autosave.
+  // purely client-side: no API call, no AI. Placed as a horizontal row
+  // anchored near the viewport center (see addNode's comment above) rather
+  // than the old off-screen "rightmost" convention.
   function insertTemplate() {
-    const rightmost = board.nodes.reduce((max, n) => Math.max(max, n.x), 0);
-    const startX = board.nodes.length === 0 ? 60 : rightmost + NODE_W + GAP_X;
+    const totalW = REQUIRED_STAGE_SEQUENCE.length * NODE_W + (REQUIRED_STAGE_SEQUENCE.length - 1) * GAP_X;
+    const center = viewportCenterWorld();
+    const { x: startX, y: startY } = findFreeSpot(center.x - totalW / 2, center.y - NODE_H / 2, totalW, NODE_H);
     const newNodes: StoryboardNode[] = REQUIRED_STAGE_SEQUENCE.map((key, i) => ({
       id: crypto.randomUUID(),
       label: STAGE_TAG_LABELS[key],
       instruction: "",
       editorNotes: "",
       x: startX + i * (NODE_W + GAP_X),
-      y: 120,
+      y: startY,
       clip: null,
       stageTag: key,
     }));
