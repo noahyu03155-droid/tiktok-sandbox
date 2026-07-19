@@ -506,6 +506,84 @@ function cleanupOrphanedTmpDirs(outDir: string) {
   }
 }
 
+// Concatenates already-encoded per-shot segments into one final video with
+// crossfade transitions between them, writing the result to finalPath.
+// Shared by the AI render pipeline and the manual-edit render pipeline
+// below — extracted so both go through the exact same, already-tuned
+// assembly logic (binary-tree merge, not a single giant filter_complex or a
+// linear fold-left — see the inline comments for why those two both failed
+// in production: resource exhaustion on a long board, and cumulative
+// generation-loss blur/muffling, respectively).
+async function assembleFinalVideo(
+  segmentPaths: string[],
+  segDurations: number[],
+  tmpDir: string,
+  finalPath: string,
+  transition: StoryboardTransitionPreset,
+  transitionSec: number
+): Promise<void> {
+  if (segmentPaths.length === 1) {
+    fs.copyFileSync(segmentPaths[0], finalPath);
+    return;
+  }
+  // Used to build ONE filter_complex chaining every segment's
+  // xfade+acrossfade together, with all N segment files open as ffmpeg
+  // inputs simultaneously. That works for a few shots, but in production a
+  // longer board (19 shots -> 18 chained xfade/acrossfade pairs, 19
+  // simultaneously-open decoders) reliably blew up with "Resource
+  // temporarily unavailable" / "Failed to inject frame into filter network"
+  // — ffmpeg running out of some resource (file descriptors / buffered
+  // frames) partway through such a deep graph.
+  //
+  // The first fix for that (merge 2 clips at a time, left to right, into a
+  // growing chain of intermediate files) traded that crash for a different,
+  // worse problem: linear "fold-left" means the FIRST segment gets
+  // re-encoded once per remaining segment — for 19 shots, shot 1's content
+  // goes through 18 successive lossy re-encode generations before reaching
+  // the final file, which is exactly the visible blur/muffled-audio quality
+  // loss reported after that fix shipped.
+  //
+  // A balanced binary-tree merge keeps the "only 2 inputs open per ffmpeg
+  // call" property (still avoids the resource-exhaustion crash) while
+  // capping every piece of original content at ceil(log2(N)) re-encode
+  // generations instead of up to N-1 — for 19 shots that's 5 generations
+  // worst-case instead of 18, a huge reduction in cumulative generation
+  // loss for both video and audio.
+  type Segment = { path: string; dur: number };
+  let level: Segment[] = segmentPaths.map((p, i) => ({ path: p, dur: segDurations[i] }));
+  let mergeCounter = 0;
+  while (level.length > 1) {
+    const next: Segment[] = [];
+    for (let i = 0; i < level.length; i += 2) {
+      if (i + 1 >= level.length) {
+        // Odd one out this round — carries forward untouched to the next
+        // round instead of forcing an unnecessary re-encode.
+        next.push(level[i]);
+        continue;
+      }
+      const a = level[i];
+      const b = level[i + 1];
+      const t = Math.max(0.05, Math.min(transitionSec, a.dur / 2, b.dur / 2));
+      const offset = Math.max(0, a.dur - t);
+      const mergedPath = path.join(tmpDir, `merged${mergeCounter++}.mp4`);
+      await runFfmpeg([
+        "-y",
+        "-i", a.path,
+        "-i", b.path,
+        "-filter_complex",
+        `[0:v][1:v]xfade=transition=${transition}:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[v];[0:a][1:a]acrossfade=d=${t.toFixed(3)}[a]`,
+        "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2", "-pix_fmt", "yuv420p",
+        ...AAC_OUT,
+        mergedPath,
+      ]);
+      next.push({ path: mergedPath, dur: a.dur + b.dur - t });
+    }
+    level = next;
+  }
+  fs.copyFileSync(level[0].path, finalPath);
+}
+
 // Fire-and-forget — starts the render in the background and returns
 // immediately with the job's initial state. If a render for this exact key
 // is already running, returns that existing job instead of starting a
@@ -745,70 +823,8 @@ export function startRenderJob(
       }
 
       const finalPath = path.join(outDir, "render.mp4");
-
-      if (segmentPaths.length === 1) {
-        fs.copyFileSync(segmentPaths[0], finalPath);
-      } else {
-        job.step = "Assembling final video (transitions + audio crossfade)...";
-        // Used to build ONE filter_complex chaining every segment's
-        // xfade+acrossfade together, with all N segment files open as
-        // ffmpeg inputs simultaneously. That works for a few shots, but in
-        // production a longer board (19 shots -> 18 chained xfade/
-        // acrossfade pairs, 19 simultaneously-open decoders) reliably blew
-        // up with "Resource temporarily unavailable" / "Failed to inject
-        // frame into filter network" — ffmpeg running out of some resource
-        // (file descriptors / buffered frames) partway through such a deep
-        // graph.
-        //
-        // The first fix for that (merge 2 clips at a time, left to right,
-        // into a growing chain of intermediate files) traded that crash for
-        // a different, worse problem: linear "fold-left" means the FIRST
-        // segment gets re-encoded once per remaining segment — for 19
-        // shots, shot 1's content goes through 18 successive lossy
-        // re-encode generations before reaching the final file, which is
-        // exactly the visible blur/muffled-audio quality loss reported
-        // after that fix shipped.
-        //
-        // A balanced binary-tree merge keeps the "only 2 inputs open per
-        // ffmpeg call" property (still avoids the resource-exhaustion
-        // crash) while capping every piece of original content at
-        // ceil(log2(N)) re-encode generations instead of up to N-1 — for 19
-        // shots that's 5 generations worst-case instead of 18, a huge
-        // reduction in cumulative generation loss for both video and audio.
-        type Segment = { path: string; dur: number };
-        let level: Segment[] = segmentPaths.map((p, i) => ({ path: p, dur: segDurations[i] }));
-        let mergeCounter = 0;
-        while (level.length > 1) {
-          const next: Segment[] = [];
-          for (let i = 0; i < level.length; i += 2) {
-            if (i + 1 >= level.length) {
-              // Odd one out this round — carries forward untouched to the
-              // next round instead of forcing an unnecessary re-encode.
-              next.push(level[i]);
-              continue;
-            }
-            const a = level[i];
-            const b = level[i + 1];
-            const t = Math.max(0.05, Math.min(effectiveTransitionSec, a.dur / 2, b.dur / 2));
-            const offset = Math.max(0, a.dur - t);
-            const mergedPath = path.join(tmpDir, `merged${mergeCounter++}.mp4`);
-            await runFfmpeg([
-              "-y",
-              "-i", a.path,
-              "-i", b.path,
-              "-filter_complex",
-              `[0:v][1:v]xfade=transition=${effectiveTransition}:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[v];[0:a][1:a]acrossfade=d=${t.toFixed(3)}[a]`,
-              "-map", "[v]", "-map", "[a]",
-              "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2", "-pix_fmt", "yuv420p",
-              ...AAC_OUT,
-              mergedPath,
-            ]);
-            next.push({ path: mergedPath, dur: a.dur + b.dur - t });
-          }
-          level = next;
-        }
-        fs.copyFileSync(level[0].path, finalPath);
-      }
+      job.step = "Assembling final video (transitions + audio crossfade)...";
+      await assembleFinalVideo(segmentPaths, segDurations, tmpDir, finalPath, effectiveTransition, effectiveTransitionSec);
 
       job.result = {
         url: `${publicUrlPrefix}/render.mp4`,
@@ -822,6 +838,209 @@ export function startRenderJob(
     } catch (e: any) {
       job.status = "error";
       job.error = e?.message || "Render failed";
+      job.finishedAt = new Date().toISOString();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  })();
+
+  return { started: true, job };
+}
+
+// ---- Manual edit render ----
+// A separate, much simpler render path for the "✂️ Manual Edit" timeline
+// editor (StoryboardCanvas.tsx / ManualEditModal.tsx) — the creator directly
+// picks each clip's in/out points and any text overlays themselves, instead
+// of the AI render pipeline above choosing them (smart-trim, natural-pause
+// extension, Whisper captions, editing-feedback interpretation — none of
+// that applies here; the whole point of this path is "do exactly what I
+// told you, nothing smarter"). Shares runFfmpeg/assembleFinalVideo/the
+// same `jobs` map + RenderJob polling shape with the AI path above so the
+// client can reuse the exact same polling logic, just against a
+// manual-render job key instead.
+
+export interface ManualEditClipInput {
+  nodeId: string;
+  url: string;
+  kind: "video" | "image";
+  // Seconds into the SOURCE clip. For images, trimStart is always treated
+  // as 0 and trimEnd is just "how many seconds to show this image for".
+  trimStart: number;
+  trimEnd: number;
+  label: string;
+}
+
+export interface ManualEditTextOverlay {
+  // Index into the clips array (post-reorder) this overlay is burned onto.
+  clipIndex: number;
+  text: string;
+  // Seconds relative to the CLIP'S OWN trimmed timeline (0 = the moment
+  // this clip starts playing, after trimming).
+  startSec: number;
+  endSec: number;
+}
+
+function manualCaptionFilter(tmpDir: string, clipIndex: number, overlays: ManualEditTextOverlay[]): string | null {
+  const forThisClip = overlays.filter((o) => o.clipIndex === clipIndex && o.text.trim());
+  if (forThisClip.length === 0) return null;
+  const fontsize = Math.round(36 * CAPTION_SCALE);
+  const boxBorder = Math.round(14 * CAPTION_SCALE);
+  const bottomMargin = Math.round(90 * CAPTION_SCALE);
+  const parts = forThisClip.map((o, i) => {
+    const capPath = path.join(tmpDir, `mcap${clipIndex}_${i}.txt`);
+    fs.writeFileSync(capPath, wrapCaption(o.text, "descriptive"));
+    const start = Math.max(0, o.startSec).toFixed(2);
+    const end = Math.max(o.startSec + 0.1, o.endSec).toFixed(2);
+    return `drawtext=fontfile=${CAPTION_FONT_FILE}:textfile=${capPath}:reload=0:fontcolor=white:fontsize=${fontsize}:box=1:boxcolor=black@0.5:boxborderw=${boxBorder}:x=(w-text_w)/2:y=h-th-${bottomMargin}:enable='between(t\\,${start}\\,${end})'`;
+  });
+  return parts.join(",");
+}
+
+// Fire-and-forget, same shape as startRenderJob — starts in the background,
+// client polls getRenderJob(key) same as always. Uses a caller-supplied key
+// (StoryboardCanvas.tsx namespaces it, e.g. `manual:${aiRenderKey}`) so a
+// manual-edit render and an AI render for the same board can't collide in
+// the shared `jobs` map.
+export function startManualRenderJob(
+  key: string,
+  clips: ManualEditClipInput[],
+  textOverlays: ManualEditTextOverlay[],
+  outDir: string,
+  publicUrlPrefix: string
+): { started: boolean; job: RenderJob } {
+  const existing = jobs.get(key);
+  if (existing && existing.status === "running") {
+    return { started: false, job: existing };
+  }
+
+  const startedAt = new Date().toISOString();
+  if (clips.length === 0) {
+    const job: RenderJob = {
+      status: "error",
+      totalShots: 0,
+      completedShots: 0,
+      step: "",
+      startedAt,
+      finishedAt: startedAt,
+      avgSecPerShot: null,
+      result: null,
+      error: "No clips to export — add at least one shot to the timeline first.",
+    };
+    jobs.set(key, job);
+    return { started: true, job };
+  }
+
+  const job: RenderJob = {
+    status: "running",
+    totalShots: clips.length,
+    completedShots: 0,
+    step: "Starting...",
+    startedAt,
+    finishedAt: null,
+    avgSecPerShot: null,
+    result: null,
+    error: null,
+  };
+  jobs.set(key, job);
+
+  fs.mkdirSync(outDir, { recursive: true });
+  cleanupOrphanedTmpDirs(outDir);
+  const tmpDir = path.join(outDir, `_render_${Date.now()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  const scalePad = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=${FPS}`;
+  const skipped: string[] = [];
+
+  (async () => {
+    const jobStartMs = Date.now();
+    try {
+      const segmentPaths: string[] = [];
+      const segDurations: number[] = [];
+
+      for (let i = 0; i < clips.length; i++) {
+        const clip = clips[i];
+        job.step = `Encoding clip ${i + 1} of ${clips.length}...`;
+        const srcPath = mediaPathFromUrl(clip.url);
+        if (!srcPath || !fs.existsSync(srcPath)) {
+          skipped.push(`${clip.label || "untitled clip"} (file missing)`);
+          job.completedShots++;
+          continue;
+        }
+        const caption = manualCaptionFilter(tmpDir, i, textOverlays);
+        const segPath = path.join(tmpDir, `mseg${i}.mp4`);
+        const videoOut = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2", "-pix_fmt", "yuv420p"];
+
+        if (clip.kind === "video") {
+          const dur = Math.max(0.3, clip.trimEnd - clip.trimStart);
+          const hasAudio = await probeHasAudio(srcPath);
+          if (hasAudio) {
+            await runFfmpeg([
+              "-y", "-i", srcPath,
+              "-vf", withCaption(scalePad, caption),
+              ...videoOut,
+              ...AAC_OUT,
+              "-ss", String(clip.trimStart), "-t", String(dur),
+              segPath,
+            ]);
+          } else {
+            await runFfmpeg([
+              "-y", "-i", srcPath, ...SILENT_AUDIO,
+              "-vf", withCaption(scalePad, caption),
+              "-map", "0:v:0", "-map", "1:a:0",
+              ...videoOut,
+              ...AAC_OUT,
+              "-ss", String(clip.trimStart), "-t", String(dur), "-shortest",
+              segPath,
+            ]);
+          }
+        } else {
+          const dur = Math.max(0.3, clip.trimEnd);
+          const marginW = Math.round(W * 1.2);
+          const marginH = Math.round(H * 1.2);
+          const frames = Math.max(1, Math.round(FPS * dur));
+          const kenBurns =
+            `scale=${marginW}:${marginH}:force_original_aspect_ratio=increase,crop=${marginW}:${marginH},` +
+            `zoompan=z='min(zoom+0.0008,1.15)':d=${frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=${W}x${H}:fps=${FPS}`;
+          await runFfmpeg([
+            "-y", "-loop", "1", "-i", srcPath, ...SILENT_AUDIO,
+            "-vf", withCaption(kenBurns, caption),
+            "-map", "0:v:0", "-map", "1:a:0",
+            ...videoOut,
+            ...AAC_OUT,
+            "-t", String(dur), "-shortest",
+            segPath,
+          ]);
+        }
+        segmentPaths.push(segPath);
+        const realDur = await probeDurationSec(segPath);
+        segDurations.push(realDur > 0 ? realDur : clip.trimEnd - clip.trimStart);
+        job.completedShots++;
+        job.avgSecPerShot = (Date.now() - jobStartMs) / 1000 / job.completedShots;
+      }
+
+      if (segmentPaths.length === 0) {
+        throw new Error("None of the clips could be read from disk.");
+      }
+
+      // Separate filename from the AI pipeline's render.mp4 — an AI render
+      // and a manual-edit export for the same board are two independent
+      // artifacts (different jobs keys let them even run "concurrently" in
+      // the jobs map), and sharing one filename would let whichever
+      // finishes last silently clobber the other's output on disk.
+      const finalPath = path.join(outDir, "manual-render.mp4");
+      job.step = "Assembling final video...";
+      // Fixed, simple crossfade — this path is about honoring the creator's
+      // exact manual cuts, not AI-tuned pacing/transition choices, so there's
+      // no styleProfile/feedback-interpreted transition to defer to here.
+      await assembleFinalVideo(segmentPaths, segDurations, tmpDir, finalPath, "fade", TRANSITION_SEC);
+
+      job.result = { url: `${publicUrlPrefix}/manual-render.mp4`, skipped, styleApplied: null, appliedFeedback: null };
+      job.status = "done";
+      job.step = "Done";
+      job.finishedAt = new Date().toISOString();
+    } catch (e: any) {
+      job.status = "error";
+      job.error = e?.message || "Export failed";
       job.finishedAt = new Date().toISOString();
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

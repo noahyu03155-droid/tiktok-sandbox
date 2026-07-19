@@ -3,7 +3,8 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { REACTION_EMOTIONS } from "@/lib/types";
 import type { CanvasConnection, FunnelStageKey, GeneratedScriptStage, ReactionEmotion, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
-import { resolveStoryboardOrder, resolveChainTails, resolveConnectedChain, MIN_CHAIN_LENGTH_FOR_GENERATE, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
+import { resolveStoryboardOrder, resolveChainTails, resolveConnectedChain, resolveChainNodeIds, MIN_CHAIN_LENGTH_FOR_GENERATE, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
+import ManualEditModal, { type ManualEditSourceClip } from "@/components/ManualEditModal";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
 import ProductPicker from "./ProductPicker";
 
@@ -436,6 +437,27 @@ export default function StoryboardCanvas({
   // so chooseCaptionsAndRender knows which tail to actually send.
   const [pendingRenderTailId, setPendingRenderTailId] = useState<string | null>(null);
   const [renderChainTailId, setRenderChainTailId] = useState<string | null>(null);
+  // "✂️ Manual Edit" — a simplified in-website timeline editor (see
+  // ManualEditModal.tsx) for creators who want more precise hands-on control
+  // than the AI render gives them, without needing a separate app like
+  // CapCut (which can't be embedded here — no public embed API). null when
+  // closed; holds the initial clip list (auto-imported from the same chain
+  // whose Generate/Regenerate button was clicked) while open.
+  const [manualEditClips, setManualEditClips] = useState<ManualEditSourceClip[] | null>(null);
+
+  // Same clip-scoping logic as the server's startRenderJob (order the
+  // chain, then keep only nodes with a real, non-reference clip attached) —
+  // this is what ManualEditModal starts its timeline from, so "Manual Edit"
+  // always opens already populated with whatever this chain currently
+  // renders, not an empty project.
+  function openManualEdit(tailId: string) {
+    const scopedIds = resolveChainNodeIds(tailId, board.connections);
+    const ordered = resolveStoryboardOrder(board.nodes, board.connections).filter((n) => scopedIds.has(n.id));
+    const clips: ManualEditSourceClip[] = ordered
+      .filter((n) => n.clip && n.clip.source !== "tiktok")
+      .map((n) => ({ nodeId: n.id, url: n.clip!.url, kind: n.clip!.kind, label: n.label || "Untitled shot" }));
+    setManualEditClips(clips);
+  }
   // Live progress from the background render job (see renderVideo below +
   // src/lib/storyboardRender.ts) — completedShots/totalShots/avgSecPerShot
   // are all real, observed numbers, not a guess, so the "~Xs left" shown on
@@ -2380,6 +2402,13 @@ export default function StoryboardCanvas({
                           >
                             {rendering ? "Regenerating..." : "🔁 Regenerate"}
                           </button>
+                          <button
+                            onClick={() => openManualEdit(n.id)}
+                            title="Trim, reorder, and caption these shots yourself"
+                            className="h-8 px-3 rounded-lg border border-edge hover:border-brand-500 text-zinc-700 hover:text-zinc-900 text-[11px] font-medium shrink-0"
+                          >
+                            ✂️ Manual Edit
+                          </button>
                           <a
                             href={renderResult.url}
                             download
@@ -2614,6 +2643,10 @@ export default function StoryboardCanvas({
             </div>
           );
         })()}
+
+      {manualEditClips && (
+        <ManualEditModal apiBase={apiBase} initialClips={manualEditClips} onClose={() => setManualEditClips(null)} />
+      )}
 
       {captionsPromptOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">

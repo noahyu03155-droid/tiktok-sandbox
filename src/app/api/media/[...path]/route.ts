@@ -49,7 +49,10 @@ export async function GET(_req: NextRequest, { params }: { params: { path: strin
   // inline preview and the downloaded file are completely different videos"
   // bug. Skip the long-lived cache specifically for this filename so it's
   // always revalidated instead.
-  const isRenderOutput = path.basename(filePath) === "render.mp4";
+  // manual-render.mp4 is the "✂️ Manual Edit" exporter's own output file —
+  // same overwritten-in-place-on-every-export situation as render.mp4, so it
+  // needs the same no-cache treatment for the same reason.
+  const isRenderOutput = ["render.mp4", "manual-render.mp4"].includes(path.basename(filePath));
   const cacheControl = isRenderOutput ? "no-cache" : "public, max-age=31536000, immutable";
 
   return new Response(data, {
