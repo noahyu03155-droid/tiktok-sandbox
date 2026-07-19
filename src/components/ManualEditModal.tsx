@@ -200,6 +200,19 @@ export default function ManualEditModal({
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [selectedBrollId, setSelectedBrollId] = useState<string | null>(null);
   const [brollDragOver, setBrollDragOver] = useState(false);
+  const [binDragOver, setBinDragOver] = useState(false);
+  // Locally-uploaded clips (dragged/dropped in from the user's own computer,
+  // not already sitting on the board) — merged with `boardClips` into
+  // `binClips` below wherever the Media panel's contents are rendered from.
+  // Kept separate from the `boardClips` prop (owned by StoryboardCanvas.tsx)
+  // since this modal doesn't have a way to push new nodes back onto the
+  // board; the uploaded file just lives here for the rest of this editing
+  // session (its underlying URL is real and permanent — /upload writes it
+  // to disk under this project's media folder — only the "it's also a card
+  // on the canvas" part doesn't happen).
+  const [uploadedClips, setUploadedClips] = useState<ManualEditSourceClip[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [playheadSec, setPlayheadSec] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -218,6 +231,14 @@ export default function ManualEditModal({
   const dragFromIndex = useRef<number | null>(null);
   const playTickTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const imageElapsedRef = useRef(0);
+  // Same-page drag-and-drop (Media bin thumbnail -> B-roll row) primary data
+  // channel — a plain JS ref rather than relying solely on
+  // e.dataTransfer.getData/setData with a custom MIME type, which some
+  // embedded webview contexts restrict or drop silently. Set on
+  // dragstart, read on drop, cleared on dragend so a stale value can't
+  // leak into an unrelated later drop.
+  const draggedBinClipRef = useRef<ManualEditSourceClip | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => stopPoll, []);
   useEffect(() => stopPlayback, []);
@@ -292,6 +313,57 @@ export default function ManualEditModal({
   function removeBroll(id: string) {
     setBroll((cur) => cur.filter((b) => b.id !== id));
     setSelectedBrollId((cur) => (cur === id ? null : cur));
+  }
+
+  // Media panel contents = whatever's already wired into this chain on the
+  // board + anything the user has dragged/dropped in from their own
+  // computer this session (see uploadFiles below).
+  const binClips = useMemo(() => [...boardClips, ...uploadedClips], [boardClips, uploadedClips]);
+
+  const UPLOAD_MIME_OK = /^(video\/(mp4|quicktime|webm)|image\/(jpeg|png|webp|gif))$/;
+
+  // Uploads one or more files dropped in from OUTSIDE the app (onto the
+  // Media panel, or directly onto the B-roll row) via the same /upload
+  // route StoryboardCanvas uses for a card's own clip slot — its `nodeId`
+  // field is really just a filename key (see that route's doc comment), so
+  // any unique string works fine even though these files were never
+  // attached to a real board node. Adds each successfully-uploaded file to
+  // `uploadedClips` (so it shows up in the Media panel from then on) and
+  // returns the resulting clips so a B-roll-row drop can also place them
+  // straight onto the timeline in the same action.
+  async function uploadFiles(files: FileList | File[]): Promise<ManualEditSourceClip[]> {
+    const list = Array.from(files).filter((f) => UPLOAD_MIME_OK.test(f.type));
+    if (list.length === 0) {
+      setUploadError("Unsupported file type — use mp4/mov/webm for clips or jpg/png/webp/gif for photos.");
+      return [];
+    }
+    setUploading(true);
+    setUploadError(null);
+    const added: ManualEditSourceClip[] = [];
+    try {
+      for (const file of list) {
+        const nodeId = `manual-upload-${uid()}`;
+        const form = new FormData();
+        form.append("file", file);
+        form.append("nodeId", nodeId);
+        const res = await fetch(`${apiBase}/upload`, { method: "POST", body: form });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setUploadError(data.error || `Failed to upload ${file.name}`);
+          continue;
+        }
+        added.push({
+          nodeId,
+          url: data.url,
+          kind: data.kind,
+          label: file.name.replace(/\.[^.]+$/, "") || "Uploaded clip",
+        });
+      }
+      if (added.length) setUploadedClips((cur) => [...cur, ...added]);
+      return added;
+    } finally {
+      setUploading(false);
+    }
   }
 
   // ---- thumbnail capture (client-side, no backend probe needed) ----
@@ -723,9 +795,9 @@ export default function ManualEditModal({
   const uniqueUrls = useMemo(() => {
     const s = new Set<string>();
     items.forEach((it) => it.kind === "video" && s.add(it.url));
-    boardClips.forEach((c) => c.kind === "video" && s.add(c.url));
+    binClips.forEach((c) => c.kind === "video" && s.add(c.url));
     return Array.from(s);
-  }, [items, boardClips]);
+  }, [items, binClips]);
 
   function IconBtn({ onClick, disabled, title, children, active }: { onClick?: () => void; disabled?: boolean; title: string; children: React.ReactNode; active?: boolean }) {
     return (
@@ -836,12 +908,59 @@ export default function ManualEditModal({
         <div className="flex-1 flex min-h-0 overflow-hidden">
           {/* Media bin */}
           <div className="w-52 shrink-0 border-r border-white/10 flex flex-col min-h-0">
-            <div className="px-3 py-2.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium shrink-0 border-b border-white/5">📁 Media</div>
-            <div className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start">
-              {boardClips.length === 0 ? (
-                <p className="col-span-2 text-[11px] text-slate-600 p-2">No clips found on this board.</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp,image/gif"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length) uploadFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <div className="px-3 py-2.5 flex items-center justify-between shrink-0 border-b border-white/5">
+              <span className="text-[10px] uppercase tracking-widest text-slate-500 font-medium">📁 Media</span>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                title="Upload a photo or video from your computer"
+                className="text-[10px] px-2 py-0.5 rounded-full text-cyan-300 hover:text-cyan-200 disabled:opacity-40 transition-colors"
+                style={{ background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)" }}
+              >
+                {uploading ? "Uploading…" : "+ Upload"}
+              </button>
+            </div>
+            {uploadError && (
+              <p className="px-3 py-1 text-[10px] text-rose-400 border-b border-white/5">{uploadError}</p>
+            )}
+            <div
+              onDragOver={(e) => {
+                // Only react to a real OS file drag (dragging one of this
+                // panel's own thumbnails around doesn't carry a "Files"
+                // type) — otherwise this would swallow the drag before it
+                // ever reaches a card's own onDragStart/onDrop handlers.
+                if (e.dataTransfer.types.includes("Files")) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "copy";
+                  setBinDragOver(true);
+                }
+              }}
+              onDragLeave={() => setBinDragOver(false)}
+              onDrop={(e) => {
+                if (e.dataTransfer.files && e.dataTransfer.files.length) {
+                  e.preventDefault();
+                  setBinDragOver(false);
+                  uploadFiles(e.dataTransfer.files);
+                }
+              }}
+              className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start transition-colors"
+              style={{ background: binDragOver ? "rgba(34,211,238,0.06)" : undefined, outline: binDragOver ? "1px dashed rgba(34,211,238,0.5)" : undefined, outlineOffset: -4 }}
+            >
+              {binClips.length === 0 ? (
+                <p className="col-span-2 text-[11px] text-slate-600 p-2">No clips yet — drag a photo/video in, or use + Upload above.</p>
               ) : (
-                boardClips.map((c) => {
+                binClips.map((c) => {
                   const thumb = c.kind === "video" ? thumbsByUrl[c.url] : c.url;
                   const inTimeline = items.some((it) => it.url === c.url);
                   return (
@@ -853,9 +972,16 @@ export default function ManualEditModal({
                         // Drag target for the B-roll row below — clicking
                         // still adds to the main timeline as before; dragging
                         // onto the B-roll row instead drops it as an overlay
-                        // at that time position (see the row's onDrop).
+                        // at that time position (see the row's onDrop). The
+                        // ref is the actual data channel (see its own doc
+                        // comment); dataTransfer is set too for standards
+                        // compliance but isn't relied on.
+                        draggedBinClipRef.current = c;
                         e.dataTransfer.setData("application/x-broll-clip", JSON.stringify(c));
                         e.dataTransfer.effectAllowed = "copy";
+                      }}
+                      onDragEnd={() => {
+                        draggedBinClipRef.current = null;
                       }}
                       title={`Add "${c.label}" to the timeline, or drag onto the B-roll row to overlay it`}
                       className="group relative rounded-lg overflow-hidden aspect-[3/4] text-left cursor-grab active:cursor-grabbing"
@@ -950,11 +1076,16 @@ export default function ManualEditModal({
                   )}
 
                   {/* B-roll row — an overlay track sitting on top of the base
-                      video during whatever time window it's placed at. Drop
-                      target for a Media bin thumbnail dragged down from the
-                      left (see the bin button's onDragStart above); dropping
-                      elsewhere on the page does nothing since only this band
-                      listens for the "application/x-broll-clip" payload. */}
+                      video during whatever time window it's placed at. Two
+                      things can land here: (1) a Media bin thumbnail dragged
+                      down from the left (see the bin button's onDragStart —
+                      the drag payload travels mainly via draggedBinClipRef,
+                      not dataTransfer, since some embedded webview contexts
+                      don't reliably deliver custom dataTransfer MIME types),
+                      or (2) a photo/video file dragged straight in from the
+                      user's own computer, which gets uploaded on the spot and
+                      placed as B-roll immediately (and shows up in the Media
+                      panel from then on too, via uploadFiles). */}
                   {items.length > 0 && (
                     <div
                       onDragOver={(e) => {
@@ -963,20 +1094,35 @@ export default function ManualEditModal({
                         setBrollDragOver(true);
                       }}
                       onDragLeave={() => setBrollDragOver(false)}
-                      onDrop={(e) => {
+                      onDrop={async (e) => {
                         e.preventDefault();
                         setBrollDragOver(false);
+                        const rect = trackRef.current?.getBoundingClientRect();
+                        if (!rect) return;
+                        const sec = (e.clientX - rect.left + (trackRef.current?.scrollLeft || 0)) / zoom;
+
+                        // Case 1: a real file dragged in from outside the app.
+                        if (e.dataTransfer.files && e.dataTransfer.files.length) {
+                          const added = await uploadFiles(e.dataTransfer.files);
+                          added.forEach((clip) => addBrollFromBoard(clip, sec));
+                          return;
+                        }
+
+                        // Case 2: an existing Media bin thumbnail — ref first
+                        // (see its doc comment), dataTransfer as a fallback
+                        // for browsers where that's actually reliable.
+                        const clip = draggedBinClipRef.current;
+                        draggedBinClipRef.current = null;
+                        if (clip) {
+                          addBrollFromBoard(clip, sec);
+                          return;
+                        }
                         const raw = e.dataTransfer.getData("application/x-broll-clip");
                         if (!raw) return;
                         try {
-                          const clip: ManualEditSourceClip = JSON.parse(raw);
-                          const rect = trackRef.current?.getBoundingClientRect();
-                          if (!rect) return;
-                          const sec = (e.clientX - rect.left + (trackRef.current?.scrollLeft || 0)) / zoom;
-                          addBrollFromBoard(clip, sec);
+                          addBrollFromBoard(JSON.parse(raw), sec);
                         } catch {
-                          // Malformed drag payload (e.g. something dragged in
-                          // from outside this app) — silently ignore.
+                          // Malformed drag payload — silently ignore.
                         }
                       }}
                       className="absolute rounded-lg transition-colors"
