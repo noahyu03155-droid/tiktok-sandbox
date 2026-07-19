@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Space_Grotesk } from "next/font/google";
+import { Rajdhani } from "next/font/google";
 import "./globals.css";
 import { LocaleProvider } from "@/lib/i18n";
 import HeaderBar from "@/components/HeaderBar";
@@ -7,14 +7,20 @@ import MainShell from "@/components/MainShell";
 import { getCurrentUser } from "@/lib/session";
 import { getUserById } from "@/lib/db";
 
-// A clean geometric sans used only for the COTORX wordmark (see Logo.tsx) —
-// gives it a techy, minimal feel without going as decorative/sci-fi as the
-// earlier Orbitron experiment (Phase 39, reverted in Phase 41). Everything
-// else (body copy, dense dashboard UI) stays on the default sans so
-// data-heavy screens (Trends, Creation, User Data) stay readable. Exposed
-// as a CSS variable so Logo.tsx can opt in without every page importing
-// next/font itself.
-const wordmarkFont = Space_Grotesk({ subsets: ["latin"], weight: ["700"], variable: "--font-wordmark" });
+// The COTORX wordmark's font (see Logo.tsx) — squared-off, angular
+// letterforms read as more technical/precise than a standard geometric
+// sans, which is the point at this weight rendered as a thin outline
+// stroke rather than a filled shape (chosen over Space Grotesk and a
+// couple of other geometric candidates specifically for this outline
+// treatment; an earlier, more decorative/sci-fi Orbitron experiment was
+// tried and reverted in Phase 39/41 — this sits in between: sharp but not
+// costume-y). Everything else (body copy, dense dashboard UI) stays on the
+// default sans so data-heavy screens (Trends, Creation, User Data) stay
+// readable. Exposed as a CSS variable so Logo.tsx can opt in without every
+// page importing next/font itself. "300" is the outline wordmark's actual
+// weight; "600" stays loaded in case anything ever wants a solid-fill
+// version of the same family.
+const wordmarkFont = Rajdhani({ subsets: ["latin"], weight: ["300", "600"], variable: "--font-wordmark" });
 
 // Core selling-point pitch, used both as the page <meta description> and as
 // the Open Graph title/description so link previews (iMessage, Messenger,

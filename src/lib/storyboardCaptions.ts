@@ -9,6 +9,12 @@
 // both Latin and Chinese/Japanese/Korean text, since a shot's label/
 // instruction can be edited into either.
 export const CAPTION_FONT_FILE = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
+// The Bold weight ships in the same `fonts-noto-cjk` Debian package, right
+// alongside Regular in the same directory (Regular/Bold/Medium/Light/etc.
+// all come bundled together) — no extra Dockerfile changes needed. Used by
+// the manual editor's "Bold" text-style toggle (see manualCaptionFilter in
+// storyboardRender.ts).
+export const CAPTION_FONT_FILE_BOLD = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc";
 
 // Defaults match the original always-on behavior when no reference-video
 // style profile is in play. A style profile's captionStyle picks one of

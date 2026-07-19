@@ -79,6 +79,8 @@ interface TextOverlay {
   endSec: number;
   position: "top" | "center" | "bottom";
   size: "small" | "medium" | "large";
+  bold: boolean;
+  color: string; // "#rrggbb", fed straight into the export payload and on to ffmpeg drawtext's fontcolor
 }
 
 interface BoundaryTransition {
@@ -360,7 +362,7 @@ export default function ManualEditModal({
 
   // ---- text overlays ----
   function addOverlay(itemId: string, clipTrimmedDur: number) {
-    const newOverlay: TextOverlay = { id: uid(), itemId, text: "", startSec: 0, endSec: Math.max(0.5, Math.min(3, clipTrimmedDur)), position: "bottom", size: "medium" };
+    const newOverlay: TextOverlay = { id: uid(), itemId, text: "", startSec: 0, endSec: Math.max(0.5, Math.min(3, clipTrimmedDur)), position: "bottom", size: "medium", bold: false, color: "#ffffff" };
     setOverlays((cur) => [...cur, newOverlay]);
     setSelectedOverlayId(newOverlay.id);
   }
@@ -394,7 +396,7 @@ export default function ManualEditModal({
         // Replaces any overlays already on this clip rather than piling
         // AI-generated ones on top of hand-written ones.
         ...cur.filter((o) => o.itemId !== item.id),
-        ...segs.map((s) => ({ id: uid(), itemId: item.id, text: s.text, startSec: s.start, endSec: s.end, position: "bottom" as const, size: "medium" as const })),
+        ...segs.map((s) => ({ id: uid(), itemId: item.id, text: s.text, startSec: s.start, endSec: s.end, position: "bottom" as const, size: "medium" as const, bold: false, color: "#ffffff" })),
       ]);
     } catch (err: any) {
       setAutoCaptionError(err.message || "Auto-caption failed");
@@ -546,7 +548,7 @@ export default function ManualEditModal({
           const clipIndex = items.findIndex((it) => it.id === o.itemId);
           return clipIndex === -1 || !o.text.trim()
             ? null
-            : { clipIndex, text: o.text, startSec: o.startSec, endSec: o.endSec, position: o.position, size: o.size };
+            : { clipIndex, text: o.text, startSec: o.startSec, endSec: o.endSec, position: o.position, size: o.size, bold: o.bold, color: o.color };
         })
         .filter((o): o is NonNullable<typeof o> => o !== null);
 
@@ -622,10 +624,20 @@ export default function ManualEditModal({
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10 shrink-0 bg-white/[0.02]">
           <div className="flex items-center gap-2.5">
             <span
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0"
+              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
               style={{ background: "linear-gradient(135deg, #22d3ee, #6366f1)", boxShadow: "0 0 16px -2px rgba(99,102,241,0.7)" }}
             >
-              ✂️
+              {/* Geometric line-art scissors — two pivot rings + crossing
+                  blade strokes — reads as "cut/edit" without leaning on an
+                  emoji glyph, matching the thin-line, technical look used
+                  elsewhere in this modal (the ⇄ transition chips, hairline
+                  borders, tabular-nums timecodes). */}
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="6" cy="6" r="2.4" stroke="white" strokeWidth="1.7" />
+                <circle cx="6" cy="18" r="2.4" stroke="white" strokeWidth="1.7" />
+                <path d="M8 7.5L20 17" stroke="white" strokeWidth="1.7" strokeLinecap="round" />
+                <path d="M8 16.5L20 7" stroke="white" strokeWidth="1.7" strokeLinecap="round" />
+              </svg>
             </span>
             <div>
               <h3 className="text-slate-100 font-semibold text-sm tracking-wide leading-tight">Manual Edit</h3>
@@ -1040,6 +1052,28 @@ export default function ManualEditModal({
                           <option value="medium" className="bg-[#0f1424]">Medium</option>
                           <option value="large" className="bg-[#0f1424]">Large</option>
                         </select>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => updateOverlay(o.id, { bold: !o.bold })}
+                          title="Bold"
+                          className="w-7 h-7 rounded border text-[12px] font-bold transition-colors"
+                          style={{
+                            borderColor: o.bold ? "rgba(34,211,238,0.6)" : "rgba(255,255,255,0.1)",
+                            background: o.bold ? "rgba(34,211,238,0.15)" : "rgba(255,255,255,0.02)",
+                            color: o.bold ? "#22d3ee" : "#cbd5e1",
+                          }}
+                        >
+                          B
+                        </button>
+                        <input
+                          type="color"
+                          value={o.color}
+                          onChange={(e) => updateOverlay(o.id, { color: e.target.value })}
+                          title="Text color"
+                          className="w-7 h-7 rounded border border-white/10 bg-black/30 p-0.5 cursor-pointer"
+                        />
+                        <span className="text-[10px] text-slate-500 font-mono">{o.color}</span>
                       </div>
                     </div>
                   ))}

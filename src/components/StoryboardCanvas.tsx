@@ -57,6 +57,8 @@ const GAP_X = 70;
 const STYLE_WIDGET_H = 34; // compact reference-style control shown above each chain-tail's Generate button
 const STYLE_WIDGET_GAP = 8;
 const GENERATE_BUTTON_H = 36;
+const SCRIPT_BUTTON_W = 76; // "⬇ Script" button that sits beside Generate/CTA, per chain
+const SCRIPT_BUTTON_GAP = 8;
 const RESULT_CARD_GAP = 10;
 const RESULT_CARD_WIDTH = 360; // wider than a normal card — needs room for the video preview + feedback textarea
 const RESULT_CARD_MAX_SKIPPED_SHOWN = 3; // long skip lists (a messy board with many leftover cards) used to spill the whole UI — show a few, then "and N more"
@@ -490,15 +492,19 @@ export default function StoryboardCanvas({
     setManualEditClips(clips);
   }
 
-  // "🖨 Print / PDF" — opens a plain, clean-print rendering of every shot's
-  // script + shooting guide + editor notes, in resolved shot order, and
-  // fires the browser's own print dialog. Letting the user pick "Save as
-  // PDF" there (every modern browser's print dialog offers this) sidesteps
-  // pulling in a whole PDF-generation library just to hand back a document
-  // whose entire purpose is "print it out and bring it to set" — the
-  // browser's print pipeline already does exactly that.
-  function printScript() {
-    const ordered = resolveStoryboardOrder(board.nodes, board.connections);
+  // "⬇ Download script" — lives next to each chain's own Generate video
+  // button (one per chain, not one global button for the whole board — a
+  // board can hold several independent chains/scripts, and printing "every
+  // shot on the board" mashed them all into one document). Opens a plain,
+  // clean-print rendering of THIS chain's shots (script + shooting guide +
+  // editor notes, in resolved shot order) and fires the browser's own print
+  // dialog. Letting the user pick "Save as PDF" there (every modern browser
+  // offers this) sidesteps pulling in a whole PDF-generation library just to
+  // hand back a document whose entire purpose is "print it out and bring it
+  // to set" — the browser's print pipeline already does exactly that.
+  function printScript(tailId: string) {
+    const scopedIds = resolveChainNodeIds(tailId, board.connections);
+    const ordered = resolveStoryboardOrder(board.nodes, board.connections).filter((n) => scopedIds.has(n.id));
     const w = window.open("", "_blank");
     if (!w) return;
     const esc = (s: string) =>
@@ -1654,13 +1660,24 @@ export default function StoryboardCanvas({
     (t) => t.chainLength >= MIN_CHAIN_LENGTH_FOR_GENERATE
   );
 
-  // Every real, non-reference clip attached anywhere on the board (not just
-  // the chain Manual Edit was opened from) — ManualEditModal's "+ Add clip"
-  // picker lets the user pull any of these into their manual timeline, same
-  // idea as CapCut's own media library panel but backed by clips already
-  // uploaded in this project instead of a fresh import flow.
+  // Every real, non-reference clip attached to a CONNECTED card anywhere on
+  // the board (not just the chain Manual Edit was opened from, but not
+  // fully isolated cards either) — ManualEditModal's "+ Add clip" picker
+  // lets the user pull any of these into their manual timeline, same idea
+  // as CapCut's own media library panel but backed by clips already
+  // uploaded in this project instead of a fresh import flow. A card
+  // created via "+ Add shot" that was never wired into any chain (no dots
+  // connected) isn't part of anything the user is actually building, so it
+  // shouldn't show up here as if it were — same "only what's actually
+  // connected counts" rule openManualEdit already applies when scoping a
+  // single chain, just applied board-wide here instead of to one tail.
+  const connectedNodeIds = new Set<string>();
+  board.connections.forEach((c) => {
+    connectedNodeIds.add(c.fromId);
+    connectedNodeIds.add(c.toId);
+  });
   const boardClips: ManualEditSourceClip[] = board.nodes
-    .filter((n) => n.clip && n.clip.source !== "tiktok")
+    .filter((n) => n.clip && n.clip.source !== "tiktok" && connectedNodeIds.has(n.id))
     .map((n) => ({ nodeId: n.id, url: n.clip!.url, kind: n.clip!.kind, label: n.label || "Untitled shot" }));
 
   // Chain HEADS — the mirror-image anchor point of chainTails above: a node
@@ -1792,13 +1809,6 @@ export default function StoryboardCanvas({
               className="px-2 h-6 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-[11px]"
             >
               📋 Template
-            </button>
-            <button
-              onClick={printScript}
-              title="Print the full script + shooting guide (or save as PDF from the print dialog)"
-              className="px-2 h-6 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-[11px]"
-            >
-              🖨 Print / PDF
             </button>
             <button onClick={() => zoomBy(1.2)} className="w-6 h-6 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs">
               +
@@ -2451,10 +2461,23 @@ export default function StoryboardCanvas({
                 <button
                   onClick={() => requestRender(n.id)}
                   disabled={rendering}
-                  className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
-                  style={{ left: n.x, top: generateButtonTop, width: nodeWidth(n) }}
+                  className="absolute flex items-center justify-center px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
+                  style={{ left: n.x, top: generateButtonTop, width: nodeWidth(n) - SCRIPT_BUTTON_W - SCRIPT_BUTTON_GAP, height: GENERATE_BUTTON_H }}
                 >
                   {renderButtonLabel()}
+                </button>
+                {/* "⬇ Script" sits right next to Generate/CTA, not up in the
+                    global toolbar — a board can hold several independent
+                    chains, each its own script, so this needs to be scoped
+                    per-chain like Generate already is (see printScript's
+                    doc comment). */}
+                <button
+                  onClick={() => printScript(n.id)}
+                  title="Download this chain's script + shooting guide (opens the print dialog — choose Save as PDF)"
+                  className="absolute flex items-center justify-center gap-1 px-2 rounded-lg border border-edge bg-panel hover:border-brand-500 text-zinc-700 hover:text-zinc-900 text-[10.5px] font-medium shadow-xl"
+                  style={{ left: n.x + nodeWidth(n) - SCRIPT_BUTTON_W, top: generateButtonTop, width: SCRIPT_BUTTON_W, height: GENERATE_BUTTON_H }}
+                >
+                  ⬇ Script
                 </button>
 
                 {/* Render result card — appears anchored under THIS tail's

@@ -32,7 +32,7 @@ import OpenAI from "openai";
 import { getMediaDir } from "@/lib/db";
 import { resolveStoryboardOrder, resolveChainNodeIds } from "@/lib/storyboard";
 import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/storyboardTrim";
-import { wrapCaption, CAPTION_FONT_FILE, type CaptionStylePreset } from "@/lib/storyboardCaptions";
+import { wrapCaption, CAPTION_FONT_FILE, CAPTION_FONT_FILE_BOLD, type CaptionStylePreset } from "@/lib/storyboardCaptions";
 import { interpretEditingFeedback } from "@/lib/storyboardFeedback";
 import type { StoryboardState, StoryboardTransitionPreset, TranscriptSegment } from "@/lib/types";
 
@@ -878,10 +878,16 @@ export interface ManualEditTextOverlay {
   // this clip starts playing, after trimming).
   startSec: number;
   endSec: number;
-  // Both optional, default to "bottom"/"medium" if omitted — kept optional
-  // so older client payloads (pre-styling) still work.
+  // All optional, default to "bottom"/"medium"/non-bold/white if omitted —
+  // kept optional so older client payloads (pre-styling) still work.
   position?: "top" | "center" | "bottom";
   size?: "small" | "medium" | "large";
+  bold?: boolean;
+  // "#rrggbb" hex from the client's <input type="color">. Real font-family
+  // swapping would mean bundling/apt-installing more font files (see
+  // storyboardCaptions.ts's doc comment on CAPTION_FONT_FILE) — bold weight
+  // + color are the styling knobs actually wired up to ffmpeg drawtext.
+  color?: string;
 }
 
 // One entry per boundary BETWEEN adjacent clips in the manual-edit timeline
@@ -897,6 +903,15 @@ export interface ManualEditTransition {
 
 const OVERLAY_SIZE_PX: Record<NonNullable<ManualEditTextOverlay["size"]>, number> = { small: 26, medium: 36, large: 50 };
 
+// Converts a "#rrggbb" hex from the client's color picker into ffmpeg
+// drawtext's expected `0xRRGGBB` form, falling back to white on anything
+// that isn't a clean 6-digit hex (a stray value here would otherwise break
+// the whole filtergraph string, failing the render).
+function toFfmpegColor(hex: string | undefined): string {
+  if (hex && /^#[0-9a-fA-F]{6}$/.test(hex)) return `0x${hex.slice(1)}`;
+  return "white";
+}
+
 function manualCaptionFilter(tmpDir: string, clipIndex: number, overlays: ManualEditTextOverlay[]): string | null {
   const forThisClip = overlays.filter((o) => o.clipIndex === clipIndex && o.text.trim());
   if (forThisClip.length === 0) return null;
@@ -909,7 +924,9 @@ function manualCaptionFilter(tmpDir: string, clipIndex: number, overlays: Manual
     const end = Math.max(o.startSec + 0.1, o.endSec).toFixed(2);
     const fontsize = Math.round((OVERLAY_SIZE_PX[o.size || "medium"]) * CAPTION_SCALE);
     const yExpr = o.position === "top" ? `${margin}` : o.position === "center" ? `(h-th)/2` : `h-th-${margin}`;
-    return `drawtext=fontfile=${CAPTION_FONT_FILE}:textfile=${capPath}:reload=0:fontcolor=white:fontsize=${fontsize}:box=1:boxcolor=black@0.5:boxborderw=${boxBorder}:x=(w-text_w)/2:y=${yExpr}:enable='between(t\\,${start}\\,${end})'`;
+    const fontFile = o.bold ? CAPTION_FONT_FILE_BOLD : CAPTION_FONT_FILE;
+    const fontColor = toFfmpegColor(o.color);
+    return `drawtext=fontfile=${fontFile}:textfile=${capPath}:reload=0:fontcolor=${fontColor}:fontsize=${fontsize}:box=1:boxcolor=black@0.5:boxborderw=${boxBorder}:x=(w-text_w)/2:y=${yExpr}:enable='between(t\\,${start}\\,${end})'`;
   });
   return parts.join(",");
 }
