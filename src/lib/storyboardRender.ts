@@ -217,19 +217,31 @@ async function extendToNaturalPause(srcPath: string, startSec: number, targetSec
   return targetSec;
 }
 
-// Pulls just the audio for the exact [startSec, startSec+durationSec)
-// window a shot ended up using (the same window smart-trim picked / the
-// same window that ends up in the final segment) — transcribing that exact
-// slice, rather than the whole source clip, keeps the caption scoped to
-// only what's actually said in THIS shot. Goes through runFfmpeg so it
-// shares its kill-timeout instead of being able to hang indefinitely.
-function extractAudioWindow(srcPath: string, startSec: number, durationSec: number, outPath: string): Promise<void> {
+// Pulls the audio for a (possibly padded) [fromSec, fromSec+durationSec)
+// window of srcPath. Goes through runFfmpeg so it shares its kill-timeout
+// instead of being able to hang indefinitely.
+function extractAudioWindow(srcPath: string, fromSec: number, durationSec: number, outPath: string): Promise<void> {
   return runFfmpeg([
-    "-y", "-ss", String(startSec), "-t", String(durationSec), "-i", srcPath,
+    "-y", "-ss", String(fromSec), "-t", String(durationSec), "-i", srcPath,
     "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
     outPath,
   ]);
 }
+
+// How much surrounding audio (before/after the shot's actual [startSec,
+// startSec+durationSec) window) to include when sending audio to Whisper for
+// word-level timing, clamped to the source clip's real bounds. Purely for
+// transcription context — words from the padding are filtered back out
+// afterward (see transcribeShotAudio). Whisper's per-word timestamps get
+// noticeably less accurate right at the edges of a short, hard-clipped
+// audio file (a word cut off mid-sound at the very start/end of the file
+// throws off its own alignment and can drag neighboring words' timestamps
+// with it) — reported as "captions don't match the person's actual speaking
+// pace." Giving Whisper a little real audio before and after the window it
+// actually needs anchors the alignment properly; the extra words at the
+// edges just get discarded once we only keep what falls inside the shot's
+// real window.
+const WHISPER_CONTEXT_PAD_SEC = 1.5;
 
 interface WhisperWord {
   word: string;
@@ -337,18 +349,43 @@ async function transcribeShotAudio(
   srcPath: string,
   startSec: number,
   durationSec: number,
+  clipDurationSec: number,
   tmpDir: string,
   index: number
 ): Promise<TranscriptSegment[] | null> {
   if (!process.env.OPENAI_API_KEY) return null;
   try {
+    // Extract with a little real audio on either side of the shot's actual
+    // window (clamped to the clip's real bounds) — see WHISPER_CONTEXT_PAD_SEC's
+    // doc comment for why an isolated, hard-clipped window throws off
+    // Whisper's own word-timing accuracy.
+    const padLeft = Math.min(WHISPER_CONTEXT_PAD_SEC, startSec);
+    const padRight = Math.min(WHISPER_CONTEXT_PAD_SEC, Math.max(0, clipDurationSec - (startSec + durationSec)));
+    const extractStart = startSec - padLeft;
+    const extractDuration = padLeft + durationSec + padRight;
+
     const audioPath = path.join(tmpDir, `whisper_${index}.mp3`);
-    await extractAudioWindow(srcPath, startSec, durationSec, audioPath);
-    const words = await Promise.race([
+    await extractAudioWindow(srcPath, extractStart, extractDuration, audioPath);
+    const rawWords = await Promise.race([
       transcribeShotWords(audioPath),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Whisper transcription timed out")), 30_000)),
     ]);
-    if (!words) return null;
+    if (!rawWords) return null;
+
+    // rawWords' timestamps are relative to extractStart (0 = extractStart),
+    // not to the shot's own window (0 = startSec) — shift by padLeft so
+    // downstream code (and the final drawtext filter, which is built against
+    // the shot's own [0, durationSec) timeline) doesn't need to know padding
+    // ever happened. Keep a word if it overlaps the real window at all (its
+    // shifted end > 0 and shifted start < durationSec), then clamp into
+    // [0, durationSec] so a word straddling the boundary doesn't produce a
+    // caption cue that starts before or runs past the shot itself.
+    const words = rawWords
+      .map((w) => ({ word: w.word, start: w.start - padLeft, end: w.end - padLeft }))
+      .filter((w) => w.end > 0 && w.start < durationSec)
+      .map((w) => ({ word: w.word, start: Math.max(0, w.start), end: Math.min(durationSec, w.end) }));
+    if (!words.length) return null;
+
     const fullText = words.map((w) => w.word).join(" ");
     if (looksLikeHallucination(fullText)) return null;
     const grouped = groupWordsIntoCaptions(words);
@@ -654,7 +691,7 @@ export function startRenderJob(
           }
           intendedSec = targetSec;
           if (captionsMode === "auto" && hasAudio) {
-            const segments = await transcribeShotAudio(srcPath, startSec, targetSec, tmpDir, i);
+            const segments = await transcribeShotAudio(srcPath, startSec, targetSec, clipDurationSec, tmpDir, i);
             if (segments) caption = timedCaptionFilter(tmpDir, i, segments, captionStyle);
           }
           if (hasAudio) {

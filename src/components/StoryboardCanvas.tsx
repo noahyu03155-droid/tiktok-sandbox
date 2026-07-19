@@ -549,9 +549,9 @@ export default function StoryboardCanvas({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstRun = useRef(true);
 
-  function saveBoardNow() {
+  function saveBoardNow(): Promise<void> {
     setSaveStatus("saving");
-    fetch(`${apiBase}`, {
+    return fetch(`${apiBase}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(board),
@@ -1380,6 +1380,21 @@ export default function StoryboardCanvas({
     setRenderProgress(null);
     stopRenderPoll();
     try {
+      // Flush any pending debounced autosave (see the 600ms timer above)
+      // and WAIT for it before kicking off the render — the render route
+      // reads board.direction (the feedback textbox) straight off whatever
+      // is currently persisted on the server, not off anything sent in this
+      // POST's body. Without this, typing feedback and clicking
+      // Generate/Regenerate within that 600ms window fired the render
+      // before the save had actually landed, so the server read the OLD
+      // (often empty) direction text and silently ignored the note the
+      // person just typed.
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      await saveBoardNow();
+
       const res = await fetch(`${apiBase}/render`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
