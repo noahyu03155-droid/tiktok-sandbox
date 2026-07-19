@@ -103,6 +103,12 @@ interface BoundaryTransition {
 // segment to the single base clip it starts within — a B-roll spanning a cut
 // is truncated to the first clip's remaining time, a known v1 simplification
 // rather than splitting it across the boundary).
+// boxX/boxY/boxW/boxH position the B-roll WITHIN the 9:16 canvas as 0-1
+// fractions (0,0,1,1 = full-frame, the original behavior) — dragging/
+// resizing it in the preview (see the preview frame's overlay handles)
+// shrinks it down into a picture-in-picture inset instead, CapCut-style.
+// Top-left anchored: resizing only ever changes boxW/boxH, moving only ever
+// changes boxX/boxY.
 interface BRollItem {
   id: string;
   nodeId: string;
@@ -112,6 +118,10 @@ interface BRollItem {
   startSec: number; // position on the whole sequence's global timeline
   duration: number; // how long it's shown for
   trimStart: number; // in-point within the SOURCE clip (video only)
+  boxX: number;
+  boxY: number;
+  boxW: number;
+  boxH: number;
 }
 
 // A single background-music slot — spans the whole render (looped/trimmed to
@@ -128,7 +138,12 @@ interface MusicTrack {
 const DEFAULT_IMAGE_DURATION = 4;
 const DEFAULT_BROLL_DURATION = 2.5;
 const DEFAULT_MUSIC_VOLUME = 0.4;
-const MUSIC_MIME_OK = /^audio\/(mpeg|mp3|wav|x-wav|mp4|x-m4a|m4a|aac)$/;
+// Accepts pure audio files AND video files — dropping a video onto the
+// Music row is meant to work too, automatically pulling just its audio
+// track (see the render pipeline's mixing pass, which reads only the `a`
+// stream regardless of whether the source file has video in it, so no
+// separate "extract audio" step is actually needed here).
+const MUSIC_MIME_OK = /^(audio\/(mpeg|mp3|wav|x-wav|mp4|x-m4a|m4a|aac)|video\/(mp4|quicktime|webm))$/;
 const MIN_ZOOM = 15;
 const MAX_ZOOM = 140;
 const DEFAULT_ZOOM = 46; // pixels per second
@@ -150,6 +165,81 @@ const BASE_MUSIC_ROW_H = 26;
 const MIN_ROW_SCALE = 0.8;
 const MAX_ROW_SCALE = 2.4;
 const DEFAULT_ROW_SCALE = 1;
+
+// ---- monochrome toolbar icons ----
+// Plain inline SVGs (stroke/fill = currentColor, no hardcoded color of their
+// own) replacing the toolbar's previous emoji glyphs (▶ ⏸ ✂️ 🗑️ 🎙️ 🪄 ⇄) —
+// those render as full-color OS emoji pictograms regardless of the
+// button's own text color, which is what made the toolbar look
+// inconsistent with the rest of the app's black/white/cyan "tech" aesthetic
+// (see Logo.tsx and the phase-74c icon pass elsewhere in this file). Every
+// icon here instead inherits whatever color the surrounding button/IconBtn
+// is already using (slate by default, cyan when active).
+function PlayIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M4 2.3v11.4a.9.9 0 0 0 1.36.77l9.1-5.7a.9.9 0 0 0 0-1.54l-9.1-5.7A.9.9 0 0 0 4 2.3z" />
+    </svg>
+  );
+}
+function PauseIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+      <rect x="3.3" y="2.3" width="3.4" height="11.4" rx="0.8" />
+      <rect x="9.3" y="2.3" width="3.4" height="11.4" rx="0.8" />
+    </svg>
+  );
+}
+function ScissorsIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="4" cy="4" r="1.7" />
+      <circle cx="4" cy="12" r="1.7" />
+      <line x1="5.3" y1="5.1" x2="13.5" y2="12.5" />
+      <line x1="5.3" y1="10.9" x2="13.5" y2="3.5" />
+    </svg>
+  );
+}
+function TrashIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 4.5h11" />
+      <path d="M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5" />
+      <path d="M4 4.5l.6 8.3a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.3" />
+      <line x1="6.5" y1="7" x2="6.5" y2="11.5" />
+      <line x1="9.5" y1="7" x2="9.5" y2="11.5" />
+    </svg>
+  );
+}
+function MicIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="6" y="1.5" width="4" height="7.5" rx="2" />
+      <path d="M3.5 7.5a4.5 4.5 0 0 0 9 0" />
+      <line x1="8" y1="12" x2="8" y2="14.3" />
+      <line x1="5.5" y1="14.3" x2="10.5" y2="14.3" />
+    </svg>
+  );
+}
+function WandIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="2.5" y1="13.5" x2="9.5" y2="6.5" />
+      <path d="M12.3 2l.55 1.3 1.3.55-1.3.55-.55 1.3-.55-1.3-1.3-.55 1.3-.55L12.3 2z" fill="currentColor" stroke="none" />
+      <path d="M4.3 9.8l.35.85.85.35-.85.35-.35.85-.35-.85-.85-.35.85-.35.35-.85z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function SwapIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 5.2h9.5" />
+      <path d="M8.7 2.3l3 2.9-3 2.9" />
+      <path d="M14 10.8H4.5" />
+      <path d="M7.3 13.7l-3-2.9 3-2.9" />
+    </svg>
+  );
+}
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -254,8 +344,30 @@ export default function ManualEditModal({
 
   const trackRef = useRef<HTMLDivElement>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
+  // The 9:16 preview frame's own DOM node — measured (getBoundingClientRect)
+  // by the B-roll box move/resize drags above to convert pixel deltas into
+  // 0-1 canvas fractions.
+  const previewFrameRef = useRef<HTMLDivElement>(null);
+  // One <video> element per B-roll item CURRENTLY RENDERED in the preview
+  // (only active-in-window and/or selected ones are ever mounted — see the
+  // B-roll overlay JSX) — keyed by BRollItem.id so syncBrollPlayback can
+  // find and drive each one's currentTime/play/pause independently of the
+  // main preview video.
+  const brollVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
+  // Mirrors `broll` state for syncBrollPlayback to read from inside the rAF
+  // tick loop without closing over a stale array (the loop's own callback
+  // is only created once per togglePlay() call, so a plain closure over
+  // `broll` would freeze at whatever it was when Play was clicked).
+  const brollRef = useRef<BRollItem[]>([]);
   const dragFromIndex = useRef<number | null>(null);
-  const playTickTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // requestAnimationFrame id, not a setInterval id — the play-through tick
+  // loop switched from a fixed 100ms setInterval (visibly choppy, ~10fps
+  // playhead motion — reported as the play/pause experience feeling
+  // sluggish/"不灵活") to a real per-frame rAF loop (~60fps) for a smooth
+  // playhead. Still used as the plain truthiness check for "is something
+  // actually playing right now" everywhere else in this file (see
+  // togglePlay's own doc comment for why a ref beats the `playing` state).
+  const playTickTimer = useRef<number | null>(null);
   const imageElapsedRef = useRef(0);
   // Same-page drag-and-drop (Media bin thumbnail -> B-roll row) primary data
   // channel — a plain JS ref rather than relying solely on
@@ -269,6 +381,9 @@ export default function ManualEditModal({
 
   useEffect(() => stopPoll, []);
   useEffect(() => stopPlayback, []);
+  useEffect(() => {
+    brollRef.current = broll;
+  }, [broll]);
 
   // Keep exactly one transition entry per boundary (items.length - 1),
   // defaulting new boundaries to a plain fade — belongs to a BOUNDARY
@@ -310,14 +425,29 @@ export default function ManualEditModal({
   function beginRowResizeDrag(e: React.MouseEvent) {
     e.preventDefault();
     rowResizeStart.current = { y: e.clientY, scale: rowScale };
+    // rAF-throttled rather than calling setRowScale straight from every
+    // mousemove event — mousemove can fire much faster than the browser
+    // can actually repaint (especially here, where every tick re-renders
+    // the whole timeline's worth of blocks), and piling up a React state
+    // update per raw event is what made the drag feel laggy/stuttery
+    // ("拉起来不是很顺畅"). Collapsing to at most one update per animation
+    // frame keeps it visually in sync with the cursor without the backlog.
+    let rafId: number | null = null;
+    let pendingScale: number | null = null;
+    function applyPending() {
+      rafId = null;
+      if (pendingScale !== null) setRowScale(pendingScale);
+    }
     function onMove(ev: MouseEvent) {
       if (!rowResizeStart.current) return;
       const dy = rowResizeStart.current.y - ev.clientY; // positive when dragging up
-      const next = rowResizeStart.current.scale + dy / 160;
-      setRowScale(Math.max(MIN_ROW_SCALE, Math.min(MAX_ROW_SCALE, next)));
+      const next = Math.max(MIN_ROW_SCALE, Math.min(MAX_ROW_SCALE, rowResizeStart.current.scale + dy / 160));
+      pendingScale = next;
+      if (rafId === null) rafId = requestAnimationFrame(applyPending);
     }
     function onUp() {
       rowResizeStart.current = null;
+      if (rafId !== null) cancelAnimationFrame(rafId);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     }
@@ -367,6 +497,13 @@ export default function ManualEditModal({
       startSec: clamped,
       duration: Math.min(dur, Math.max(0.3, total - clamped)),
       trimStart: 0,
+      // Full-frame by default (matches the original cutaway-only behavior)
+      // — drag the handles in the preview to shrink it into a
+      // picture-in-picture inset instead.
+      boxX: 0,
+      boxY: 0,
+      boxW: 1,
+      boxH: 1,
     };
     setBroll((cur) => [...cur, newBroll]);
     setSelectedId(null);
@@ -387,7 +524,7 @@ export default function ManualEditModal({
   // at `volume` (0-1). ----
   async function uploadMusicFile(file: File) {
     if (!MUSIC_MIME_OK.test(file.type)) {
-      setUploadError("Unsupported audio type — use mp3, wav, or m4a for background music.");
+      setUploadError("Unsupported file for background music — use mp3/wav/m4a audio, or an mp4/mov/webm video (its audio track will be used automatically).");
       return;
     }
     setUploading(true);
@@ -570,6 +707,66 @@ export default function ManualEditModal({
       window.addEventListener("mouseup", onUp);
     };
   }
+
+  // ---- B-roll PICTURE-IN-PICTURE positioning — separate from the two
+  // helpers above, which drag the block along the TIMELINE (when it plays).
+  // These instead drag it WITHIN THE PREVIEW FRAME (where on screen it
+  // shows), converting pixel deltas to 0-1 canvas fractions via the preview
+  // frame's own measured size. Top-left anchored: move only changes
+  // boxX/boxY, resize (bottom-right handle) only changes boxW/boxH.
+  const MIN_BOX_FRAC = 0.12;
+  function beginBrollBoxMoveDrag(b: BRollItem) {
+    return (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const frame = previewFrameRef.current;
+      if (!frame) return;
+      const rect = frame.getBoundingClientRect();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startBoxX = b.boxX;
+      const startBoxY = b.boxY;
+      function onMove(ev: MouseEvent) {
+        const dxFrac = (ev.clientX - startX) / rect.width;
+        const dyFrac = (ev.clientY - startY) / rect.height;
+        const nextX = Math.max(0, Math.min(1 - b.boxW, startBoxX + dxFrac));
+        const nextY = Math.max(0, Math.min(1 - b.boxH, startBoxY + dyFrac));
+        updateBroll(b.id, { boxX: nextX, boxY: nextY });
+      }
+      function onUp() {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      }
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+  }
+  function beginBrollBoxResizeDrag(b: BRollItem) {
+    return (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const frame = previewFrameRef.current;
+      if (!frame) return;
+      const rect = frame.getBoundingClientRect();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startW = b.boxW;
+      const startH = b.boxH;
+      function onMove(ev: MouseEvent) {
+        const dxFrac = (ev.clientX - startX) / rect.width;
+        const dyFrac = (ev.clientY - startY) / rect.height;
+        const nextW = Math.max(MIN_BOX_FRAC, Math.min(1 - b.boxX, startW + dxFrac));
+        const nextH = Math.max(MIN_BOX_FRAC, Math.min(1 - b.boxY, startH + dyFrac));
+        updateBroll(b.id, { boxW: nextW, boxH: nextH });
+      }
+      function onUp() {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      }
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+  }
   function beginBrollResizeDrag(b: BRollItem) {
     return (e: React.MouseEvent) => {
       e.preventDefault();
@@ -595,7 +792,7 @@ export default function ManualEditModal({
   function beginPlayheadDrag(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    if (playTickTimer.current) {
+    if (playTickTimer.current !== null) {
       stopPlayback();
       setPlaying(false);
     }
@@ -732,12 +929,45 @@ export default function ManualEditModal({
   }
 
   // ---- combined play-through preview ----
+  // Drives every active B-roll <video> in the preview to match `nowSec`:
+  // paused+seeked to the right frame while scrubbing, playing from the
+  // right offset once it enters its [startSec, startSec+duration) window
+  // during real playback, paused the moment it leaves that window. Reads
+  // brollRef (not `broll` directly) so it stays correct when called from
+  // inside the rAF tick loop's long-lived closure — see brollRef's own doc
+  // comment. Image B-roll needs no playback syncing (just visibility, which
+  // the JSX below already keys off the same active-window check).
+  function syncBrollPlayback(nowSec: number) {
+    const isPlaying = playTickTimer.current !== null;
+    brollRef.current.forEach((b) => {
+      if (b.kind !== "video") return;
+      const el = brollVideoRefs.current.get(b.id);
+      if (!el) return;
+      const isActive = nowSec >= b.startSec - 0.02 && nowSec < b.startSec + b.duration + 0.02;
+      if (!isActive) {
+        if (!el.paused) el.pause();
+        return;
+      }
+      const withinSec = b.trimStart + Math.max(0, nowSec - b.startSec);
+      if (isPlaying) {
+        if (el.paused) {
+          el.currentTime = withinSec;
+          el.play().catch(() => {});
+        }
+      } else {
+        el.pause();
+        el.currentTime = withinSec;
+      }
+    });
+  }
+
   function stopPlayback() {
-    if (playTickTimer.current) {
-      clearInterval(playTickTimer.current);
+    if (playTickTimer.current !== null) {
+      cancelAnimationFrame(playTickTimer.current);
       playTickTimer.current = null;
     }
     previewVideoRef.current?.pause();
+    brollVideoRefs.current.forEach((el) => el.pause());
   }
 
   function cueItem(index: number, offsetWithin: number) {
@@ -759,16 +989,17 @@ export default function ManualEditModal({
     setPlayheadSec(clamped);
     const loc = locate(items, clamped);
     if (loc) cueItem(loc.index, loc.offset);
+    syncBrollPlayback(clamped);
   }
 
   function togglePlay() {
-    // Checks the ACTUAL running timer (a ref, always current) rather than
-    // the `playing` React state — state updates inside the 100ms tick
-    // interval below are batched together with a nested setPlayheadSec
-    // call, and under rapid clicks that could leave `playing` reporting
-    // stale by one render. Clicking Pause must always stop whatever is
-    // really running, so it keys off the ref instead.
-    if (playTickTimer.current) {
+    // Checks the ACTUAL running rAF loop (a ref, always current) rather
+    // than the `playing` React state — state updates inside the tick loop
+    // below are batched together with a nested setPlayheadSec call, and
+    // under rapid clicks that could leave `playing` reporting stale by one
+    // render. Clicking Pause must always stop whatever is really running,
+    // so it keys off the ref instead.
+    if (playTickTimer.current !== null) {
       stopPlayback();
       setPlaying(false);
       return;
@@ -779,11 +1010,22 @@ export default function ManualEditModal({
     if (!loc) return;
     setPlayheadSec(startAt);
     cueItem(loc.index, loc.offset);
+    syncBrollPlayback(startAt);
     const it = items[loc.index];
     if (it.kind === "video") previewVideoRef.current?.play().catch(() => {});
     setPlaying(true);
 
-    playTickTimer.current = setInterval(() => {
+    // requestAnimationFrame loop instead of a fixed setInterval — a plain
+    // setInterval(..., 100) only advances the visible playhead ~10 times a
+    // second, which reads as visibly choppy/stuttery (reported: play/pause
+    // "不是很灵活"). rAF runs once per real display frame (~60fps on most
+    // screens), and dtSec (measured from the actual elapsed time between
+    // frames, not assumed) keeps image-clip pacing accurate even if a frame
+    // is skipped/delayed.
+    let lastFrameTime = performance.now();
+    function tick(now: number) {
+      const dtSec = Math.min(0.25, Math.max(0, (now - lastFrameTime) / 1000));
+      lastFrameTime = now;
       setItems((curItems) => {
         const v = previewVideoRef.current;
         setPlayheadSec((curHead) => {
@@ -794,18 +1036,22 @@ export default function ManualEditModal({
           if (curItem.kind === "video") {
             withinItem = v ? Math.max(0, v.currentTime - curItem.trimStart) : curLoc.offset;
           } else {
-            imageElapsedRef.current += 0.1;
+            imageElapsedRef.current += dtSec;
             withinItem = imageElapsedRef.current;
           }
           const finishedItem = withinItem >= itemDur(curItem) - 0.05;
           if (!finishedItem) {
-            return offsetOfItem(curItems, curLoc.index) + withinItem;
+            const nextHead = offsetOfItem(curItems, curLoc.index) + withinItem;
+            syncBrollPlayback(nextHead);
+            return nextHead;
           }
           const nextIndex = curLoc.index + 1;
           if (nextIndex >= curItems.length) {
             stopPlayback();
             setPlaying(false);
-            return totalDur(curItems);
+            const nextHead = totalDur(curItems);
+            syncBrollPlayback(nextHead);
+            return nextHead;
           }
           const nextItem = curItems[nextIndex];
           if (nextItem.kind === "video" && v) {
@@ -816,11 +1062,17 @@ export default function ManualEditModal({
             v?.pause();
             imageElapsedRef.current = 0;
           }
-          return offsetOfItem(curItems, nextIndex);
+          const nextHead = offsetOfItem(curItems, nextIndex);
+          syncBrollPlayback(nextHead);
+          return nextHead;
         });
         return curItems;
       });
-    }, 100);
+      if (playTickTimer.current !== null) {
+        playTickTimer.current = requestAnimationFrame(tick);
+      }
+    }
+    playTickTimer.current = requestAnimationFrame(tick);
   }
 
   function stopPoll() {
@@ -905,6 +1157,10 @@ export default function ManualEditModal({
         duration: b.duration,
         trimStart: b.trimStart,
         label: b.label,
+        boxX: b.boxX,
+        boxY: b.boxY,
+        boxW: b.boxW,
+        boxH: b.boxH,
       }));
 
       const res = await fetch(`${apiBase}/manual-render`, {
@@ -1072,7 +1328,7 @@ export default function ManualEditModal({
             <input
               ref={musicInputRef}
               type="file"
-              accept="audio/mpeg,audio/mp3,audio/wav,audio/mp4,audio/x-m4a,audio/aac"
+              accept="audio/mpeg,audio/mp3,audio/wav,audio/mp4,audio/x-m4a,audio/aac,video/mp4,video/quicktime,video/webm"
               className="hidden"
               onChange={(e) => {
                 if (e.target.files && e.target.files.length) uploadMusicFile(e.target.files[0]);
@@ -1179,24 +1435,87 @@ export default function ManualEditModal({
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
             <div className="flex-1 min-h-0 flex items-center justify-center p-4">
               <div
+                ref={previewFrameRef}
                 className="h-full max-h-full rounded-xl flex items-center justify-center relative overflow-hidden"
                 style={{ aspectRatio: "9/16", background: "#000", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "inset 0 0 40px rgba(0,0,0,0.6)" }}
               >
                 <video ref={previewVideoRef} className="max-h-full max-w-full relative z-10" />
                 {items.length === 0 && <span className="absolute text-slate-600 text-xs tracking-wide">NO SIGNAL</span>}
+
+                {/* B-roll picture-in-picture overlay(s) — rendering it HERE
+                    (not just as a block in the timeline) is what makes
+                    B-roll actually show up in the preview at all, and at
+                    the same box position/size the export will composite it
+                    at (see storyboardRender.ts's buildBrollFilterComplex).
+                    Real video/image content only renders while the
+                    playhead is inside [startSec, startSec+duration);
+                    whichever B-roll is currently SELECTED also gets a
+                    move/resize affordance (drag the body to reposition,
+                    the corner handle to resize) even when the playhead
+                    isn't sitting inside its window right now, so it can be
+                    framed up without needing to scrub to that exact
+                    moment first. */}
+                {broll.map((b) => {
+                  const isActive = playheadSec >= b.startSec - 0.02 && playheadSec < b.startSec + b.duration + 0.02;
+                  const isSelected = b.id === selectedBrollId;
+                  if (!isActive && !isSelected) return null;
+                  return (
+                    <div
+                      key={b.id}
+                      onMouseDown={isSelected ? beginBrollBoxMoveDrag(b) : undefined}
+                      className="absolute z-20 overflow-hidden rounded-[2px]"
+                      style={{
+                        left: `${b.boxX * 100}%`,
+                        top: `${b.boxY * 100}%`,
+                        width: `${b.boxW * 100}%`,
+                        height: `${b.boxH * 100}%`,
+                        cursor: isSelected ? "move" : "default",
+                        boxShadow: isSelected
+                          ? "0 0 0 2px #a78bfa, 0 0 16px -4px rgba(167,139,250,0.9)"
+                          : "0 0 0 1px rgba(255,255,255,0.25)",
+                        background: isActive ? undefined : "rgba(2,6,23,0.65)",
+                      }}
+                    >
+                      {isActive && b.kind === "video" && (
+                        <video
+                          ref={(el) => {
+                            if (el) brollVideoRefs.current.set(b.id, el);
+                            else brollVideoRefs.current.delete(b.id);
+                          }}
+                          src={b.url}
+                          muted
+                          playsInline
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+                      {isActive && b.kind === "image" && (
+                        <img src={b.url} className="w-full h-full object-cover" alt={b.label} />
+                      )}
+                      {isSelected && (
+                        <div
+                          onMouseDown={beginBrollBoxResizeDrag(b)}
+                          className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-nwse-resize"
+                          style={{ background: "#a78bfa", borderTopLeftRadius: 3, boxShadow: "0 0 6px rgba(167,139,250,0.9)" }}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
             {/* toolbar row */}
             <div className="px-4 flex items-center gap-1 shrink-0 border-t border-white/10 py-1.5" style={{ background: "rgba(255,255,255,0.015)" }}>
               <IconBtn onClick={togglePlay} disabled={items.length === 0} title={playing ? "Pause" : "Play"}>
-                {playing ? "⏸" : "▶"}
+                {playing ? <PauseIcon /> : <PlayIcon />}
               </IconBtn>
               <span className="text-[11px] text-cyan-300/90 font-mono tabular-nums px-1 shrink-0">
                 {fmtTime(playheadSec)} <span className="text-slate-600">/ {fmtTime(total)}</span>
               </span>
               <div className="w-px h-5 bg-white/10 mx-1" />
-              <IconBtn onClick={splitAtPlayhead} disabled={!canSplit()} title="Split at playhead">✂</IconBtn>
+              <IconBtn onClick={splitAtPlayhead} disabled={!canSplit()} title="Split at playhead">
+                <ScissorsIcon />
+              </IconBtn>
               <IconBtn
                 onClick={() => {
                   if (selected) removeItem(selected.id);
@@ -1205,11 +1524,11 @@ export default function ManualEditModal({
                 disabled={!selected && !selectedBrollId}
                 title="Delete selected clip"
               >
-                🗑
+                <TrashIcon />
               </IconBtn>
               <IconBtn onClick={() => selected && addOverlay(selected.id, itemDur(selected))} disabled={!selected} title="Add text to selected clip">+T</IconBtn>
               <IconBtn onClick={() => selected && autoCaption(selected)} disabled={!selected || selected.kind !== "video" || autoCaptioning} title="AI auto-caption selected clip only">
-                {autoCaptioning ? "…" : "🎙"}
+                {autoCaptioning ? "…" : <MicIcon />}
               </IconBtn>
               <button
                 onClick={autoCaptionAll}
@@ -1218,7 +1537,13 @@ export default function ManualEditModal({
                 className="h-8 px-2.5 rounded-lg flex items-center gap-1 text-[11px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
                 style={{ background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)", color: "#67e8f9" }}
               >
-                {autoCaptioning ? "Captioning…" : "🪄 AI Subtitles"}
+                {autoCaptioning ? (
+                  "Captioning…"
+                ) : (
+                  <span className="inline-flex items-center gap-1">
+                    <WandIcon /> AI Subtitles
+                  </span>
+                )}
               </button>
               <div className="flex-1" />
               {autoCaptionError && <span className="text-[10.5px] text-rose-400 mr-2">{autoCaptionError}</span>}
@@ -1428,10 +1753,10 @@ export default function ManualEditModal({
                             setOpenTransitionAt((cur) => (cur === i ? null : i));
                           }}
                           title={TRANSITION_LABELS[trans.preset]}
-                          className="w-[18px] h-[18px] rounded-full flex items-center justify-center text-[9px] text-cyan-200 transition-colors hover:text-white"
+                          className="w-[18px] h-[18px] rounded-full flex items-center justify-center text-cyan-200 transition-colors hover:text-white"
                           style={{ background: "#0f1424", border: "1px solid rgba(34,211,238,0.4)", boxShadow: "0 0 8px -2px rgba(34,211,238,0.5)" }}
                         >
-                          ⇄
+                          <SwapIcon />
                         </button>
                         {openTransitionAt === i && (
                           <div
@@ -1528,8 +1853,42 @@ export default function ManualEditModal({
                       onDrop={async (e) => {
                         e.preventDefault();
                         setMusicDragOver(false);
+                        // Case 1: a real file dragged in from outside the app
+                        // — audio or video, either is fine (see
+                        // MUSIC_MIME_OK's doc comment).
                         if (e.dataTransfer.files && e.dataTransfer.files.length) {
                           await uploadMusicFile(e.dataTransfer.files[0]);
+                          return;
+                        }
+                        // Case 2: an existing Media bin VIDEO clip dragged
+                        // straight over — it's already uploaded and has a
+                        // real URL, so no re-upload needed, just point the
+                        // music track at it directly; its audio track gets
+                        // picked up automatically at render time. Images
+                        // have no audio, so those are ignored here. Ref
+                        // first (see draggedBinClipRef's own doc comment),
+                        // dataTransfer JSON as a fallback.
+                        const clip = draggedBinClipRef.current;
+                        draggedBinClipRef.current = null;
+                        const useClip =
+                          clip && clip.kind === "video"
+                            ? clip
+                            : (() => {
+                                const raw = e.dataTransfer.getData("application/x-broll-clip");
+                                if (!raw) return null;
+                                try {
+                                  const parsed = JSON.parse(raw);
+                                  return parsed?.kind === "video" && parsed?.url ? parsed : null;
+                                } catch {
+                                  return null;
+                                }
+                              })();
+                        if (useClip) {
+                          setMusic({ url: useClip.url, label: useClip.label || "Background music", volume: DEFAULT_MUSIC_VOLUME });
+                          setSelectedId(null);
+                          setSelectedOverlayId(null);
+                          setSelectedBrollId(null);
+                          setMusicSelected(true);
                         }
                       }}
                       onClick={(e) => {
@@ -1562,7 +1921,7 @@ export default function ManualEditModal({
                       }}
                     >
                       <span className="absolute inset-0 flex items-center px-2 text-[9.5px] text-slate-300 pointer-events-none truncate gap-1">
-                        {music ? `🎵 ${music.label}` : "Drop or click to add background music"}
+                        {music ? `🎵 ${music.label}` : "Drop audio/video or click to add background music"}
                       </span>
                     </div>
                   )}
@@ -1658,8 +2017,17 @@ export default function ManualEditModal({
                         />
                       </label>
                       <p className="text-[10px] text-slate-600">
-                        Shown ON TOP of whatever base clip is playing during this window. Drag the block to reposition it, or its right edge to resize.
+                        Shown ON TOP of whatever base clip is playing during this window. On the timeline: drag the block to reposition WHEN it shows, or its right edge to resize how long. In the preview above: drag the frame itself to reposition WHERE it shows, or its corner handle to resize into a picture-in-picture inset.
                       </p>
+                      {(b.boxX !== 0 || b.boxY !== 0 || b.boxW !== 1 || b.boxH !== 1) && (
+                        <button
+                          onClick={() => updateBroll(b.id, { boxX: 0, boxY: 0, boxW: 1, boxH: 1 })}
+                          className="text-[11px] px-3 py-1.5 rounded-lg text-cyan-300 hover:text-cyan-200 transition-colors self-start"
+                          style={{ background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)" }}
+                        >
+                          Reset to full frame
+                        </button>
+                      )}
                       <button
                         onClick={() => removeBroll(b.id)}
                         className="text-[11px] px-3 py-1.5 rounded-lg text-rose-300 hover:text-rose-200 transition-colors self-start"

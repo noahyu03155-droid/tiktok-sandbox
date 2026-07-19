@@ -3,7 +3,7 @@ export type Locale = "en" | "zh";
 export const translations = {
   en: {
     appName: "COTORX",
-    appTagline: "Turn viral TikToks into your next shoppable script",
+    appTagline: "Your guide to your next viral TikTok",
     navVideoAnalysis: "Video Analysis",
     navTrendAnalysis: "Trend Analysis",
     navFavorites: "Favorites",
@@ -429,7 +429,7 @@ export const translations = {
   },
   zh: {
     appName: "COTORX",
-    appTagline: "拆解爆款视频，生成你的带货脚本",
+    appTagline: "带你打造下一条爆款视频",
     navVideoAnalysis: "视频分析",
     navTrendAnalysis: "趋势分析",
     navFavorites: "收藏库",

@@ -922,6 +922,13 @@ export interface ManualEditTextOverlay {
 // against two different clip segments, correctly time-shifted in each —
 // doable but not worth the complexity for how rarely a dragged B-roll clip
 // would land exactly on a cut).
+// boxX/boxY/boxW/boxH position the B-roll WITHIN the 9:16 output canvas as
+// 0-1 fractions (0,0,1,1 = full-frame cutaway, the original/default
+// behavior) — dragged/resized in ManualEditModal.tsx's live preview (see
+// that file's beginBrollBoxMoveDrag/beginBrollBoxResizeDrag) to shrink it
+// into a picture-in-picture inset instead. Optional + defaulted to full
+// frame at every read site so older cached client payloads without these
+// fields still render exactly as before.
 export interface ManualEditBRollInput {
   url: string;
   kind: "video" | "image";
@@ -929,6 +936,10 @@ export interface ManualEditBRollInput {
   duration: number;
   trimStart: number; // in-point within the broll's OWN source (video only)
   label: string;
+  boxX?: number;
+  boxY?: number;
+  boxW?: number;
+  boxH?: number;
 }
 
 // A single optional background-music track for the whole manual-edit export
@@ -1005,10 +1016,9 @@ function manualCaptionFilter(tmpDir: string, clipIndex: number, overlays: Manual
 // set, captioned) video pad to `-map`.
 function buildBrollFilterComplex(
   baseFilter: string,
-  brollScalePad: string,
   caption: string | null,
   firstBrollInputIndex: number,
-  segments: { absStart: number; absEnd: number }[]
+  segments: { absStart: number; absEnd: number; boxX: number; boxY: number; boxW: number; boxH: number }[]
 ): { filterComplex: string; videoPad: string } {
   const parts: string[] = [`[0:v]${baseFilter}[base]`];
   let cur = "base";
@@ -1016,13 +1026,22 @@ function buildBrollFilterComplex(
     const inIdx = firstBrollInputIndex + i;
     const brollPad = `broll${i}`;
     const overlayPad = `ov${i}`;
-    // Always scaled/padded to the same WxH output canvas as the base clip
-    // and drawn at 0,0 — a full-frame cutaway rather than a corner
-    // picture-in-picture, the more common B-roll convention and much
-    // simpler to get right than a scaled/positioned inset.
-    parts.push(`[${inIdx}:v]${brollScalePad}[${brollPad}]`);
+    // Scaled/padded to the segment's OWN box size (in pixels, derived from
+    // its 0-1 canvas-fraction boxW/boxH) and drawn at its own boxX/boxY —
+    // not always the full WxH canvas at 0,0 like before — which is what
+    // lets a B-roll shrink into a picture-in-picture inset instead of
+    // always being a full-frame cutaway. Mirrors exactly what
+    // ManualEditModal.tsx's live preview shows (same box math — see that
+    // file's beginBrollBoxMoveDrag/beginBrollBoxResizeDrag), so what the
+    // editor sees while dragging is what actually renders.
+    const boxWpx = Math.max(2, Math.round(seg.boxW * W));
+    const boxHpx = Math.max(2, Math.round(seg.boxH * H));
+    const boxXpx = Math.round(seg.boxX * W);
+    const boxYpx = Math.round(seg.boxY * H);
+    const segScalePad = `scale=${boxWpx}:${boxHpx}:force_original_aspect_ratio=decrease,pad=${boxWpx}:${boxHpx}:(ow-iw)/2:(oh-ih)/2,fps=${FPS}`;
+    parts.push(`[${inIdx}:v]${segScalePad}[${brollPad}]`);
     parts.push(
-      `[${cur}][${brollPad}]overlay=0:0:enable='between(t\\,${seg.absStart.toFixed(2)}\\,${seg.absEnd.toFixed(2)})'[${overlayPad}]`
+      `[${cur}][${brollPad}]overlay=${boxXpx}:${boxYpx}:enable='between(t\\,${seg.absStart.toFixed(2)}\\,${seg.absEnd.toFixed(2)})'[${overlayPad}]`
     );
     cur = overlayPad;
   });
@@ -1254,10 +1273,16 @@ export function startManualRenderJob(
             const firstBrollIdx = hasAudio ? 1 : 2;
             const { filterComplex, videoPad } = buildBrollFilterComplex(
               scalePad,
-              scalePad,
               caption,
               firstBrollIdx,
-              validHits.map((h) => ({ absStart: h.absStart, absEnd: h.absEnd }))
+              validHits.map((h) => ({
+                absStart: h.absStart,
+                absEnd: h.absEnd,
+                boxX: h.b.boxX ?? 0,
+                boxY: h.b.boxY ?? 0,
+                boxW: h.b.boxW ?? 1,
+                boxH: h.b.boxH ?? 1,
+              }))
             );
             await runFfmpeg([
               "-y", "-i", srcPath,
@@ -1295,10 +1320,16 @@ export function startManualRenderJob(
             // input(s) from 2 onward.
             const { filterComplex, videoPad } = buildBrollFilterComplex(
               kenBurns,
-              scalePad,
               caption,
               2,
-              validHits.map((h) => ({ absStart: h.absStart, absEnd: h.absEnd }))
+              validHits.map((h) => ({
+                absStart: h.absStart,
+                absEnd: h.absEnd,
+                boxX: h.b.boxX ?? 0,
+                boxY: h.b.boxY ?? 0,
+                boxW: h.b.boxW ?? 1,
+                boxH: h.b.boxH ?? 1,
+              }))
             );
             await runFfmpeg([
               "-y", "-loop", "1", "-i", srcPath,
