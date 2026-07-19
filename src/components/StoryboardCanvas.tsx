@@ -59,6 +59,12 @@ const STYLE_WIDGET_GAP = 8;
 const GENERATE_BUTTON_H = 36;
 const SCRIPT_BUTTON_W = 76; // "⬇ Script" button that sits beside Generate/CTA, per chain
 const SCRIPT_BUTTON_GAP = 8;
+// "✂️ Manual Edit" — a second row below Generate/Script, giving users the
+// option to skip straight to hands-on editing without waiting on an AI
+// render first (same modal the post-render "Manual Edit" button opens, just
+// reachable before generating too — see openManualEdit's doc comment).
+const MANUAL_EDIT_BUTTON_H = 30;
+const MANUAL_EDIT_GAP = 6;
 const RESULT_CARD_GAP = 10;
 const RESULT_CARD_WIDTH = 360; // wider than a normal card — needs room for the video preview + feedback textarea
 const RESULT_CARD_MAX_SKIPPED_SHOWN = 3; // long skip lists (a messy board with many leftover cards) used to spill the whole UI — show a few, then "and N more"
@@ -2447,6 +2453,7 @@ export default function StoryboardCanvas({
           {chainTails.map(({ node: n }) => {
             const styleWidgetTop = n.y + cardHeight(n) + 16;
             const generateButtonTop = styleWidgetTop + STYLE_WIDGET_H + STYLE_WIDGET_GAP;
+            const manualEditButtonTop = generateButtonTop + GENERATE_BUTTON_H + MANUAL_EDIT_GAP;
             return (
               <Fragment key={`generate-group-${n.id}`}>
                 <div
@@ -2512,6 +2519,18 @@ export default function StoryboardCanvas({
                 >
                   ⬇ Script
                 </button>
+                {/* "✂️ Manual Edit" — same destination as the post-render
+                    Manual Edit button below, just available up front so
+                    users aren't forced through an AI render first if they'd
+                    rather cut the clips themselves from the start. */}
+                <button
+                  onClick={() => openManualEdit(n.id)}
+                  title="Skip the AI render — trim, reorder, and caption these shots yourself"
+                  className="absolute flex items-center justify-center gap-1 rounded-lg border border-dashed border-edge2 bg-panel hover:border-brand-500 text-zinc-600 hover:text-zinc-900 text-[10.5px] font-medium"
+                  style={{ left: n.x, top: manualEditButtonTop, width: nodeWidth(n), height: MANUAL_EDIT_BUTTON_H }}
+                >
+                  ✂️ Manual Edit
+                </button>
 
                 {/* Render result card — appears anchored under THIS tail's
                     Generate button once a render for THIS specific chain has
@@ -2532,7 +2551,7 @@ export default function StoryboardCanvas({
                     <div
                       onMouseDown={(e) => e.stopPropagation()}
                       className="absolute rounded-lg border border-edge bg-panel2 shadow-2xl p-3 flex flex-col gap-2.5 text-xs"
-                      style={{ left: n.x, top: generateButtonTop + GENERATE_BUTTON_H + RESULT_CARD_GAP, width: RESULT_CARD_WIDTH }}
+                      style={{ left: n.x, top: manualEditButtonTop + MANUAL_EDIT_BUTTON_H + RESULT_CARD_GAP, width: RESULT_CARD_WIDTH }}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">

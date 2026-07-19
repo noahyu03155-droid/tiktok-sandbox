@@ -21,7 +21,7 @@
 // bin lists every other clip already uploaded elsewhere on the board via
 // boardClips.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface ManualEditSourceClip {
   nodeId: string;
@@ -108,7 +108,10 @@ interface BoundaryTransition {
 // resizing it in the preview (see the preview frame's overlay handles)
 // shrinks it down into a picture-in-picture inset instead, CapCut-style.
 // Top-left anchored: resizing only ever changes boxW/boxH, moving only ever
-// changes boxX/boxY.
+// changes boxX/boxY. `track` (0-2, see NUM_BROLL_TRACKS) is which of the 3
+// stacked B-roll rows this sits on — higher track number composites ON TOP
+// of lower ones (and lower ones on top of the base video), same convention
+// as every other layer-based editor.
 interface BRollItem {
   id: string;
   nodeId: string;
@@ -122,6 +125,7 @@ interface BRollItem {
   boxY: number;
   boxW: number;
   boxH: number;
+  track: number;
 }
 
 // A single background-music slot — spans the whole render (looped/trimmed to
@@ -162,6 +166,13 @@ const BASE_BROLL_ROW_H = 30;
 const BASE_VIDEO_ROW_H = 58;
 const BASE_TEXT_ROW_H = 24;
 const BASE_MUSIC_ROW_H = 26;
+// 3 stacked B-roll tracks (CapCut-style) instead of a single overlay row —
+// track 2 renders on top of track 1 renders on top of track 0 renders on
+// top of the base video. Stacked with a small gap between them for visual
+// separation; see brollTrackTop() inside the component for the per-track
+// position math.
+const NUM_BROLL_TRACKS = 3;
+const BROLL_TRACK_GAP = 3;
 const MIN_ROW_SCALE = 0.8;
 const MAX_ROW_SCALE = 2.4;
 const DEFAULT_ROW_SCALE = 1;
@@ -240,6 +251,64 @@ function SwapIcon() {
     </svg>
   );
 }
+// ---- per-track (lock/hide/mute) icons — tiny, sit in the narrow fixed
+// header column to the left of each B-roll track row (see brollTrackTop). ----
+function LockIcon() {
+  return (
+    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3.5" y="7" width="9" height="7" rx="1.2" />
+      <path d="M5.5 7V4.5a2.5 2.5 0 0 1 5 0V7" />
+    </svg>
+  );
+}
+function UnlockIcon() {
+  return (
+    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3.5" y="7" width="9" height="7" rx="1.2" />
+      <path d="M5.5 7V4.5a2.5 2.5 0 0 1 4.7-1.2" />
+    </svg>
+  );
+}
+function EyeIcon() {
+  return (
+    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" />
+      <circle cx="8" cy="8" r="1.8" />
+    </svg>
+  );
+}
+function EyeOffIcon() {
+  return (
+    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 2l12 12" />
+      <path d="M6.6 4.1A6.6 6.6 0 0 1 8 3.5c4 0 6.5 4.5 6.5 4.5a11.6 11.6 0 0 1-2.3 2.9M4.2 4.9A11.7 11.7 0 0 0 1.5 8s2.5 4.5 6.5 4.5c.9 0 1.7-.2 2.5-.5" />
+    </svg>
+  );
+}
+function VolumeIcon() {
+  return (
+    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 6h2.5L8 3v10L4.5 10H2z" fill="currentColor" stroke="none" />
+      <path d="M10.5 5.5a4 4 0 0 1 0 5" />
+    </svg>
+  );
+}
+function MuteIcon() {
+  return (
+    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 6h2.5L8 3v10L4.5 10H2z" fill="currentColor" stroke="none" />
+      <path d="M10.5 6l3 4M13.5 6l-3 4" />
+    </svg>
+  );
+}
+function UndoIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 8a5 5 0 1 1 1.5 3.6" />
+      <path d="M4 4.5V8h3.5" />
+    </svg>
+  );
+}
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -302,12 +371,39 @@ export default function ManualEditModal({
   );
   const [overlays, setOverlays] = useState<TextOverlay[]>([]);
   const [broll, setBroll] = useState<BRollItem[]>([]);
+  // Per B-roll TRACK (not per-clip) state — lock blocks new drops/drags on
+  // that track, hide skips it in the live preview AND the export (client
+  // just filters it out of the export payload, see handleExport), mute
+  // silences that track's own <video> element in the preview only (B-roll
+  // audio was never mixed into the export to begin with — see
+  // storyboardRender.ts's manual pipeline, which only ever composites the
+  // B-roll's video stream — so there's no "unmuted in the export" state to
+  // preserve here; this toggle is purely a monitoring aid while editing).
+  const [trackLocked, setTrackLocked] = useState<boolean[]>(() => Array(NUM_BROLL_TRACKS).fill(false));
+  const [trackHidden, setTrackHidden] = useState<boolean[]>(() => Array(NUM_BROLL_TRACKS).fill(false));
+  // Muted by DEFAULT (unlike lock/hidden) — matches what the export
+  // actually produces (B-roll audio is never mixed in), so the preview's
+  // default sound matches the final render. Unmuting is purely a
+  // "let me hear what's on this track" monitoring toggle while editing.
+  const [trackMuted, setTrackMuted] = useState<boolean[]>(() => Array(NUM_BROLL_TRACKS).fill(true));
+  function toggleTrackLocked(t: number) {
+    setTrackLocked((cur) => cur.map((v, i) => (i === t ? !v : v)));
+  }
+  function toggleTrackHidden(t: number) {
+    setTrackHidden((cur) => cur.map((v, i) => (i === t ? !v : v)));
+  }
+  function toggleTrackMuted(t: number) {
+    setTrackMuted((cur) => cur.map((v, i) => (i === t ? !v : v)));
+  }
   const [transitions, setTransitions] = useState<BoundaryTransition[]>([]);
   const [thumbsByUrl, setThumbsByUrl] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [selectedBrollId, setSelectedBrollId] = useState<string | null>(null);
-  const [brollDragOver, setBrollDragOver] = useState(false);
+  // Which of the 3 B-roll tracks (if any) is currently being dragged over —
+  // replaces a single boolean now that there are multiple drop targets
+  // stacked on top of each other.
+  const [brollDragOverTrack, setBrollDragOverTrack] = useState<number | null>(null);
   const [binDragOver, setBinDragOver] = useState(false);
   const [music, setMusic] = useState<MusicTrack | null>(null);
   const [musicSelected, setMusicSelected] = useState(false);
@@ -341,6 +437,49 @@ export default function ManualEditModal({
   const [exportResult, setExportResult] = useState<{ url: string } | null>(null);
   const [exportProgress, setExportProgress] = useState<{ completedShots: number; totalShots: number; step: string } | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ---- Undo history — snapshot-based (simplest correct approach given how
+  // many independent state slices a single action can touch — e.g. split
+  // touches both items AND overlays at once). pushHistory() is called at the
+  // START of each mutating action (add/remove clip or B-roll, split, add/
+  // remove overlay/music, and once at the START of each drag — never on
+  // every mousemove — so a whole drag collapses into one undo step). Capped
+  // so a long editing session can't grow this unbounded.
+  const MAX_UNDO_STEPS = 50;
+  const undoStack = useRef<
+    { items: TimelineItem[]; overlays: TextOverlay[]; broll: BRollItem[]; transitions: BoundaryTransition[]; music: MusicTrack | null }[]
+  >([]);
+  const [canUndo, setCanUndo] = useState(false);
+  function pushHistory() {
+    undoStack.current.push({ items, overlays, broll, transitions, music });
+    if (undoStack.current.length > MAX_UNDO_STEPS) undoStack.current.shift();
+    setCanUndo(true);
+  }
+  const undo = useCallback(() => {
+    const snap = undoStack.current.pop();
+    if (!snap) return;
+    setItems(snap.items);
+    setOverlays(snap.overlays);
+    setBroll(snap.broll);
+    setTransitions(snap.transitions);
+    setMusic(snap.music);
+    setSelectedId(null);
+    setSelectedOverlayId(null);
+    setSelectedBrollId(null);
+    setMusicSelected(false);
+    setCanUndo(undoStack.current.length > 0);
+  }, []);
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z" || e.shiftKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      e.preventDefault();
+      undo();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [undo]);
 
   const trackRef = useRef<HTMLDivElement>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
@@ -406,15 +545,25 @@ export default function ManualEditModal({
   // (dragged via the resize handle at the top of the timeline section).
   // Recomputed every render (cheap arithmetic) rather than memoized so the
   // drag feels immediate.
-  const brollRowH = Math.round(BASE_BROLL_ROW_H * rowScale);
+  const brollTrackH = Math.round(BASE_BROLL_ROW_H * rowScale);
+  const brollAreaH = brollTrackH * NUM_BROLL_TRACKS + BROLL_TRACK_GAP * (NUM_BROLL_TRACKS - 1);
   const videoRowH = Math.round(BASE_VIDEO_ROW_H * rowScale);
   const textRowH = Math.round(BASE_TEXT_ROW_H * rowScale);
   const musicRowH = Math.round(BASE_MUSIC_ROW_H * rowScale);
-  const brollRowTop = 10;
-  const videoRowTop = brollRowTop + brollRowH + 8;
+  const brollRowTop = 10; // top of the WHOLE 3-track B-roll area
+  const videoRowTop = brollRowTop + brollAreaH + 8;
   const textRowTop = videoRowTop + videoRowH + 10;
   const musicRowTop = textRowTop + textRowH + 10;
   const trackHeight = musicRowTop + musicRowH + 10;
+  // Per-track vertical position within the B-roll area — track NUM-1 (the
+  // highest z-order / rendered on top) is drawn at the TOP of the stack
+  // (nearest the top of the screen), track 0 at the bottom (nearest the
+  // video row below it) — mirrors both a real NLE's panel layout AND the
+  // actual compositing order.
+  function brollTrackTop(track: number): number {
+    const rowFromTop = NUM_BROLL_TRACKS - 1 - track;
+    return brollRowTop + rowFromTop * (brollTrackH + BROLL_TRACK_GAP);
+  }
 
   // Resize handle drag: mousedown on the thin bar above the timeline starts
   // tracking, mousemove converts vertical drag distance into a rowScale
@@ -460,12 +609,14 @@ export default function ManualEditModal({
   }
 
   function removeItem(id: string) {
+    pushHistory();
     setItems((cur) => cur.filter((it) => it.id !== id));
     setOverlays((cur) => cur.filter((o) => o.itemId !== id));
     setSelectedId((cur) => (cur === id ? null : cur));
   }
 
   function addFromBoard(clip: ManualEditSourceClip) {
+    pushHistory();
     const existingWithSameUrl = items.find((it) => it.url === clip.url && it.duration > 0);
     const newItem: TimelineItem = {
       id: uid(),
@@ -485,7 +636,9 @@ export default function ManualEditModal({
   }
 
   // ---- B-roll overlay track ----
-  function addBrollFromBoard(clip: ManualEditSourceClip, dropAtSec: number) {
+  function addBrollFromBoard(clip: ManualEditSourceClip, dropAtSec: number, track: number = 0) {
+    if (trackLocked[track]) return; // locked tracks reject new drops
+    pushHistory();
     const clamped = Math.max(0, Math.min(dropAtSec, Math.max(0, total - 0.2)));
     const dur = clip.kind === "image" ? DEFAULT_IMAGE_DURATION : DEFAULT_BROLL_DURATION;
     const newBroll: BRollItem = {
@@ -504,6 +657,7 @@ export default function ManualEditModal({
       boxY: 0,
       boxW: 1,
       boxH: 1,
+      track,
     };
     setBroll((cur) => [...cur, newBroll]);
     setSelectedId(null);
@@ -515,6 +669,7 @@ export default function ManualEditModal({
     setBroll((cur) => cur.map((b) => (b.id === id ? { ...b, ...patch } : b)));
   }
   function removeBroll(id: string) {
+    pushHistory();
     setBroll((cur) => cur.filter((b) => b.id !== id));
     setSelectedBrollId((cur) => (cur === id ? null : cur));
   }
@@ -540,6 +695,7 @@ export default function ManualEditModal({
         setUploadError(data.error || `Failed to upload ${file.name}`);
         return;
       }
+      pushHistory();
       setMusic({ url: data.url, label: file.name.replace(/\.[^.]+$/, "") || "Background music", volume: DEFAULT_MUSIC_VOLUME });
       setSelectedId(null);
       setSelectedOverlayId(null);
@@ -553,6 +709,7 @@ export default function ManualEditModal({
     setMusic((cur) => (cur ? { ...cur, ...patch } : cur));
   }
   function removeMusic() {
+    pushHistory();
     setMusic(null);
     setMusicSelected(false);
   }
@@ -642,6 +799,7 @@ export default function ManualEditModal({
       const from = dragFromIndex.current;
       dragFromIndex.current = null;
       if (from === null || from === index) return;
+      pushHistory();
       setItems((cur) => {
         const next = [...cur];
         const [moved] = next.splice(from, 1);
@@ -656,6 +814,7 @@ export default function ManualEditModal({
     return (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      pushHistory();
       const startX = e.clientX;
       const startTrimStart = item.trimStart;
       const startTrimEnd = item.trimEnd;
@@ -688,6 +847,7 @@ export default function ManualEditModal({
     return (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      pushHistory();
       setSelectedId(null);
       setSelectedOverlayId(null);
       setSelectedBrollId(b.id);
@@ -721,6 +881,7 @@ export default function ManualEditModal({
       e.stopPropagation();
       const frame = previewFrameRef.current;
       if (!frame) return;
+      pushHistory();
       const rect = frame.getBoundingClientRect();
       const startX = e.clientX;
       const startY = e.clientY;
@@ -747,6 +908,7 @@ export default function ManualEditModal({
       e.stopPropagation();
       const frame = previewFrameRef.current;
       if (!frame) return;
+      pushHistory();
       const rect = frame.getBoundingClientRect();
       const startX = e.clientX;
       const startY = e.clientY;
@@ -771,6 +933,7 @@ export default function ManualEditModal({
     return (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      pushHistory();
       const startX = e.clientX;
       const startDur = b.duration;
       function onMove(ev: MouseEvent) {
@@ -825,6 +988,7 @@ export default function ManualEditModal({
     if (it.kind !== "video") return;
     const splitPointInSource = it.trimStart + loc.offset;
     if (splitPointInSource <= it.trimStart + 0.1 || splitPointInSource >= it.trimEnd - 0.1) return;
+    pushHistory();
     const left: TimelineItem = { ...it, id: uid(), trimEnd: splitPointInSource };
     const right: TimelineItem = { ...it, id: uid(), trimStart: splitPointInSource };
     setItems((cur) => {
@@ -847,6 +1011,7 @@ export default function ManualEditModal({
 
   // ---- text overlays ----
   function addOverlay(itemId: string, clipTrimmedDur: number) {
+    pushHistory();
     const newOverlay: TextOverlay = { id: uid(), itemId, text: "", startSec: 0, endSec: Math.max(0.5, Math.min(3, clipTrimmedDur)), position: "bottom", size: "medium", bold: false, color: "#ffffff" };
     setOverlays((cur) => [...cur, newOverlay]);
     setSelectedOverlayId(newOverlay.id);
@@ -855,6 +1020,7 @@ export default function ManualEditModal({
     setOverlays((cur) => cur.map((o) => (o.id === id ? { ...o, ...patch } : o)));
   }
   function removeOverlay(id: string) {
+    pushHistory();
     setOverlays((cur) => cur.filter((o) => o.id !== id));
     setSelectedOverlayId((cur) => (cur === id ? null : cur));
   }
@@ -1017,57 +1183,73 @@ export default function ManualEditModal({
 
     // requestAnimationFrame loop instead of a fixed setInterval — a plain
     // setInterval(..., 100) only advances the visible playhead ~10 times a
-    // second, which reads as visibly choppy/stuttery (reported: play/pause
-    // "不是很灵活"). rAF runs once per real display frame (~60fps on most
-    // screens), and dtSec (measured from the actual elapsed time between
-    // frames, not assumed) keeps image-clip pacing accurate even if a frame
-    // is skipped/delayed.
+    // second, which read as choppy. rAF itself is cheap (just scheduling),
+    // but committing a React state update EVERY real display frame
+    // (~60fps) turned out to be a real regression, not an improvement: with
+    // a timeline full of blocks/B-roll overlays to re-lay-out on every
+    // single re-render, 60 full-modal re-renders a second kept the main
+    // thread busy enough that clicking Pause could take a very long time to
+    // even be processed — reported as the button "按了没反应" (pressed, no
+    // response), which is really "the click IS queued, but nothing gets a
+    // chance to run it for a while." COMMIT_INTERVAL_MS throttles how often
+    // setItems/setPlayheadSec actually fire (~24fps — still much smoother
+    // than the old 100ms interval, but a fraction of the render load of
+    // doing it on every rAF frame), while accDt keeps image-clip pacing
+    // accurate across the frames that get skipped.
+    const COMMIT_INTERVAL_MS = 42;
     let lastFrameTime = performance.now();
+    let lastCommitTime = lastFrameTime;
+    let accDt = 0;
     function tick(now: number) {
-      const dtSec = Math.min(0.25, Math.max(0, (now - lastFrameTime) / 1000));
+      accDt += Math.min(0.25, Math.max(0, (now - lastFrameTime) / 1000));
       lastFrameTime = now;
-      setItems((curItems) => {
-        const v = previewVideoRef.current;
-        setPlayheadSec((curHead) => {
-          const curLoc = locate(curItems, curHead);
-          if (!curLoc) return curHead;
-          const curItem = curItems[curLoc.index];
-          let withinItem: number;
-          if (curItem.kind === "video") {
-            withinItem = v ? Math.max(0, v.currentTime - curItem.trimStart) : curLoc.offset;
-          } else {
-            imageElapsedRef.current += dtSec;
-            withinItem = imageElapsedRef.current;
-          }
-          const finishedItem = withinItem >= itemDur(curItem) - 0.05;
-          if (!finishedItem) {
-            const nextHead = offsetOfItem(curItems, curLoc.index) + withinItem;
+      if (now - lastCommitTime >= COMMIT_INTERVAL_MS) {
+        lastCommitTime = now;
+        const committedDt = accDt;
+        accDt = 0;
+        setItems((curItems) => {
+          const v = previewVideoRef.current;
+          setPlayheadSec((curHead) => {
+            const curLoc = locate(curItems, curHead);
+            if (!curLoc) return curHead;
+            const curItem = curItems[curLoc.index];
+            let withinItem: number;
+            if (curItem.kind === "video") {
+              withinItem = v ? Math.max(0, v.currentTime - curItem.trimStart) : curLoc.offset;
+            } else {
+              imageElapsedRef.current += committedDt;
+              withinItem = imageElapsedRef.current;
+            }
+            const finishedItem = withinItem >= itemDur(curItem) - 0.05;
+            if (!finishedItem) {
+              const nextHead = offsetOfItem(curItems, curLoc.index) + withinItem;
+              syncBrollPlayback(nextHead);
+              return nextHead;
+            }
+            const nextIndex = curLoc.index + 1;
+            if (nextIndex >= curItems.length) {
+              stopPlayback();
+              setPlaying(false);
+              const nextHead = totalDur(curItems);
+              syncBrollPlayback(nextHead);
+              return nextHead;
+            }
+            const nextItem = curItems[nextIndex];
+            if (nextItem.kind === "video" && v) {
+              v.src = nextItem.url;
+              v.currentTime = nextItem.trimStart;
+              v.play().catch(() => {});
+            } else {
+              v?.pause();
+              imageElapsedRef.current = 0;
+            }
+            const nextHead = offsetOfItem(curItems, nextIndex);
             syncBrollPlayback(nextHead);
             return nextHead;
-          }
-          const nextIndex = curLoc.index + 1;
-          if (nextIndex >= curItems.length) {
-            stopPlayback();
-            setPlaying(false);
-            const nextHead = totalDur(curItems);
-            syncBrollPlayback(nextHead);
-            return nextHead;
-          }
-          const nextItem = curItems[nextIndex];
-          if (nextItem.kind === "video" && v) {
-            v.src = nextItem.url;
-            v.currentTime = nextItem.trimStart;
-            v.play().catch(() => {});
-          } else {
-            v?.pause();
-            imageElapsedRef.current = 0;
-          }
-          const nextHead = offsetOfItem(curItems, nextIndex);
-          syncBrollPlayback(nextHead);
-          return nextHead;
+          });
+          return curItems;
         });
-        return curItems;
-      });
+      }
       if (playTickTimer.current !== null) {
         playTickTimer.current = requestAnimationFrame(tick);
       }
@@ -1150,18 +1332,29 @@ export default function ManualEditModal({
             : { clipIndex, text: o.text, startSec: o.startSec, endSec: o.endSec, position: o.position, size: o.size, bold: o.bold, color: o.color };
         })
         .filter((o): o is NonNullable<typeof o> => o !== null);
-      const brollPayload = broll.map((b) => ({
-        url: b.url,
-        kind: b.kind,
-        startSec: b.startSec,
-        duration: b.duration,
-        trimStart: b.trimStart,
-        label: b.label,
-        boxX: b.boxX,
-        boxY: b.boxY,
-        boxW: b.boxW,
-        boxH: b.boxH,
-      }));
+      // Hidden tracks are dropped entirely here (never even sent to the
+      // server) rather than threaded through as a "skip me" flag — hiding
+      // is meant to act exactly like the track didn't exist for this
+      // export. The rest are sorted by track ASCENDING so the server's
+      // sequential overlay chain (buildBrollFilterComplex, which layers
+      // each array entry on top of the previous one) ends up compositing
+      // higher-numbered tracks on top — same z-order the live preview
+      // above already uses.
+      const brollPayload = broll
+        .filter((b) => !trackHidden[b.track])
+        .sort((a, b) => a.track - b.track)
+        .map((b) => ({
+          url: b.url,
+          kind: b.kind,
+          startSec: b.startSec,
+          duration: b.duration,
+          trimStart: b.trimStart,
+          label: b.label,
+          boxX: b.boxX,
+          boxY: b.boxY,
+          boxW: b.boxW,
+          boxH: b.boxH,
+        }));
 
       const res = await fetch(`${apiBase}/manual-render`, {
         method: "POST",
@@ -1455,52 +1648,63 @@ export default function ManualEditModal({
                     isn't sitting inside its window right now, so it can be
                     framed up without needing to scrub to that exact
                     moment first. */}
-                {broll.map((b) => {
-                  const isActive = playheadSec >= b.startSec - 0.02 && playheadSec < b.startSec + b.duration + 0.02;
-                  const isSelected = b.id === selectedBrollId;
-                  if (!isActive && !isSelected) return null;
-                  return (
-                    <div
-                      key={b.id}
-                      onMouseDown={isSelected ? beginBrollBoxMoveDrag(b) : undefined}
-                      className="absolute z-20 overflow-hidden rounded-[2px]"
-                      style={{
-                        left: `${b.boxX * 100}%`,
-                        top: `${b.boxY * 100}%`,
-                        width: `${b.boxW * 100}%`,
-                        height: `${b.boxH * 100}%`,
-                        cursor: isSelected ? "move" : "default",
-                        boxShadow: isSelected
-                          ? "0 0 0 2px #a78bfa, 0 0 16px -4px rgba(167,139,250,0.9)"
-                          : "0 0 0 1px rgba(255,255,255,0.25)",
-                        background: isActive ? undefined : "rgba(2,6,23,0.65)",
-                      }}
-                    >
-                      {isActive && b.kind === "video" && (
-                        <video
-                          ref={(el) => {
-                            if (el) brollVideoRefs.current.set(b.id, el);
-                            else brollVideoRefs.current.delete(b.id);
-                          }}
-                          src={b.url}
-                          muted
-                          playsInline
-                          className="w-full h-full object-cover"
-                        />
-                      )}
-                      {isActive && b.kind === "image" && (
-                        <img src={b.url} className="w-full h-full object-cover" alt={b.label} />
-                      )}
-                      {isSelected && (
-                        <div
-                          onMouseDown={beginBrollBoxResizeDrag(b)}
-                          className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-nwse-resize"
-                          style={{ background: "#a78bfa", borderTopLeftRadius: 3, boxShadow: "0 0 6px rgba(167,139,250,0.9)" }}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
+                {/* Iterated in TRACK-ASCENDING order (not array-insertion
+                    order) so a higher-numbered track's DOM node comes later
+                    and therefore paints on top when two boxes happen to
+                    overlap in space — same z-order convention as
+                    storyboardRender.ts's export compositing (which also
+                    layers strictly by track number). Hidden tracks are
+                    skipped entirely here, matching what the export will
+                    actually produce. */}
+                {[...broll]
+                  .sort((a, b2) => a.track - b2.track)
+                  .map((b) => {
+                    if (trackHidden[b.track]) return null;
+                    const isActive = playheadSec >= b.startSec - 0.02 && playheadSec < b.startSec + b.duration + 0.02;
+                    const isSelected = b.id === selectedBrollId;
+                    if (!isActive && !isSelected) return null;
+                    return (
+                      <div
+                        key={b.id}
+                        onMouseDown={isSelected ? beginBrollBoxMoveDrag(b) : undefined}
+                        className="absolute z-20 overflow-hidden rounded-[2px]"
+                        style={{
+                          left: `${b.boxX * 100}%`,
+                          top: `${b.boxY * 100}%`,
+                          width: `${b.boxW * 100}%`,
+                          height: `${b.boxH * 100}%`,
+                          cursor: isSelected ? "move" : "default",
+                          boxShadow: isSelected
+                            ? "0 0 0 2px #a78bfa, 0 0 16px -4px rgba(167,139,250,0.9)"
+                            : "0 0 0 1px rgba(255,255,255,0.25)",
+                          background: isActive ? undefined : "rgba(2,6,23,0.65)",
+                        }}
+                      >
+                        {isActive && b.kind === "video" && (
+                          <video
+                            ref={(el) => {
+                              if (el) brollVideoRefs.current.set(b.id, el);
+                              else brollVideoRefs.current.delete(b.id);
+                            }}
+                            src={b.url}
+                            muted={trackMuted[b.track]}
+                            playsInline
+                            className="w-full h-full object-cover"
+                          />
+                        )}
+                        {isActive && b.kind === "image" && (
+                          <img src={b.url} className="w-full h-full object-cover" alt={b.label} />
+                        )}
+                        {isSelected && (
+                          <div
+                            onMouseDown={beginBrollBoxResizeDrag(b)}
+                            className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-nwse-resize"
+                            style={{ background: "#a78bfa", borderTopLeftRadius: 3, boxShadow: "0 0 6px rgba(167,139,250,0.9)" }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             </div>
 
@@ -1515,6 +1719,9 @@ export default function ManualEditModal({
               <div className="w-px h-5 bg-white/10 mx-1" />
               <IconBtn onClick={splitAtPlayhead} disabled={!canSplit()} title="Split at playhead">
                 <ScissorsIcon />
+              </IconBtn>
+              <IconBtn onClick={undo} disabled={!canUndo} title="Undo (Ctrl/Cmd+Z)">
+                <UndoIcon />
               </IconBtn>
               <IconBtn
                 onClick={() => {
@@ -1563,11 +1770,57 @@ export default function ManualEditModal({
             >
               <div className="w-10 h-1 rounded-full bg-white/15 group-hover:bg-cyan-400/70 transition-colors" />
             </div>
-            <div className="shrink-0 px-4 py-3" style={{ height: trackHeight + 24 }}>
+            <div className="shrink-0 px-4 py-3 flex gap-1.5" style={{ height: trackHeight + 24 }}>
+              {/* Fixed (non-scrolling) B-roll track-header column — lock/
+                  hide/mute per track, CapCut-style. Deliberately its own
+                  sibling column rather than living inside the horizontally-
+                  scrolling track div below, so it stays put while the user
+                  scrolls a long timeline left/right. */}
+              {items.length > 0 && (
+                <div className="relative shrink-0" style={{ width: 24, height: "100%" }}>
+                  {Array.from({ length: NUM_BROLL_TRACKS }, (_, track) => (
+                    <div
+                      key={track}
+                      className="absolute left-0 right-0 flex items-center justify-center gap-1 rounded"
+                      style={{
+                        top: brollTrackTop(track),
+                        height: brollTrackH,
+                        background: "rgba(255,255,255,0.03)",
+                        border: "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
+                      <button
+                        onClick={() => toggleTrackLocked(track)}
+                        title={trackLocked[track] ? "Unlock this B-roll track" : "Lock this B-roll track (blocks new drops/edits)"}
+                        className="transition-colors"
+                        style={{ color: trackLocked[track] ? "#fbbf24" : "#64748b" }}
+                      >
+                        {trackLocked[track] ? <LockIcon /> : <UnlockIcon />}
+                      </button>
+                      <button
+                        onClick={() => toggleTrackHidden(track)}
+                        title={trackHidden[track] ? "Show this B-roll track" : "Hide this B-roll track (skips it in preview + export)"}
+                        className="transition-colors"
+                        style={{ color: trackHidden[track] ? "#f87171" : "#64748b" }}
+                      >
+                        {trackHidden[track] ? <EyeOffIcon /> : <EyeIcon />}
+                      </button>
+                      <button
+                        onClick={() => toggleTrackMuted(track)}
+                        title={trackMuted[track] ? "Unmute this track's preview audio" : "Mute this track's preview audio (preview-only — B-roll audio isn't mixed into the export)"}
+                        className="transition-colors"
+                        style={{ color: trackMuted[track] ? "#f87171" : "#64748b" }}
+                      >
+                        {trackMuted[track] ? <MuteIcon /> : <VolumeIcon />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div
                 ref={trackRef}
                 onClick={onTrackClick}
-                className="relative overflow-x-auto overflow-y-visible rounded-xl h-full"
+                className="relative overflow-x-auto overflow-y-visible rounded-xl h-full flex-1 min-w-0"
                 style={{
                   background: "repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0px, rgba(255,255,255,0.025) 1px, transparent 1px, transparent 46px), #0b0f1c",
                   border: "1px solid rgba(255,255,255,0.08)",
@@ -1591,85 +1844,105 @@ export default function ManualEditModal({
                       user's own computer, which gets uploaded on the spot and
                       placed as B-roll immediately (and shows up in the Media
                       panel from then on too, via uploadFiles). */}
-                  {items.length > 0 && (
-                    <div
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = "copy";
-                        setBrollDragOver(true);
-                      }}
-                      onDragLeave={() => setBrollDragOver(false)}
-                      onDrop={async (e) => {
-                        e.preventDefault();
-                        setBrollDragOver(false);
-                        const rect = trackRef.current?.getBoundingClientRect();
-                        if (!rect) return;
-                        const sec = (e.clientX - rect.left + (trackRef.current?.scrollLeft || 0)) / zoom;
+                  {items.length > 0 &&
+                    Array.from({ length: NUM_BROLL_TRACKS }, (_, track) => {
+                      const locked = trackLocked[track];
+                      return (
+                        <div
+                          key={track}
+                          onDragOver={(e) => {
+                            if (locked) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = "copy";
+                            setBrollDragOverTrack(track);
+                          }}
+                          onDragLeave={() => setBrollDragOverTrack((cur) => (cur === track ? null : cur))}
+                          onDrop={async (e) => {
+                            e.preventDefault();
+                            setBrollDragOverTrack(null);
+                            if (locked) return;
+                            const rect = trackRef.current?.getBoundingClientRect();
+                            if (!rect) return;
+                            const sec = (e.clientX - rect.left + (trackRef.current?.scrollLeft || 0)) / zoom;
 
-                        // Case 1: a real file dragged in from outside the app.
-                        if (e.dataTransfer.files && e.dataTransfer.files.length) {
-                          const added = await uploadFiles(e.dataTransfer.files);
-                          added.forEach((clip) => addBrollFromBoard(clip, sec));
-                          return;
-                        }
+                            // Case 1: a real file dragged in from outside the app.
+                            if (e.dataTransfer.files && e.dataTransfer.files.length) {
+                              const added = await uploadFiles(e.dataTransfer.files);
+                              added.forEach((clip) => addBrollFromBoard(clip, sec, track));
+                              return;
+                            }
 
-                        // Case 2: an existing Media bin thumbnail — ref first
-                        // (see its doc comment), dataTransfer as a fallback
-                        // for browsers where that's actually reliable.
-                        const clip = draggedBinClipRef.current;
-                        draggedBinClipRef.current = null;
-                        if (clip) {
-                          addBrollFromBoard(clip, sec);
-                          return;
-                        }
-                        const raw = e.dataTransfer.getData("application/x-broll-clip");
-                        if (!raw) return;
-                        try {
-                          addBrollFromBoard(JSON.parse(raw), sec);
-                        } catch {
-                          // Malformed drag payload — silently ignore.
-                        }
-                      }}
-                      className="absolute rounded-lg transition-colors"
-                      style={{
-                        left: 0,
-                        width: Math.max(400, total * zoom + 60),
-                        top: brollRowTop,
-                        height: brollRowH,
-                        background: brollDragOver ? "rgba(34,211,238,0.10)" : "rgba(255,255,255,0.02)",
-                        border: brollDragOver ? "1px dashed rgba(34,211,238,0.6)" : "1px dashed rgba(255,255,255,0.08)",
-                      }}
-                    >
-                      {broll.length === 0 && (
-                        <span className="absolute inset-0 flex items-center px-2 text-[9.5px] text-slate-600 pointer-events-none truncate">
-                          Drag a clip here to overlay it as B-roll
-                        </span>
-                      )}
-                    </div>
-                  )}
+                            // Case 2: an existing Media bin thumbnail — ref
+                            // first (see its doc comment), dataTransfer as a
+                            // fallback for browsers where that's actually
+                            // reliable.
+                            const clip = draggedBinClipRef.current;
+                            draggedBinClipRef.current = null;
+                            if (clip) {
+                              addBrollFromBoard(clip, sec, track);
+                              return;
+                            }
+                            const raw = e.dataTransfer.getData("application/x-broll-clip");
+                            if (!raw) return;
+                            try {
+                              addBrollFromBoard(JSON.parse(raw), sec, track);
+                            } catch {
+                              // Malformed drag payload — silently ignore.
+                            }
+                          }}
+                          className="absolute rounded-lg transition-colors"
+                          style={{
+                            left: 0,
+                            width: Math.max(400, total * zoom + 60),
+                            top: brollTrackTop(track),
+                            height: brollTrackH,
+                            cursor: locked ? "not-allowed" : undefined,
+                            background: locked
+                              ? "repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 4px, transparent 4px, transparent 8px)"
+                              : brollDragOverTrack === track
+                              ? "rgba(34,211,238,0.10)"
+                              : "rgba(255,255,255,0.02)",
+                            border: brollDragOverTrack === track ? "1px dashed rgba(34,211,238,0.6)" : "1px dashed rgba(255,255,255,0.08)",
+                          }}
+                        >
+                          {broll.every((b) => b.track !== track) && (
+                            <span className="absolute inset-0 flex items-center px-2 text-[9.5px] text-slate-600 pointer-events-none truncate">
+                              {locked ? "Locked" : `Drag a clip here for B-roll layer ${track + 1}`}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   {broll.map((b) => {
                     const left = b.startSec * zoom;
                     const width = Math.max(6, b.duration * zoom);
                     const isSel = b.id === selectedBrollId;
                     const thumb = b.kind === "video" ? thumbsByUrl[b.url] : b.url;
+                    const locked = trackLocked[b.track];
+                    const hidden = trackHidden[b.track];
                     return (
                       <div
                         key={b.id}
-                        onMouseDown={beginBrollMoveDrag(b)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedBrollId(b.id);
-                          setSelectedId(null);
-                          setSelectedOverlayId(null);
-                          setMusicSelected(false);
-                        }}
-                        title={b.label}
-                        className="absolute rounded-md overflow-hidden cursor-grab active:cursor-grabbing"
+                        onMouseDown={
+                          locked
+                            ? (e) => {
+                                e.stopPropagation();
+                                setSelectedBrollId(b.id);
+                                setSelectedId(null);
+                                setSelectedOverlayId(null);
+                                setMusicSelected(false);
+                              }
+                            : beginBrollMoveDrag(b)
+                        }
+                        title={`${b.label}${hidden ? " (hidden)" : ""}${locked ? " (locked)" : ""}`}
+                        className="absolute rounded-md overflow-hidden"
                         style={{
                           left,
                           width,
-                          top: brollRowTop,
-                          height: brollRowH,
+                          top: brollTrackTop(b.track),
+                          height: brollTrackH,
+                          opacity: hidden ? 0.4 : 1,
+                          cursor: locked ? "default" : "grab",
                           boxShadow: isSel ? "0 0 0 2px #a78bfa, 0 0 12px -2px rgba(167,139,250,0.8)" : "0 0 0 1px rgba(255,255,255,0.18)",
                           background: "linear-gradient(135deg, rgba(167,139,250,0.9), rgba(139,92,246,0.85))",
                           backgroundImage: thumb ? `linear-gradient(to top, rgba(2,6,23,.55), rgba(2,6,23,.1) 60%), url(${thumb})` : undefined,
@@ -1680,7 +1953,9 @@ export default function ManualEditModal({
                         <span className="absolute left-1 top-0.5 text-[8.5px] text-white/90 truncate drop-shadow-sm" style={{ maxWidth: "calc(100% - 8px)" }}>
                           {b.label}
                         </span>
-                        <div onMouseDown={beginBrollResizeDrag(b)} className="absolute top-0 bottom-0 right-0 w-1.5 bg-white/0 hover:bg-white/50 cursor-ew-resize" />
+                        {!locked && (
+                          <div onMouseDown={beginBrollResizeDrag(b)} className="absolute top-0 bottom-0 right-0 w-1.5 bg-white/0 hover:bg-white/50 cursor-ew-resize" />
+                        )}
                       </div>
                     );
                   })}
@@ -1884,6 +2159,7 @@ export default function ManualEditModal({
                                 }
                               })();
                         if (useClip) {
+                          pushHistory();
                           setMusic({ url: useClip.url, label: useClip.label || "Background music", volume: DEFAULT_MUSIC_VOLUME });
                           setSelectedId(null);
                           setSelectedOverlayId(null);
