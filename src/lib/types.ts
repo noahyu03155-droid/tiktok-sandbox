@@ -488,14 +488,9 @@ export interface StoryboardState {
   // reference's *editing rhythm*, then applies that rhythm to the user's
   // own footage.
   styleProfile?: StoryboardStyleProfile | null;
-  // The most recent AI render's result card — persisted here (part of the
-  // normal autosaved board) rather than kept as purely local React state, so
-  // the finished-video card stays visible on the canvas across a reload/
-  // revisit instead of vanishing the moment the tab closes. Cleared only
-  // when the user explicitly dismisses the card (✕) or a new render for the
-  // same chain replaces it. chainTailId records which chain-tail's card this
-  // belongs to, so StoryboardCanvas.tsx can re-anchor it under the right
-  // Generate button on load.
+  // DEPRECATED — superseded by lastRenderResults below. Kept only so a
+  // board saved before that fix existed still has its one card migrated in
+  // by StoryboardCanvas.tsx on load; never written to anymore.
   lastRenderResult?: {
     chainTailId: string;
     url: string;
@@ -503,6 +498,25 @@ export interface StoryboardState {
     styleApplied: { pacing: string; transition: string; notes: string } | null;
     appliedFeedback: { notes: string } | null;
   } | null;
+  // Every finished AI render's result card, keyed by the chain-tail node id
+  // it belongs to — persisted here (part of the normal autosaved board)
+  // rather than kept as purely local React state, so each chain's
+  // finished-video card stays visible on the canvas across a reload/revisit
+  // instead of vanishing the moment the tab closes. A board can have
+  // several independent chains (each gets its own "Generate video" button),
+  // so this is a MAP, not a single slot — generating chain B must not wipe
+  // out chain A's already-finished card. Each entry is cleared only when
+  // the user explicitly dismisses that chain's card (✕) or a new render for
+  // that SAME chain replaces it.
+  lastRenderResults?: Record<
+    string,
+    {
+      url: string;
+      skipped: string[];
+      styleApplied: { pacing: string; transition: string; notes: string } | null;
+      appliedFeedback: { notes: string } | null;
+    }
+  > | null;
 }
 
 export type StoryboardPacing = "fast" | "medium" | "slow";

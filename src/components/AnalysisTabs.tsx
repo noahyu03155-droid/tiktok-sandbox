@@ -5,7 +5,50 @@ import { formatTime } from "@/lib/format";
 import { useLocale } from "@/lib/i18n";
 import ProductPicker from "./ProductPicker";
 import StoryboardCanvas from "./StoryboardCanvas";
-import type { GeneratedScriptStage, VideoRecord } from "@/lib/types";
+import type { GeneratedScript, GeneratedScriptStage, VideoRecord } from "@/lib/types";
+
+// "🖨 Print / PDF" on the Script Generator tab — opens a clean-print
+// rendering of every stage's script + filming direction and fires the
+// browser's print dialog, where "Save as PDF" is a standard option in every
+// modern browser. Avoids pulling in a PDF-generation library just to
+// produce a document whose whole point is "print it and bring it to set."
+// Shows whichever version (current/previous) the user has actually picked
+// per stage via the Old/New toggle, same as the on-screen card.
+function printScript(script: GeneratedScript) {
+  const w = window.open("", "_blank");
+  if (!w) return;
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const rows = script.stages
+    .map((stage, i) => {
+      const usePrevious = stage.previousScript != null && stage.selectedVersion === "previous";
+      const text = usePrevious ? stage.previousScript || "" : stage.script;
+      const direction = usePrevious ? stage.previousDirection || "" : stage.direction;
+      return `
+        <div class="shot">
+          <h2>${i + 1}. ${esc(stage.label)}</h2>
+          <p class="script">${esc(text)}</p>
+          ${direction ? `<p class="notes">🎬 ${esc(direction)}</p>` : ""}
+        </div>`;
+    })
+    .join("");
+  w.document.write(`<!DOCTYPE html><html><head><title>${esc(script.shopify_product_title)} — Script</title><meta charset="utf-8"/><style>
+    body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; padding: 32px; color: #111; max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .meta { color: #666; font-size: 12px; margin-bottom: 24px; }
+    .shot { padding: 14px 0; border-bottom: 1px solid #ddd; break-inside: avoid; }
+    .shot h2 { font-size: 14px; margin: 0 0 6px; }
+    .script { font-size: 13px; line-height: 1.6; margin: 0 0 8px; }
+    .notes { font-size: 11px; color: #777; font-style: italic; margin: 0; }
+    @media print { body { padding: 0; } }
+  </style></head><body>
+    <h1>${esc(script.shopify_product_title)}</h1>
+    <p class="meta">${script.stages.length} beat${script.stages.length === 1 ? "" : "s"} · ${new Date().toLocaleDateString()}</p>
+    ${rows}
+  </body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 300);
+}
 
 type TabKey = "transcript" | "hook" | "structure" | "selling" | "script";
 
@@ -287,9 +330,18 @@ export default function AnalysisTabs({
 
                   {video.generated_scripts[activeScriptIdx] && (
                     <div className="space-y-3">
-                      <p className="text-sm text-zinc-900 font-medium">
-                        For: {video.generated_scripts[activeScriptIdx].shopify_product_title}
-                      </p>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <p className="text-sm text-zinc-900 font-medium">
+                          For: {video.generated_scripts[activeScriptIdx].shopify_product_title}
+                        </p>
+                        <button
+                          onClick={() => printScript(video.generated_scripts[activeScriptIdx])}
+                          title="Print this script + shooting guide (or save as PDF from the print dialog)"
+                          className="text-xs px-2.5 py-1 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2"
+                        >
+                          🖨 Print / PDF
+                        </button>
+                      </div>
                       {video.generated_scripts[activeScriptIdx].stages.map((stage, i) => (
                         <ScriptStageCard
                           key={i}

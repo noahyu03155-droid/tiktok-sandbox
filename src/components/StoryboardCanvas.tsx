@@ -8,6 +8,16 @@ import ManualEditModal, { type ManualEditSourceClip } from "@/components/ManualE
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
 import ProductPicker from "./ProductPicker";
 
+// Shape of one finished render, independent of which chain it belongs to —
+// matches the value type of StoryboardState.lastRenderResults (a map keyed
+// by chain-tail node id, one entry per chain) in types.ts.
+type RenderResultValue = {
+  url: string;
+  skipped: string[];
+  styleApplied: { pacing: string; transition: string; notes: string } | null;
+  appliedFeedback: { notes: string } | null;
+};
+
 // Phase 1 (revised): a freeform storyboard canvas. Nodes are NOT locked 1:1
 // to the script's stages — they're seeded from the 6 beats on first open,
 // but from then on the user can add/split/delete/rewrite them and rewire
@@ -426,27 +436,38 @@ export default function StoryboardCanvas({
   // the question is asked fresh every time Generate/Regenerate is clicked.
   const [captionsPromptOpen, setCaptionsPromptOpen] = useState(false);
   const [rendering, setRendering] = useState(false);
-  // Seeded from board.lastRenderResult (part of the persisted, autosaved
-  // board — see StoryboardState in types.ts) rather than starting blank, so
-  // a finished render's card is still there after a reload/revisit instead
-  // of vanishing the moment the tab closed. Kept in sync with board on every
-  // completed render (see applyRenderJob) and cleared from both places
-  // together when the user explicitly dismisses the card.
-  const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null>(
-    () => (initialStoryboard?.lastRenderResult ? { ...initialStoryboard.lastRenderResult } : null)
-  );
-  const [renderError, setRenderError] = useState<string | null>(null);
-  // Which chain-tail node the current/last render belongs to — the render
-  // result card is drawn on the canvas anchored under THIS tail's Generate
-  // button (see resolveChainNodeIds in storyboard.ts for why a render is now
-  // scoped to one specific chain instead of a heuristically-guessed "primary"
-  // one). pendingRenderTailId is a one-tick holding spot: set the instant
+  // Keyed by chain-tail NODE ID — one persisted result PER CHAIN, not one
+  // global slot. A board can have multiple independent chains (see the
+  // "one per chain" Generate-button copy below), and a singular "last
+  // render result" meant generating chain B silently discarded chain A's
+  // already-finished card — both from the live view immediately, and from
+  // the persisted board after reload, which was exactly the "generate完的
+  // video板块不见了" bug report this replaced. Seeded from
+  // board.lastRenderResults (part of the persisted, autosaved board — see
+  // StoryboardState in types.ts); also migrates the OLD singular
+  // board.lastRenderResult field (from before this per-chain fix existed)
+  // so a board saved by the previous version doesn't lose its one result.
+  const [renderResults, setRenderResults] = useState<Record<string, RenderResultValue>>(() => {
+    if (initialStoryboard?.lastRenderResults) return { ...initialStoryboard.lastRenderResults };
+    if (initialStoryboard?.lastRenderResult) {
+      const { chainTailId, ...rest } = initialStoryboard.lastRenderResult;
+      return { [chainTailId]: rest };
+    }
+    return {};
+  });
+  // Transient (never persisted) per-chain render errors — a failed render
+  // for one chain shouldn't stick around forever or bleed into another
+  // chain's card, so this is plain local state, not part of board.
+  const [renderErrors, setRenderErrors] = useState<Record<string, string>>({});
+  // Which chain-tail node the current/last render TARGETED — used only to
+  // route the background job's polling result to the right map entry above,
+  // not to decide which card(s) are visible (every chain with a
+  // renderResults/renderErrors entry shows its own card, independently).
+  // pendingRenderTailId is a one-tick holding spot: set the instant
   // Generate/Regenerate is clicked, before the captions modal even resolves,
   // so chooseCaptionsAndRender knows which tail to actually send.
   const [pendingRenderTailId, setPendingRenderTailId] = useState<string | null>(null);
-  const [renderChainTailId, setRenderChainTailId] = useState<string | null>(
-    () => initialStoryboard?.lastRenderResult?.chainTailId ?? null
-  );
+  const [renderChainTailId, setRenderChainTailId] = useState<string | null>(null);
   // "✂️ Manual Edit" — a simplified in-website timeline editor (see
   // ManualEditModal.tsx) for creators who want more precise hands-on control
   // than the AI render gives them, without needing a separate app like
@@ -467,6 +488,57 @@ export default function StoryboardCanvas({
       .filter((n) => n.clip && n.clip.source !== "tiktok")
       .map((n) => ({ nodeId: n.id, url: n.clip!.url, kind: n.clip!.kind, label: n.label || "Untitled shot" }));
     setManualEditClips(clips);
+  }
+
+  // "🖨 Print / PDF" — opens a plain, clean-print rendering of every shot's
+  // script + shooting guide + editor notes, in resolved shot order, and
+  // fires the browser's own print dialog. Letting the user pick "Save as
+  // PDF" there (every modern browser's print dialog offers this) sidesteps
+  // pulling in a whole PDF-generation library just to hand back a document
+  // whose entire purpose is "print it out and bring it to set" — the
+  // browser's print pipeline already does exactly that.
+  function printScript() {
+    const ordered = resolveStoryboardOrder(board.nodes, board.connections);
+    const w = window.open("", "_blank");
+    if (!w) return;
+    const esc = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>");
+    const shots = ordered
+      .map((n, i) => {
+        const guide = n.shootingGuide;
+        const guideBits = [
+          guide?.angle ? `<strong>Angle:</strong> ${esc(guide.angle)}` : "",
+          guide?.tone ? `<strong>Tone:</strong> ${esc(guide.tone)}` : "",
+          guide?.pace ? `<strong>Pace:</strong> ${esc(guide.pace)}` : "",
+        ].filter(Boolean);
+        return `
+          <div class="shot">
+            <h2>${i + 1}. ${esc(n.label || "Untitled shot")}</h2>
+            ${n.instruction ? `<p class="script">${esc(n.instruction)}</p>` : `<p class="script empty">(no script text)</p>`}
+            ${guideBits.length ? `<div class="guide">${guideBits.map((b) => `<span>${b}</span>`).join("")}</div>` : ""}
+            ${n.editorNotes ? `<p class="notes">📝 ${esc(n.editorNotes)}</p>` : ""}
+          </div>`;
+      })
+      .join("");
+    w.document.write(`<!DOCTYPE html><html><head><title>Shooting Script</title><meta charset="utf-8"/><style>
+      body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; padding: 32px; color: #111; max-width: 720px; margin: 0 auto; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      .meta { color: #666; font-size: 12px; margin-bottom: 24px; }
+      .shot { padding: 14px 0; border-bottom: 1px solid #ddd; break-inside: avoid; }
+      .shot h2 { font-size: 14px; margin: 0 0 6px; }
+      .script { font-size: 13px; line-height: 1.6; margin: 0 0 8px; }
+      .script.empty { color: #999; font-style: italic; }
+      .guide { font-size: 11px; color: #555; display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+      .notes { font-size: 11px; color: #777; font-style: italic; margin: 0; }
+      @media print { body { padding: 0; } }
+    </style></head><body>
+      <h1>Shooting Script</h1>
+      <p class="meta">${ordered.length} shot${ordered.length === 1 ? "" : "s"} · ${new Date().toLocaleDateString()}</p>
+      ${shots || "<p>No shots on this board yet.</p>"}
+    </body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 300);
   }
   // Live progress from the background render job (see renderVideo below +
   // src/lib/storyboardRender.ts) — completedShots/totalShots/avgSecPerShot
@@ -1381,17 +1453,25 @@ export default function StoryboardCanvas({
       // specific completed job forces both the preview <video> and the
       // Download link to actually fetch the file that was just generated.
       const result = job.result ? { ...job.result, url: `${job.result.url}?t=${Date.now()}` } : job.result;
-      setRenderResult(result);
-      // Persist onto the board (autosaved like everything else) so this
-      // card survives a reload instead of only living in local React state
-      // — the user has to explicitly dismiss it (✕) for it to go away.
       if (result && tailId) {
-        setBoard((b) => ({ ...b, lastRenderResult: { chainTailId: tailId, ...result } }));
+        setRenderResults((cur) => ({ ...cur, [tailId]: result }));
+        setRenderErrors((cur) => {
+          if (!(tailId in cur)) return cur;
+          const next = { ...cur };
+          delete next[tailId];
+          return next;
+        });
+        // Persist onto the board (autosaved like everything else) so this
+        // card survives a reload instead of only living in local React
+        // state — the user has to explicitly dismiss it (✕) for it to go
+        // away. Keyed by chain, so a DIFFERENT chain's already-finished
+        // card is untouched by this write.
+        setBoard((b) => ({ ...b, lastRenderResults: { ...(b.lastRenderResults || {}), [tailId]: result } }));
       }
       stopRenderPoll();
       setRendering(false);
     } else if (job.status === "error") {
-      setRenderError(job.error || "Render failed");
+      if (tailId) setRenderErrors((cur) => ({ ...cur, [tailId]: job.error || "Render failed" }));
       stopRenderPoll();
       setRendering(false);
     }
@@ -1424,8 +1504,14 @@ export default function StoryboardCanvas({
 
   async function renderVideo(captionsMode: "off" | "auto", chainTailId: string | null) {
     setRendering(true);
-    setRenderError(null);
-    setRenderResult(null);
+    if (chainTailId) {
+      setRenderErrors((cur) => {
+        if (!(chainTailId in cur)) return cur;
+        const next = { ...cur };
+        delete next[chainTailId];
+        return next;
+      });
+    }
     setRenderProgress(null);
     stopRenderPoll();
     try {
@@ -1459,7 +1545,7 @@ export default function StoryboardCanvas({
         renderPollTimer.current = setInterval(() => pollRenderStatus(chainTailId), 2000);
       }
     } catch (err: any) {
-      setRenderError(err.message || "Render failed");
+      if (chainTailId) setRenderErrors((cur) => ({ ...cur, [chainTailId]: err.message || "Render failed" }));
       setRendering(false);
     }
   }
@@ -1656,20 +1742,32 @@ export default function StoryboardCanvas({
       <input ref={styleFileInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" onChange={handleStyleFileChosen} />
       <input ref={refFileInputRef} type="file" accept="video/*" className="hidden" onChange={handleRefFileChosen} />
 
-      {/* Two rows: the button row never wraps its controls away from the
-          Close button (shrink-0 all round), and the Generate-readiness
-          status text lives on its own full-width line below where it can
-          wrap freely without crowding Close out of reach. */}
+      {/* Single compact row — this used to be a two-line title+instructions
+          paragraph plus a separate readiness-status line below it, tall
+          enough to cover a meaningful chunk of the canvas on smaller
+          screens. Full instructions now live behind a hover/tap "ⓘ" instead
+          of always being on screen, and the readiness status sits inline
+          next to the title instead of on its own line. */}
       <div className="border-b border-edge bg-panel shrink-0 w-full overflow-x-hidden">
-        <div className="flex items-center justify-between px-5 py-3 flex-wrap gap-2 w-full">
-          <div className="min-w-0 flex-1">
-            <h3 className="text-zinc-900 font-semibold text-sm truncate">Generate Video — Storyboard</h3>
-            <p className="text-xs text-zinc-500 break-words">
-              Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok video link anywhere to add it as a new video card, or a TikTok product link to add a product card · Ctrl/Cmd+drag a card to move its whole connected chain together · Shift+drag empty space to box-select multiple cards · the head of any connected chain gets an "Import original video" widget below it — upload a reference video and hit Breakdown chain to auto-fill that chain's script + shooting guide.
-            </p>
+        <div className="flex items-center justify-between px-4 py-1.5 flex-wrap gap-1.5 w-full">
+          <div className="min-w-0 flex-1 flex items-center gap-1.5">
+            <h3 className="text-zinc-900 font-semibold text-xs shrink-0">Storyboard</h3>
+            <span
+              title={`Drag cards to arrange · edit any card's text · click a dot, then click another card's dot to connect (Esc to cancel) · numbers show render order · paste a TikTok video link anywhere to add it as a new video card, or a TikTok product link to add a product card · Ctrl/Cmd+drag a card to move its whole connected chain together · Shift+drag empty space to box-select multiple cards · the head of any connected chain gets an "Import original video" widget below it — upload a reference video and hit Breakdown chain to auto-fill that chain's script + shooting guide.`}
+              className="text-zinc-400 hover:text-zinc-600 cursor-help text-[11px] shrink-0 w-4 h-4 rounded-full border border-edge flex items-center justify-center"
+            >
+              i
+            </span>
+            {chainTails.length > 0 ? (
+              <span className="text-[11px] text-green-600 truncate">✓ Ready — Generate button under each connected chain</span>
+            ) : (
+              <span className="text-[11px] text-zinc-500 truncate">
+                Connect {MIN_CHAIN_LENGTH_FOR_GENERATE}+ cards to unlock Generate
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-            <span className="text-xs flex items-center gap-1.5 text-zinc-500 mr-1">
+          <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+            <span className="text-[11px] flex items-center gap-1 text-zinc-500 mr-0.5">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   saveStatus === "saving"
@@ -1685,43 +1783,39 @@ export default function StoryboardCanvas({
               {saveStatus === "saved" && "Saved"}
               {saveStatus === "error" && "Save failed"}
             </span>
-            <button onClick={addNode} className="px-2.5 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs">
+            <button onClick={addNode} className="px-2 h-6 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-[11px]">
               + Add shot
             </button>
             <button
               onClick={insertTemplate}
               title="Drop 6 blank funnel-stage cards (Reaction → CTA), pre-connected in order"
-              className="px-2.5 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs"
+              className="px-2 h-6 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-[11px]"
             >
-              📋 Insert template
+              📋 Template
             </button>
-            <button onClick={() => zoomBy(1.2)} className="w-7 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-sm">
+            <button
+              onClick={printScript}
+              title="Print the full script + shooting guide (or save as PDF from the print dialog)"
+              className="px-2 h-6 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-[11px]"
+            >
+              🖨 Print / PDF
+            </button>
+            <button onClick={() => zoomBy(1.2)} className="w-6 h-6 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs">
               +
             </button>
-            <button onClick={() => zoomBy(1 / 1.2)} className="w-7 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-sm">
+            <button onClick={() => zoomBy(1 / 1.2)} className="w-6 h-6 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs">
               −
             </button>
             <button
               onClick={() => setBoard((b) => ({ ...b, zoom: 1, pan: { x: 40, y: 40 } }))}
-              className="px-2 h-7 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-xs"
+              className="px-2 h-6 rounded border border-edge text-zinc-600 hover:text-zinc-900 hover:border-edge2 text-[11px]"
             >
               Reset view
             </button>
-            <button onClick={onClose} className="ml-2 text-zinc-500 hover:text-zinc-900 text-sm shrink-0">
+            <button onClick={onClose} className="ml-1.5 text-zinc-500 hover:text-zinc-900 text-xs shrink-0">
               ✕ Close
             </button>
           </div>
-        </div>
-        <div className="px-5 pb-2.5">
-          {chainTails.length > 0 ? (
-            <span className="text-xs text-green-600">
-              ✓ Ready — see the Generate button under the end of your connected card{chainTails.length > 1 ? "s (one per chain)" : ""}
-            </span>
-          ) : (
-            <span className="text-xs text-zinc-500">
-              Connect at least {MIN_CHAIN_LENGTH_FOR_GENERATE} cards in a row to unlock Generate — the button appears under the last card in the chain
-            </span>
-          )}
         </div>
         {saveStatus === "error" && (
           <div className="px-5 py-2 bg-red-500/15 border-t border-red-500/40 flex items-center justify-between gap-3">
@@ -2365,102 +2459,124 @@ export default function StoryboardCanvas({
 
                 {/* Render result card — appears anchored under THIS tail's
                     Generate button once a render for THIS specific chain has
-                    finished (or failed). Replaces the old fixed top banner,
-                    which showed one global result with no link back to which
-                    chain it belonged to on a board with multiple chains —
-                    per the user's explicit request, the finished video now
-                    lands as a card on the canvas next to the chain it came
-                    from, with its own feedback box + Regenerate + Download. */}
-                {renderChainTailId === n.id && (renderResult || renderError) && (
-                  <div
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="absolute rounded-lg border border-edge bg-panel2 shadow-2xl p-3 flex flex-col gap-2.5 text-xs"
-                    style={{ left: n.x, top: generateButtonTop + GENERATE_BUTTON_H + RESULT_CARD_GAP, width: RESULT_CARD_WIDTH }}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        {renderError && <p className="text-red-400">{renderError}</p>}
-                        {renderResult && (
-                          <>
-                            <p className="text-green-600">
-                              Render done{renderResult.styleApplied ? ` — applied ${renderResult.styleApplied.pacing} reference style` : ""}
-                              {renderResult.appliedFeedback ? ` — ${renderResult.appliedFeedback.notes}` : ""}
-                            </p>
-                            {renderResult.skipped.length > 0 && (
-                              <p className="text-zinc-500 mt-0.5">
-                                Skipped (no clip attached): {renderResult.skipped.slice(0, RESULT_CARD_MAX_SKIPPED_SHOWN).join(", ")}
-                                {renderResult.skipped.length > RESULT_CARD_MAX_SKIPPED_SHOWN
-                                  ? ` and ${renderResult.skipped.length - RESULT_CARD_MAX_SKIPPED_SHOWN} more`
-                                  : ""}
+                    finished (or failed), read straight off the per-chain
+                    renderResults/renderErrors maps (keyed by n.id). A board
+                    can have several independent chains, each with its own
+                    Generate button ("one per chain") — this used to be a
+                    single global result slot, so generating a SECOND chain
+                    silently wiped the first chain's already-finished card
+                    (both live and after reload). Now every chain with a
+                    finished/failed render shows its own card, independently
+                    of whatever else on the board is being rendered. */}
+                {(() => {
+                  const tailResult = renderResults[n.id];
+                  const tailError = renderErrors[n.id];
+                  if (!tailResult && !tailError) return null;
+                  return (
+                    <div
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="absolute rounded-lg border border-edge bg-panel2 shadow-2xl p-3 flex flex-col gap-2.5 text-xs"
+                      style={{ left: n.x, top: generateButtonTop + GENERATE_BUTTON_H + RESULT_CARD_GAP, width: RESULT_CARD_WIDTH }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          {tailError && <p className="text-red-400">{tailError}</p>}
+                          {tailResult && (
+                            <>
+                              <p className="text-green-600">
+                                Render done{tailResult.styleApplied ? ` — applied ${tailResult.styleApplied.pacing} reference style` : ""}
+                                {tailResult.appliedFeedback ? ` — ${tailResult.appliedFeedback.notes}` : ""}
                               </p>
-                            )}
-                          </>
-                        )}
+                              {tailResult.skipped.length > 0 && (
+                                <p className="text-zinc-500 mt-0.5">
+                                  Skipped (no clip attached): {tailResult.skipped.slice(0, RESULT_CARD_MAX_SKIPPED_SHOWN).join(", ")}
+                                  {tailResult.skipped.length > RESULT_CARD_MAX_SKIPPED_SHOWN
+                                    ? ` and ${tailResult.skipped.length - RESULT_CARD_MAX_SKIPPED_SHOWN} more`
+                                    : ""}
+                                </p>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => {
+                            setRenderErrors((cur) => {
+                              if (!(n.id in cur)) return cur;
+                              const next = { ...cur };
+                              delete next[n.id];
+                              return next;
+                            });
+                            setRenderResults((cur) => {
+                              if (!(n.id in cur)) return cur;
+                              const next = { ...cur };
+                              delete next[n.id];
+                              return next;
+                            });
+                            // Explicit dismiss is the only thing that clears
+                            // the persisted card — a reload/revisit should
+                            // still show it otherwise (see applyRenderJob).
+                            setBoard((b) => {
+                              if (!b.lastRenderResults || !(n.id in b.lastRenderResults)) return b;
+                              const next = { ...b.lastRenderResults };
+                              delete next[n.id];
+                              return { ...b, lastRenderResults: next };
+                            });
+                          }}
+                          className="text-zinc-500 hover:text-zinc-900 shrink-0"
+                        >
+                          ✕
+                        </button>
                       </div>
-                      <button
-                        onClick={() => {
-                          setRenderError(null);
-                          setRenderResult(null);
-                          setRenderChainTailId(null);
-                          // Explicit dismiss is the only thing that clears
-                          // the persisted card — a reload/revisit should
-                          // still show it otherwise (see applyRenderJob).
-                          setBoard((b) => ({ ...b, lastRenderResult: null }));
-                        }}
-                        className="text-zinc-500 hover:text-zinc-900 shrink-0"
-                      >
-                        ✕
-                      </button>
+
+                      {tailResult && (
+                        <>
+                          <video src={tailResult.url} controls className="w-full rounded border border-edge" style={{ maxHeight: 260 }} />
+
+                          <div>
+                            <label className="text-[10px] text-zinc-500 mb-1 block">Want something changed? Tell the AI what to adjust, then regenerate.</label>
+                            <textarea
+                              value={board.direction}
+                              onChange={(e) => setBoard((b) => ({ ...b, direction: e.target.value }))}
+                              placeholder="e.g. faster cuts, punchier captions, less text on screen, more product close-ups..."
+                              rows={2}
+                              className="w-full px-2.5 py-1.5 rounded-lg bg-panel border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 resize-none"
+                            />
+                          </div>
+
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              onClick={startStyleUpload}
+                              className="h-8 px-2.5 rounded border border-dashed border-edge2 text-[10px] text-zinc-600 hover:text-zinc-900 hover:border-brand-500 shrink-0"
+                            >
+                              📎 {board.styleProfile ? `Ref: ${board.styleProfile.sourceLabel}` : "Import reference video"}
+                            </button>
+                            <button
+                              onClick={() => requestRender(n.id)}
+                              disabled={rendering}
+                              className="h-8 px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-[11px] font-medium shrink-0"
+                            >
+                              {rendering && renderChainTailId === n.id ? "Regenerating..." : "🔁 Regenerate"}
+                            </button>
+                            <button
+                              onClick={() => openManualEdit(n.id)}
+                              title="Trim, reorder, and caption these shots yourself"
+                              className="h-8 px-3 rounded-lg border border-edge hover:border-brand-500 text-zinc-700 hover:text-zinc-900 text-[11px] font-medium shrink-0"
+                            >
+                              ✂️ Manual Edit
+                            </button>
+                            <a
+                              href={tailResult.url}
+                              download
+                              className="h-8 px-3 rounded-lg bg-panel border border-edge hover:border-brand-500 text-zinc-900 text-[11px] font-medium shrink-0 flex items-center"
+                            >
+                              ⬇ Download
+                            </a>
+                          </div>
+                        </>
+                      )}
                     </div>
-
-                    {renderResult && (
-                      <>
-                        <video src={renderResult.url} controls className="w-full rounded border border-edge" style={{ maxHeight: 260 }} />
-
-                        <div>
-                          <label className="text-[10px] text-zinc-500 mb-1 block">Want something changed? Tell the AI what to adjust, then regenerate.</label>
-                          <textarea
-                            value={board.direction}
-                            onChange={(e) => setBoard((b) => ({ ...b, direction: e.target.value }))}
-                            placeholder="e.g. faster cuts, punchier captions, less text on screen, more product close-ups..."
-                            rows={2}
-                            className="w-full px-2.5 py-1.5 rounded-lg bg-panel border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 resize-none"
-                          />
-                        </div>
-
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <button
-                            onClick={startStyleUpload}
-                            className="h-8 px-2.5 rounded border border-dashed border-edge2 text-[10px] text-zinc-600 hover:text-zinc-900 hover:border-brand-500 shrink-0"
-                          >
-                            📎 {board.styleProfile ? `Ref: ${board.styleProfile.sourceLabel}` : "Import reference video"}
-                          </button>
-                          <button
-                            onClick={() => requestRender(n.id)}
-                            disabled={rendering}
-                            className="h-8 px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-[11px] font-medium shrink-0"
-                          >
-                            {rendering ? "Regenerating..." : "🔁 Regenerate"}
-                          </button>
-                          <button
-                            onClick={() => openManualEdit(n.id)}
-                            title="Trim, reorder, and caption these shots yourself"
-                            className="h-8 px-3 rounded-lg border border-edge hover:border-brand-500 text-zinc-700 hover:text-zinc-900 text-[11px] font-medium shrink-0"
-                          >
-                            ✂️ Manual Edit
-                          </button>
-                          <a
-                            href={renderResult.url}
-                            download
-                            className="h-8 px-3 rounded-lg bg-panel border border-edge hover:border-brand-500 text-zinc-900 text-[11px] font-medium shrink-0 flex items-center"
-                          >
-                            ⬇ Download
-                          </a>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
+                  );
+                })()}
               </Fragment>
             );
           })}
