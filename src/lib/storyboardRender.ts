@@ -143,7 +143,17 @@ const AAC_OUT = ["-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k"];
 // extend a cut point looking for a natural pause. Bounded on purpose — this
 // is a "let the sentence/reaction finish" nudge, not a license to let one
 // shot balloon and throw off the whole video's pacing.
-const NATURAL_PAUSE_EXTEND_MAX_SEC = 1.5;
+//
+// Was 1.5s — far too tight in practice. The base estimate (estimateSpeechSeconds)
+// assumes a brisk ~155wpm voiceover-read pace, but real UGC testimonials are
+// often slower and less clipped than that — pauses, "like", trailing off,
+// genuine emotion taking a beat to land — so the base guess regularly landed
+// short of where the sentence/reaction actually finished. A 1.5s search
+// window for the real pause was usually too narrow to reach it, so the cut
+// kept landing at the same unsafe spot (reported repeatedly as "cuts off
+// right at 'I need'" — the render was chopping the line before the speaker
+// finished it). Widened to give real speech room to actually finish.
+const NATURAL_PAUSE_EXTEND_MAX_SEC = 5;
 
 // Runs ffmpeg's silencedetect filter over [fromSec, toSec) of srcPath and
 // returns every silence_start timestamp found (as absolute seconds into
@@ -192,6 +202,15 @@ async function extendToNaturalPause(srcPath: string, startSec: number, targetSec
     if (starts.length > 0) {
       return Math.max(targetSec, starts[0] - startSec);
     }
+    // No detected silence anywhere in the extended window — in practice
+    // this almost always means the speaker is still talking continuously
+    // all the way through it (a genuinely mid-sentence/mid-reaction cut
+    // point), not that there's nothing worth extending for. Falling back to
+    // the original short estimate here would put the cut right back at the
+    // exact spot this function exists to avoid, so extend to the full
+    // window instead — a few extra seconds of real content is a much safer
+    // failure mode than truncating someone mid-word.
+    return maxEnd - startSec;
   } catch {
     // Best-effort — fall through to the original estimate.
   }
