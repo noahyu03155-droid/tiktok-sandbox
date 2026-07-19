@@ -139,6 +139,65 @@ function probeHasAudio(srcPath: string): Promise<boolean> {
 const SILENT_AUDIO = ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"];
 const AAC_OUT = ["-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k"];
 
+// How far past the script-text-estimated shot duration we're willing to
+// extend a cut point looking for a natural pause. Bounded on purpose — this
+// is a "let the sentence/reaction finish" nudge, not a license to let one
+// shot balloon and throw off the whole video's pacing.
+const NATURAL_PAUSE_EXTEND_MAX_SEC = 1.5;
+
+// Runs ffmpeg's silencedetect filter over [fromSec, toSec) of srcPath and
+// returns every silence_start timestamp found (as absolute seconds into
+// srcPath, not relative to fromSec). Used to find where a shot's audio
+// actually has a natural gap, rather than always hard-cutting at the
+// estimateSpeechSeconds() guess regardless of whether that guess landed
+// mid-word or mid-expression.
+function findSilenceStarts(srcPath: string, fromSec: number, toSec: number): Promise<number[]> {
+  return new Promise((resolve) => {
+    const windowSec = Math.max(0.1, toSec - fromSec);
+    const p = spawn("ffmpeg", [
+      "-y", "-ss", String(fromSec), "-t", String(windowSec), "-i", srcPath,
+      "-af", "silencedetect=noise=-30dB:d=0.25",
+      "-f", "null", "-",
+    ]);
+    const timer = setTimeout(() => p.kill("SIGKILL"), 15_000);
+    let stderr = "";
+    p.stderr.on("data", (d) => (stderr += d.toString()));
+    p.on("close", () => {
+      clearTimeout(timer);
+      const starts = [...stderr.matchAll(/silence_start:\s*(-?\d+(?:\.\d+)?)/g)].map((m) => fromSec + parseFloat(m[1]));
+      resolve(starts);
+    });
+    p.on("error", () => {
+      clearTimeout(timer);
+      resolve([]);
+    });
+  });
+}
+
+// Nudges a shot's cut-off point forward to the nearest natural pause in the
+// audio, instead of always hard-cutting exactly at the script-text-estimated
+// duration — the reported "cuts off mid-word right as the transition to the
+// next shot starts, doesn't let the reaction/emotion finish playing out"
+// problem. Bounded by NATURAL_PAUSE_EXTEND_MAX_SEC and by the clip's own
+// remaining length; falls back to the original estimate (unchanged
+// behavior) if no pause is found in that window, or if detection itself
+// fails for any reason — this is a nice-to-have polish pass, never worth
+// blocking or breaking a shot's encode over.
+async function extendToNaturalPause(srcPath: string, startSec: number, targetSec: number, clipDurationSec: number): Promise<number> {
+  const minEnd = startSec + targetSec;
+  const maxEnd = Math.min(clipDurationSec, minEnd + NATURAL_PAUSE_EXTEND_MAX_SEC);
+  if (maxEnd <= minEnd) return targetSec;
+  try {
+    const starts = await findSilenceStarts(srcPath, minEnd, maxEnd);
+    if (starts.length > 0) {
+      return Math.max(targetSec, starts[0] - startSec);
+    }
+  } catch {
+    // Best-effort — fall through to the original estimate.
+  }
+  return targetSec;
+}
+
 // Pulls just the audio for the exact [startSec, startSec+durationSec)
 // window a shot ended up using (the same window smart-trim picked / the
 // same window that ends up in the final segment) — transcribing that exact
@@ -197,6 +256,30 @@ async function transcribeShotWords(audioPath: string): Promise<WhisperWord[] | n
 // in the shot onto screen at once.
 const MAX_WORDS_PER_CAPTION = 6;
 
+// Whisper is well known for hallucinating stock YouTube-outro-style phrases
+// ("thank you for watching", "please like and subscribe"...) when fed
+// near-silent or very quiet audio — it was trained on captioned YouTube
+// video, where those lines are extremely common right where the audio
+// trails off. probeHasAudio only checks whether an audio STREAM exists,
+// not whether it's actually audible speech, so a quiet room-tone shot can
+// still reach Whisper and come back with confidently "transcribed"
+// boilerplate that was never actually said. Checked against the FULL
+// joined transcript (not per-chunk) so a hallucinated phrase spanning
+// multiple caption chunks still gets caught.
+const HALLUCINATION_PATTERNS = [
+  /thank(s| you) for watching/i,
+  /(please\s+)?(like and )?subscribe/i,
+  /don'?t forget to (like and )?subscribe/i,
+  /see you (in the )?next (video|time)/i,
+  /^(you|bye( bye)?|thanks?)\.?$/i,
+];
+
+function looksLikeHallucination(fullText: string): boolean {
+  const clean = fullText.trim();
+  if (clean.length <= 2) return true;
+  return HALLUCINATION_PATTERNS.some((re) => re.test(clean));
+}
+
 function groupWordsIntoCaptions(words: WhisperWord[]): { start: number; end: number; text: string }[] {
   const out: { start: number; end: number; text: string }[] = [];
   let bucket: WhisperWord[] = [];
@@ -247,6 +330,8 @@ async function transcribeShotAudio(
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Whisper transcription timed out")), 30_000)),
     ]);
     if (!words) return null;
+    const fullText = words.map((w) => w.word).join(" ");
+    if (looksLikeHallucination(fullText)) return null;
     const grouped = groupWordsIntoCaptions(words);
     return grouped.length ? grouped : null;
   } catch {
@@ -577,8 +662,7 @@ export function startRenderJob(
         let intendedSec = 0;
 
         if (clip.kind === "video") {
-          const targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));
-          intendedSec = targetSec;
+          let targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));
           const clipDurationSec = await probeDurationSec(srcPath);
           const startSec =
             clipDurationSec > targetSec
@@ -592,6 +676,15 @@ export function startRenderJob(
                 })
               : 0;
           const hasAudio = await probeHasAudio(srcPath);
+          if (hasAudio) {
+            // Don't hard-cut exactly at the script-text estimate if that
+            // lands mid-word or mid-expression right before the transition
+            // to the next shot — nudge forward (bounded) to wherever the
+            // audio actually has a natural pause, so the sentence/reaction
+            // finishes playing out before the cut.
+            targetSec = await extendToNaturalPause(srcPath, startSec, targetSec, clipDurationSec);
+          }
+          intendedSec = targetSec;
           if (captionsMode === "auto" && hasAudio) {
             const segments = await transcribeShotAudio(srcPath, startSec, targetSec, tmpDir, i);
             if (segments) caption = timedCaptionFilter(tmpDir, i, segments, captionStyle);

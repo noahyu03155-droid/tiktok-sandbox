@@ -1315,7 +1315,17 @@ export default function StoryboardCanvas({
       avgSecPerShot: job.avgSecPerShot,
     });
     if (job.status === "done") {
-      setRenderResult(job.result);
+      // Every render overwrites the SAME render.mp4 path (see
+      // storyboardRender.ts's finalPath) — with an identical URL every
+      // time, the browser (and the <video> element's own internal cache)
+      // can and does keep showing whatever it fetched for that URL on a
+      // PREVIOUS render, which is exactly why the inline preview and the
+      // freshly-downloaded file could end up showing completely different
+      // content. Appending a cache-busting query param unique to this
+      // specific completed job forces both the preview <video> and the
+      // Download link to actually fetch the file that was just generated.
+      const result = job.result ? { ...job.result, url: `${job.result.url}?t=${Date.now()}` } : job.result;
+      setRenderResult(result);
       stopRenderPoll();
       setRendering(false);
     } else if (job.status === "error") {

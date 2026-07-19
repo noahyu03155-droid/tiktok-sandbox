@@ -39,7 +39,20 @@ export async function GET(_req: NextRequest, { params }: { params: { path: strin
   const contentType = MIME[ext] || "application/octet-stream";
   const data = fs.readFileSync(filePath);
 
+  // Almost every file under mediaDir gets a unique, never-reused filename
+  // (timestamped uploads, generated stills, etc.) — genuinely safe to tell
+  // browsers/CDNs to cache forever. render.mp4 is the one exception: every
+  // "Generate video" click overwrites this SAME path with fresh bytes, so
+  // an immutable/1-year cache told the browser it could keep serving
+  // whatever it fetched the FIRST time a project's render.mp4 was ever
+  // requested, even after a brand new render finished — the reported "the
+  // inline preview and the downloaded file are completely different videos"
+  // bug. Skip the long-lived cache specifically for this filename so it's
+  // always revalidated instead.
+  const isRenderOutput = path.basename(filePath) === "render.mp4";
+  const cacheControl = isRenderOutput ? "no-cache" : "public, max-age=31536000, immutable";
+
   return new Response(data, {
-    headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=31536000, immutable" },
+    headers: { "Content-Type": contentType, "Cache-Control": cacheControl },
   });
 }
