@@ -29,9 +29,14 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
   // since captions are opt-in now, not the old always-on behavior.
   const body = await req.json().catch(() => ({}));
   const captionsMode: CaptionsMode = body?.captionsMode === "auto" ? "auto" : "off";
+  // Which chain-tail's "Generate video" button was actually clicked — scopes
+  // the render to exactly that chain instead of guessing at "the one real
+  // chain" on a board that may have several. See resolveChainNodeIds in
+  // storyboard.ts for why this replaced the old heuristic.
+  const chainTailId: string | undefined = typeof body?.chainTailId === "string" ? body.chainTailId : undefined;
 
   const outDir = path.join(getMediaDir(), "storyboard", params.projectId);
-  const { job } = startRenderJob(jobKey(params.projectId), board, outDir, `/api/media/storyboard/${params.projectId}`, captionsMode);
+  const { job } = startRenderJob(jobKey(params.projectId), board, outDir, `/api/media/storyboard/${params.projectId}`, captionsMode, chainTailId);
   return NextResponse.json({ job });
 }
 

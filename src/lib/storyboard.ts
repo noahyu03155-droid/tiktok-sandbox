@@ -156,38 +156,62 @@ export interface ChainTail {
   chainLength: number; // distinct nodes reachable by walking backward (incoming edges) from this tail, inclusive of the tail itself
 }
 
+// BFS over predecessors (handles fan-in/branches without double-counting a
+// node reachable through more than one path, and can't loop forever even if
+// the user wired a cycle, since `seen` blocks revisits). Shared by
+// resolveChainTails (just needs the count) and resolveChainNodeIds (needs
+// the actual id set — see its own doc comment for why).
+function walkBackward(tailId: string, incomingByTo: Map<string, string[]>): Set<string> {
+  const seen = new Set<string>([tailId]);
+  let frontier = [tailId];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const pred of incomingByTo.get(id) || []) {
+        if (!seen.has(pred)) {
+          seen.add(pred);
+          next.push(pred);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return seen;
+}
+
+function buildIncomingMap(connections: Pick<CanvasConnection, "fromId" | "toId">[]): Map<string, string[]> {
+  const incomingByTo = new Map<string, string[]>();
+  for (const c of connections) {
+    if (!incomingByTo.has(c.toId)) incomingByTo.set(c.toId, []);
+    incomingByTo.get(c.toId)!.push(c.fromId);
+  }
+  return incomingByTo;
+}
+
 export function resolveChainTails(
   nodes: StoryboardNode[],
   connections: Pick<CanvasConnection, "fromId" | "toId">[]
 ): ChainTail[] {
   const hasOutgoing = new Set(connections.map((c) => c.fromId));
   const hasIncoming = new Set(connections.map((c) => c.toId));
-  const incomingByTo = new Map<string, string[]>();
-  for (const c of connections) {
-    if (!incomingByTo.has(c.toId)) incomingByTo.set(c.toId, []);
-    incomingByTo.get(c.toId)!.push(c.fromId);
-  }
-
+  const incomingByTo = buildIncomingMap(connections);
   const tails = nodes.filter((n) => hasIncoming.has(n.id) && !hasOutgoing.has(n.id));
+  return tails.map((tail) => ({ node: tail, chainLength: walkBackward(tail.id, incomingByTo).size }));
+}
 
-  return tails.map((tail) => {
-    // BFS over predecessors (handles fan-in/branches without double-counting
-    // a node reachable through more than one path, and can't loop forever
-    // even if the user wired a cycle, since `seen` blocks revisits).
-    const seen = new Set<string>([tail.id]);
-    let frontier = [tail.id];
-    while (frontier.length > 0) {
-      const next: string[] = [];
-      for (const id of frontier) {
-        for (const pred of incomingByTo.get(id) || []) {
-          if (!seen.has(pred)) {
-            seen.add(pred);
-            next.push(pred);
-          }
-        }
-      }
-      frontier = next;
-    }
-    return { node: tail, chainLength: seen.size };
-  });
+// Returns every node id reachable by walking BACKWARD (incoming edges) from
+// the given tail node id — exactly "the chain" whose Generate button a
+// given chainTails entry renders. Used by the render pipeline to scope a
+// render to EXACTLY the chain whose Generate button was actually clicked,
+// instead of trying to auto-detect "the one true chain" across the whole
+// board via a heuristic (board can accumulate several unrelated chains from
+// testing different products over time, and a heuristic guessing which one
+// is "the real one" kept getting it wrong on messy real-world boards —
+// including, once, excluding an entire chain's worth of real shots).
+// Deterministic instead: the button IS the chain, so just use its anchor.
+export function resolveChainNodeIds(
+  tailId: string,
+  connections: Pick<CanvasConnection, "fromId" | "toId">[]
+): Set<string> {
+  return walkBackward(tailId, buildIncomingMap(connections));
 }

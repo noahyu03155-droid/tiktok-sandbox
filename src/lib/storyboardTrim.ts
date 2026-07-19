@@ -95,7 +95,12 @@ export async function pickBestSegment(opts: {
   const latestStart = Math.max(0, clipDurationSec - targetSec);
   if (!apiKey || latestStart <= 0.1 || !text.trim()) return 0;
 
-  const SAMPLE_COUNT = 8;
+  // Raised from 8 — the user reported the payoff moment (a pet owner's
+  // laugh/reaction near the END of a take) kept getting missed in favor of
+  // an earlier, calmer-but-on-topic moment. Denser sampling means less of
+  // the clip goes unseen by the model between sample points, so a late,
+  // brief reaction is less likely to fall in a gap.
+  const SAMPLE_COUNT = 14;
   const sampleTimes = Array.from({ length: SAMPLE_COUNT }, (_, i) => (i / (SAMPLE_COUNT - 1)) * clipDurationSec);
 
   try {
@@ -126,15 +131,22 @@ export async function pickBestSegment(opts: {
           `at these timestamps (seconds): ${frames.map((f) => f.t.toFixed(1)).join(", ")}.\n\n` +
           `This clip needs to be trimmed down to a ${targetSec.toFixed(1)}s segment for one shot of a short-form ` +
           `UGC product video. What's happening / being said in this shot: "${text.trim()}"\n\n` +
-          `Look at the frames and pick the single best start time (in seconds, between 0 and ${latestStart.toFixed(1)}) ` +
-          `for a ${targetSec.toFixed(1)}s window that best matches that content — the moment the described ` +
+          `Before picking anything: look at EVERY frame provided, in order, start to finish — build a mental ` +
+          `timeline of how this take actually plays out (calm → building → peak, or whatever shape it has) ` +
+          `rather than judging frames one at a time in isolation. Only after you've scanned all of them, decide ` +
+          `where the best ${targetSec.toFixed(1)}s window is.\n\n` +
+          `Pick the single best start time (in seconds, between 0 and ${latestStart.toFixed(1)}) for a ` +
+          `${targetSec.toFixed(1)}s window that best matches that content — the moment the described ` +
           `action/reaction is actually happening on screen, not a dead or transitional moment. ` +
           `UGC lives or dies on genuine emotional payoff: if this shot is about a reaction, result, or outcome ` +
           `(the person or pet's response AFTER using/trying the product — excitement, delight, relief, surprise), ` +
           `favor whichever sampled moment shows that reaction most visibly — a real smile, laugh, or animated ` +
           `expression — over an earlier, calmer moment in the clip that's technically on-topic but emotionally flat. ` +
-          `Don't just pick the first frame where the right action starts; scan ALL the frames for where the payoff ` +
-          `actually peaks, even if that's later in the clip. ` +
+          `Real UGC reactions typically build gradually and peak toward the END of a take (someone sees/tastes/ ` +
+          `tries the product, there's a beat, THEN the genuine reaction hits) — so if two candidate moments seem ` +
+          `similarly on-topic, or you're unsure, default to the LATER one rather than the earlier one. Don't just ` +
+          `pick the first frame where the right action starts; the payoff is very often several seconds after ` +
+          `that, sometimes near the very end of the clip. ` +
           `Respond with ONLY a JSON object: {"start_sec": <number>}`,
       },
       ...frames.map((f) => ({

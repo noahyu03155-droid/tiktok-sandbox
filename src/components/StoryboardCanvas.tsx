@@ -45,6 +45,10 @@ const NODE_H = HEADER_H + SCRIPT_BOX_H + SHOOTING_GUIDE_BOX_H + NOTES_BOX_H + CL
 const GAP_X = 70;
 const STYLE_WIDGET_H = 34; // compact reference-style control shown above each chain-tail's Generate button
 const STYLE_WIDGET_GAP = 8;
+const GENERATE_BUTTON_H = 36;
+const RESULT_CARD_GAP = 10;
+const RESULT_CARD_WIDTH = 360; // wider than a normal card — needs room for the video preview + feedback textarea
+const RESULT_CARD_MAX_SKIPPED_SHOWN = 3; // long skip lists (a messy board with many leftover cards) used to spill the whole UI — show a few, then "and N more"
 // Layout for a freshly-pasted, not-yet-broken-down TikTok import card (see
 // the `isPendingTiktokBreakdown` check below) — no text boxes yet, just the
 // video at its natural 9:16 portrait ratio plus the two action buttons,
@@ -423,6 +427,15 @@ export default function StoryboardCanvas({
   const [rendering, setRendering] = useState(false);
   const [renderResult, setRenderResult] = useState<{ url: string; skipped: string[]; styleApplied: { pacing: string; transition: string; notes: string } | null; appliedFeedback: { notes: string } | null } | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
+  // Which chain-tail node the current/last render belongs to — the render
+  // result card is drawn on the canvas anchored under THIS tail's Generate
+  // button (see resolveChainNodeIds in storyboard.ts for why a render is now
+  // scoped to one specific chain instead of a heuristically-guessed "primary"
+  // one). pendingRenderTailId is a one-tick holding spot: set the instant
+  // Generate/Regenerate is clicked, before the captions modal even resolves,
+  // so chooseCaptionsAndRender knows which tail to actually send.
+  const [pendingRenderTailId, setPendingRenderTailId] = useState<string | null>(null);
+  const [renderChainTailId, setRenderChainTailId] = useState<string | null>(null);
   // Live progress from the background render job (see renderVideo below +
   // src/lib/storyboardRender.ts) — completedShots/totalShots/avgSecPerShot
   // are all real, observed numbers, not a guess, so the "~Xs left" shown on
@@ -1360,7 +1373,7 @@ export default function StoryboardCanvas({
   // Ensure the poll timer never outlives the component.
   useEffect(() => stopRenderPoll, []);
 
-  async function renderVideo(captionsMode: "off" | "auto") {
+  async function renderVideo(captionsMode: "off" | "auto", chainTailId: string | null) {
     setRendering(true);
     setRenderError(null);
     setRenderResult(null);
@@ -1370,7 +1383,7 @@ export default function StoryboardCanvas({
       const res = await fetch(`${apiBase}/render`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ captionsMode }),
+        body: JSON.stringify({ captionsMode, chainTailId: chainTailId || undefined }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || "Render failed");
@@ -1387,16 +1400,21 @@ export default function StoryboardCanvas({
     }
   }
 
-  // Both the initial "Generate video" button and the post-render "🔁
-  // Regenerate" button go through here first — opens the captions-choice
-  // modal instead of calling renderVideo() directly.
-  function requestRender() {
+  // Both the initial "Generate video" button (one per chain-tail — see
+  // chainTails.map below) and the post-render "🔁 Regenerate" button on the
+  // result card go through here first — opens the captions-choice modal
+  // instead of calling renderVideo() directly. tailId is the specific
+  // chain-tail node whose button was clicked, so the server renders EXACTLY
+  // that chain (see resolveChainNodeIds in storyboard.ts).
+  function requestRender(tailId: string) {
+    setPendingRenderTailId(tailId);
     setCaptionsPromptOpen(true);
   }
 
   function chooseCaptionsAndRender(mode: "off" | "auto") {
     setCaptionsPromptOpen(false);
-    renderVideo(mode);
+    setRenderChainTailId(pendingRenderTailId);
+    renderVideo(mode, pendingRenderTailId);
   }
 
   // Real-progress label for the Generate/Rendering button — replaces the
@@ -1749,68 +1767,6 @@ export default function StoryboardCanvas({
           title="Drag to resize"
         />
       </div>
-
-      {(renderError || renderResult) && (
-        <div className="px-5 py-3 border-b border-edge bg-panel2 shrink-0 flex flex-col gap-2.5">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            {renderError && <p className="text-sm text-red-400">{renderError}</p>}
-            {renderResult && (
-              <div className="flex items-center gap-3 flex-wrap">
-                <p className="text-sm text-green-600">
-                  Render done{renderResult.styleApplied ? ` — applied ${renderResult.styleApplied.pacing} reference style` : ""}
-                  {renderResult.appliedFeedback ? ` — ${renderResult.appliedFeedback.notes}` : ""}
-                  {renderResult.skipped.length > 0 ? ` — skipped (no clip attached): ${renderResult.skipped.join(", ")}` : ""}
-                </p>
-                <a
-                  href={renderResult.url}
-                  download
-                  className="px-3 py-1 rounded bg-brand-500 hover:bg-brand-600 text-white text-xs font-medium"
-                >
-                  ⬇ Download MP4
-                </a>
-                <video src={renderResult.url} controls className="h-16 rounded border border-edge" />
-              </div>
-            )}
-            <button
-              onClick={() => {
-                setRenderError(null);
-                setRenderResult(null);
-              }}
-              className="text-zinc-500 hover:text-zinc-900 text-xs"
-            >
-              ✕
-            </button>
-          </div>
-
-          {renderResult && (
-            <div className="flex items-end gap-2 flex-wrap border-t border-edge pt-2.5">
-              <div className="flex-1 min-w-[240px]">
-                <label className="text-[10px] text-zinc-500 mb-1 block">Want something changed? Tell the AI what to adjust, then regenerate.</label>
-                <textarea
-                  value={board.direction}
-                  onChange={(e) => setBoard((b) => ({ ...b, direction: e.target.value }))}
-                  placeholder="e.g. faster cuts, punchier captions, less text on screen, more product close-ups..."
-                  rows={2}
-                  className="w-full px-3 py-2 rounded-lg bg-panel border border-edge text-sm text-zinc-900 outline-none focus:border-brand-500 resize-none"
-                />
-              </div>
-              <button
-                onClick={startStyleUpload}
-                className="h-9 px-2.5 rounded border border-dashed border-edge2 text-xs text-zinc-600 hover:text-zinc-900 hover:border-brand-500 shrink-0"
-              >
-                📎 {board.styleProfile ? `Ref: ${board.styleProfile.sourceLabel}` : "Import reference video"}
-              </button>
-              <button
-                onClick={requestRender}
-                disabled={rendering}
-                className="h-9 px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium shrink-0"
-              >
-                {rendering ? "Regenerating..." : "🔁 Regenerate"}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
 
       <div
         ref={viewportRef}
@@ -2326,13 +2282,101 @@ export default function StoryboardCanvas({
                   </p>
                 )}
                 <button
-                  onClick={requestRender}
+                  onClick={() => requestRender(n.id)}
                   disabled={rendering}
                   className="absolute px-3 py-2 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
                   style={{ left: n.x, top: generateButtonTop, width: nodeWidth(n) }}
                 >
                   {renderButtonLabel()}
                 </button>
+
+                {/* Render result card — appears anchored under THIS tail's
+                    Generate button once a render for THIS specific chain has
+                    finished (or failed). Replaces the old fixed top banner,
+                    which showed one global result with no link back to which
+                    chain it belonged to on a board with multiple chains —
+                    per the user's explicit request, the finished video now
+                    lands as a card on the canvas next to the chain it came
+                    from, with its own feedback box + Regenerate + Download. */}
+                {renderChainTailId === n.id && (renderResult || renderError) && (
+                  <div
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="absolute rounded-lg border border-edge bg-panel2 shadow-2xl p-3 flex flex-col gap-2.5 text-xs"
+                    style={{ left: n.x, top: generateButtonTop + GENERATE_BUTTON_H + RESULT_CARD_GAP, width: RESULT_CARD_WIDTH }}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        {renderError && <p className="text-red-400">{renderError}</p>}
+                        {renderResult && (
+                          <>
+                            <p className="text-green-600">
+                              Render done{renderResult.styleApplied ? ` — applied ${renderResult.styleApplied.pacing} reference style` : ""}
+                              {renderResult.appliedFeedback ? ` — ${renderResult.appliedFeedback.notes}` : ""}
+                            </p>
+                            {renderResult.skipped.length > 0 && (
+                              <p className="text-zinc-500 mt-0.5">
+                                Skipped (no clip attached): {renderResult.skipped.slice(0, RESULT_CARD_MAX_SKIPPED_SHOWN).join(", ")}
+                                {renderResult.skipped.length > RESULT_CARD_MAX_SKIPPED_SHOWN
+                                  ? ` and ${renderResult.skipped.length - RESULT_CARD_MAX_SKIPPED_SHOWN} more`
+                                  : ""}
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => {
+                          setRenderError(null);
+                          setRenderResult(null);
+                          setRenderChainTailId(null);
+                        }}
+                        className="text-zinc-500 hover:text-zinc-900 shrink-0"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    {renderResult && (
+                      <>
+                        <video src={renderResult.url} controls className="w-full rounded border border-edge" style={{ maxHeight: 260 }} />
+
+                        <div>
+                          <label className="text-[10px] text-zinc-500 mb-1 block">Want something changed? Tell the AI what to adjust, then regenerate.</label>
+                          <textarea
+                            value={board.direction}
+                            onChange={(e) => setBoard((b) => ({ ...b, direction: e.target.value }))}
+                            placeholder="e.g. faster cuts, punchier captions, less text on screen, more product close-ups..."
+                            rows={2}
+                            className="w-full px-2.5 py-1.5 rounded-lg bg-panel border border-edge text-xs text-zinc-900 outline-none focus:border-brand-500 resize-none"
+                          />
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            onClick={startStyleUpload}
+                            className="h-8 px-2.5 rounded border border-dashed border-edge2 text-[10px] text-zinc-600 hover:text-zinc-900 hover:border-brand-500 shrink-0"
+                          >
+                            📎 {board.styleProfile ? `Ref: ${board.styleProfile.sourceLabel}` : "Import reference video"}
+                          </button>
+                          <button
+                            onClick={() => requestRender(n.id)}
+                            disabled={rendering}
+                            className="h-8 px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-[11px] font-medium shrink-0"
+                          >
+                            {rendering ? "Regenerating..." : "🔁 Regenerate"}
+                          </button>
+                          <a
+                            href={renderResult.url}
+                            download
+                            className="h-8 px-3 rounded-lg bg-panel border border-edge hover:border-brand-500 text-zinc-900 text-[11px] font-medium shrink-0 flex items-center"
+                          >
+                            ⬇ Download
+                          </a>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </Fragment>
             );
           })}

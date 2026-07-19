@@ -30,11 +30,11 @@ import fs from "fs";
 import path from "path";
 import OpenAI from "openai";
 import { getMediaDir } from "@/lib/db";
-import { resolveStoryboardOrder } from "@/lib/storyboard";
+import { resolveStoryboardOrder, resolveChainNodeIds } from "@/lib/storyboard";
 import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/storyboardTrim";
 import { wrapCaption, CAPTION_FONT_FILE, type CaptionStylePreset } from "@/lib/storyboardCaptions";
 import { interpretEditingFeedback } from "@/lib/storyboardFeedback";
-import type { StoryboardState, StoryboardTransitionPreset, TranscriptSegment, StoryboardNode, CanvasConnection } from "@/lib/types";
+import type { StoryboardState, StoryboardTransitionPreset, TranscriptSegment } from "@/lib/types";
 
 // "off" — no captions at all, burn nothing in (the default; captions are
 // opt-in, see the modal StoryboardCanvas.tsx shows before every render).
@@ -450,71 +450,6 @@ function cleanupOrphanedTmpDirs(outDir: string) {
   }
 }
 
-// Finds the connected component in the board's connection graph (undirected
-// — a card is "in" a component if it's reachable via ANY connection,
-// forwards or backwards) that actually has the most RENDERABLE shots in it,
-// and returns its node ids — or null if there's no real multi-node chain
-// anywhere (zero connections, or every node is its own disconnected
-// singleton). Used to scope a render to just the ONE chain the creator is
-// actually working on: a board can accumulate a second, unrelated wired-up
-// chain left over from testing a completely different idea — that's a real
-// connected component too, so a simple "exclude nodes with zero
-// connections" check doesn't catch it.
-//
-// Scored by CLIP COUNT, not raw node count — an earlier version picked
-// whichever component simply had the most cards, which backfired the first
-// time it ran: a leftover chain of mostly-empty placeholder cards (more
-// cards, but few/no clips actually attached) outranked the creator's real,
-// fully-shot 5-clip chain, and the real chain got entirely excluded,
-// producing a false "none of the shots have a clip attached" error despite
-// every real shot being ready. Counting actual renderable clips instead
-// means the chain the creator has actually finished shooting always wins,
-// regardless of which one happens to have more cards.
-function primaryChainNodeIds(nodes: StoryboardNode[], connections: Pick<CanvasConnection, "fromId" | "toId">[]): Set<string> | null {
-  if (connections.length === 0) return null; // nothing wired up at all — don't filter anything
-  const adjacency = new Map<string, Set<string>>();
-  for (const n of nodes) adjacency.set(n.id, new Set());
-  for (const c of connections) {
-    adjacency.get(c.fromId)?.add(c.toId);
-    adjacency.get(c.toId)?.add(c.fromId);
-  }
-  const byId = new Map(nodes.map((n) => [n.id, n] as const));
-  const isRenderableClip = (n: StoryboardNode) => !!n.clip && n.clip.source !== "tiktok";
-
-  const seen = new Set<string>();
-  let best: Set<string> = new Set();
-  let bestScore = -1;
-  for (const n of nodes) {
-    if (seen.has(n.id)) continue;
-    const component = new Set<string>();
-    const stack = [n.id];
-    while (stack.length > 0) {
-      const cur = stack.pop()!;
-      if (component.has(cur)) continue;
-      component.add(cur);
-      seen.add(cur);
-      for (const next of adjacency.get(cur) || []) {
-        if (!component.has(next)) stack.push(next);
-      }
-    }
-    if (component.size < 2) continue; // a lone singleton isn't a real chain — never a candidate
-    let score = 0;
-    for (const id of component) {
-      const node = byId.get(id);
-      if (node && isRenderableClip(node)) score++;
-    }
-    if (score > bestScore) {
-      bestScore = score;
-      best = component;
-    }
-  }
-  // No multi-node component had any renderable clip at all — nothing to
-  // meaningfully scope to, so don't filter (falls through to the normal
-  // "none of the shots have a clip attached" error below if truly nothing
-  // is ready, same message as before).
-  return bestScore >= 1 ? best : null;
-}
-
 // Fire-and-forget — starts the render in the background and returns
 // immediately with the job's initial state. If a render for this exact key
 // is already running, returns that existing job instead of starting a
@@ -524,7 +459,8 @@ export function startRenderJob(
   board: StoryboardState,
   outDir: string,
   publicUrlPrefix: string,
-  captionsMode: CaptionsMode = "off"
+  captionsMode: CaptionsMode = "off",
+  chainTailId?: string
 ): { started: boolean; job: RenderJob } {
   const existing = jobs.get(key);
   if (existing && existing.status === "running") {
@@ -537,12 +473,29 @@ export function startRenderJob(
   // call for rendering an UNWIRED single-shot board, but wrong once the
   // board also has a real wired chain: a leftover, fully-wired-up-to-itself
   // chain from testing a completely different idea (different product,
-  // different shots) is just as "connected" as the real chain, so a simple
-  // "has at least one connection" check isn't enough to exclude it — see
-  // primaryChainNodeIds' own doc comment for how it picks the right one.
-  const primaryChainIds = primaryChainNodeIds(board.nodes, board.connections);
+  // different shots) is just as "connected" as the real chain.
+  //
+  // chainTailId — the id of the specific chain-tail node whose Generate
+  // button was actually clicked (StoryboardCanvas.tsx renders one button
+  // per chain via resolveChainTails, so the button IS the chain) — scopes
+  // the render deterministically to exactly that chain's nodes, walking
+  // backward via resolveChainNodeIds. This replaced an earlier "auto-detect
+  // the one true chain" heuristic (scored candidate components by size,
+  // then by renderable-clip count) that kept getting outsmarted by messy
+  // real-world boards accumulating several unrelated chains over time —
+  // including once excluding an ENTIRE real chain's worth of shots because
+  // some other leftover chain scored higher. No more guessing needed: the
+  // click tells us exactly which chain was meant.
+  const scopedChainIds = chainTailId ? resolveChainNodeIds(chainTailId, board.connections) : null;
   const skipped: string[] = [];
   const usable = order.filter((n) => {
+    if (scopedChainIds && !scopedChainIds.has(n.id)) {
+      // Not skip-logged — this is every OTHER chain/card on the board,
+      // which is normal and not worth reporting as "skipped" (that's
+      // reserved for things that were part of the intended chain but
+      // couldn't be used).
+      return false;
+    }
     if (!n.clip) {
       skipped.push(n.label || "untitled shot");
       return false;
@@ -559,10 +512,6 @@ export function startRenderJob(
     // unwanted extra clip prepended before the real 6-stage shots.
     if (n.clip.source === "tiktok") {
       skipped.push(`${n.label || "reference video"} (reference clip — not one of your filmed shots, excluded from the render)`);
-      return false;
-    }
-    if (primaryChainIds && !primaryChainIds.has(n.id)) {
-      skipped.push(`${n.label || "untitled card"} (belongs to a different, disconnected chain on this board — excluded from the render)`);
       return false;
     }
     return true;
