@@ -291,21 +291,27 @@ function cleanupOrphanedTmpDirs(outDir: string) {
   }
 }
 
-// Finds the largest connected component in the board's connection graph
-// (undirected — a card is "in" a component if it's reachable via ANY
-// connection, forwards or backwards) and returns its node ids, or null if
-// there's no real multi-node chain anywhere (either zero connections at
-// all, or every node is its own disconnected singleton). Used to scope a
-// render to just the ONE chain the creator is actually working on: a board
-// can accumulate a second, unrelated wired-up chain left over from testing
-// a completely different idea (a different product's shots, all connected
-// to each other but not to the real chain) — that's a real connected
-// component too, so a simple "exclude nodes with zero connections" check
-// (this function's predecessor) didn't catch it. Only the single biggest
-// component survives; every other component, including true zero-
-// connection orphans (each its own size-1 component), gets excluded from
-// the render the same way.
-function largestComponentIds(nodes: StoryboardNode[], connections: Pick<CanvasConnection, "fromId" | "toId">[]): Set<string> | null {
+// Finds the connected component in the board's connection graph (undirected
+// — a card is "in" a component if it's reachable via ANY connection,
+// forwards or backwards) that actually has the most RENDERABLE shots in it,
+// and returns its node ids — or null if there's no real multi-node chain
+// anywhere (zero connections, or every node is its own disconnected
+// singleton). Used to scope a render to just the ONE chain the creator is
+// actually working on: a board can accumulate a second, unrelated wired-up
+// chain left over from testing a completely different idea — that's a real
+// connected component too, so a simple "exclude nodes with zero
+// connections" check doesn't catch it.
+//
+// Scored by CLIP COUNT, not raw node count — an earlier version picked
+// whichever component simply had the most cards, which backfired the first
+// time it ran: a leftover chain of mostly-empty placeholder cards (more
+// cards, but few/no clips actually attached) outranked the creator's real,
+// fully-shot 5-clip chain, and the real chain got entirely excluded,
+// producing a false "none of the shots have a clip attached" error despite
+// every real shot being ready. Counting actual renderable clips instead
+// means the chain the creator has actually finished shooting always wins,
+// regardless of which one happens to have more cards.
+function primaryChainNodeIds(nodes: StoryboardNode[], connections: Pick<CanvasConnection, "fromId" | "toId">[]): Set<string> | null {
   if (connections.length === 0) return null; // nothing wired up at all — don't filter anything
   const adjacency = new Map<string, Set<string>>();
   for (const n of nodes) adjacency.set(n.id, new Set());
@@ -313,8 +319,12 @@ function largestComponentIds(nodes: StoryboardNode[], connections: Pick<CanvasCo
     adjacency.get(c.fromId)?.add(c.toId);
     adjacency.get(c.toId)?.add(c.fromId);
   }
+  const byId = new Map(nodes.map((n) => [n.id, n] as const));
+  const isRenderableClip = (n: StoryboardNode) => !!n.clip && n.clip.source !== "tiktok";
+
   const seen = new Set<string>();
   let best: Set<string> = new Set();
+  let bestScore = -1;
   for (const n of nodes) {
     if (seen.has(n.id)) continue;
     const component = new Set<string>();
@@ -328,12 +338,22 @@ function largestComponentIds(nodes: StoryboardNode[], connections: Pick<CanvasCo
         if (!component.has(next)) stack.push(next);
       }
     }
-    if (component.size > best.size) best = component;
+    if (component.size < 2) continue; // a lone singleton isn't a real chain — never a candidate
+    let score = 0;
+    for (const id of component) {
+      const node = byId.get(id);
+      if (node && isRenderableClip(node)) score++;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = component;
+    }
   }
-  // If the biggest component is still just 1 node, nothing is actually
-  // wired into a real chain (every node is its own singleton) — don't
-  // filter, same as the zero-connections case above.
-  return best.size >= 2 ? best : null;
+  // No multi-node component had any renderable clip at all — nothing to
+  // meaningfully scope to, so don't filter (falls through to the normal
+  // "none of the shots have a clip attached" error below if truly nothing
+  // is ready, same message as before).
+  return bestScore >= 1 ? best : null;
 }
 
 // Fire-and-forget — starts the render in the background and returns
@@ -359,9 +379,9 @@ export function startRenderJob(
   // board also has a real wired chain: a leftover, fully-wired-up-to-itself
   // chain from testing a completely different idea (different product,
   // different shots) is just as "connected" as the real chain, so a simple
-  // "has at least one connection" check isn't enough to exclude it — only
-  // scoping to the single LARGEST connected component actually does.
-  const primaryChainIds = largestComponentIds(board.nodes, board.connections);
+  // "has at least one connection" check isn't enough to exclude it — see
+  // primaryChainNodeIds' own doc comment for how it picks the right one.
+  const primaryChainIds = primaryChainNodeIds(board.nodes, board.connections);
   const skipped: string[] = [];
   const usable = order.filter((n) => {
     if (!n.clip) {
