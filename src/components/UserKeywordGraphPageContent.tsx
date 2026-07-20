@@ -12,24 +12,26 @@ function formatDate(iso: string): string {
   return new Date(iso).toISOString().slice(0, 16).replace("T", " ");
 }
 
-const TIERS: AccessTier[] = ["business", "vip", "admin"];
+const TIERS: AccessTier[] = ["starter", "pro", "business"];
 
 const TIER_LABEL_KEY: Record<AccessTier, TranslationKey> = {
+  starter: "userDataTierStarter",
+  pro: "userDataTierPro",
   business: "userDataTierBusiness",
-  vip: "userDataTierVip",
-  admin: "userDataTierAdmin",
 };
 
 const TIER_HINT_KEY: Record<AccessTier, TranslationKey> = {
+  starter: "userDataTierStarterHint",
+  pro: "userDataTierProHint",
   business: "userDataTierBusinessHint",
-  vip: "userDataTierVipHint",
-  admin: "userDataTierAdminHint",
 };
 
-// Business/VIP/Admin tab-visibility selector — see src/lib/accessTier.ts for
-// what each tier actually unlocks. A plain PATCH to /api/user-data/[userId]/tier,
-// same low-stakes "just save it" treatment as the custom-tag add form below
-// (no confirmation dialog — an admin can freely flip a member between tiers).
+// Starter/Pro/Business tab-visibility selector (names match the 3 billing
+// plans — see AccessTier's doc comment in src/lib/types.ts) — see
+// src/lib/accessTier.ts for what each tier actually unlocks. A plain PATCH
+// to /api/user-data/[userId]/tier, same low-stakes "just save it" treatment
+// as the custom-tag add form below (no confirmation dialog — an admin can
+// freely flip a member between tiers).
 function TierSelector({ userId, initialTier }: { userId: string; initialTier: AccessTier | null }) {
   const { t } = useLocale();
   const [tier, setTier] = useState<AccessTier | null>(initialTier);

@@ -15,16 +15,18 @@ interface MemberSummary {
   accessTier: AccessTier | null;
 }
 
+// Colors echo the plan accent hexes on the /pricing cards (src/lib/billing.ts)
+// so a tag here reads as "the same Starter/Pro/Business" at a glance.
 const TIER_BADGE_STYLE: Record<AccessTier, string> = {
-  business: "bg-sky-500/10 text-sky-400",
-  vip: "bg-amber-500/10 text-amber-400",
-  admin: "bg-violet-500/10 text-violet-400",
+  starter: "bg-pink-500/10 text-pink-500",
+  pro: "bg-rose-500/10 text-rose-500",
+  business: "bg-purple-500/10 text-purple-500",
 };
 
 const TIER_LABEL_KEY: Record<AccessTier, TranslationKey> = {
+  starter: "userDataTierStarter",
+  pro: "userDataTierPro",
   business: "userDataTierBusiness",
-  vip: "userDataTierVip",
-  admin: "userDataTierAdmin",
 };
 
 // Admin-only grid of every member account — mirrors the styling of the

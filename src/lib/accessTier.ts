@@ -13,13 +13,17 @@ import type { AccessTier } from "./types";
 export const NAV_KEYS = ["video", "trends", "creators", "creation"] as const;
 export type NavKey = (typeof NAV_KEYS)[number];
 
-// "all" = every current + future nav key (used for the "admin" tag so it
+// "all" = every current + future nav key (used for "business" — the top
+// tag, unchanged in meaning from the old "admin" tag it replaced — so it
 // automatically inherits any tab added later, without needing an update
-// here every time a new section ships).
+// here every time a new section ships). Tab sets themselves are the exact
+// same ones the old business/vip/admin naming resolved to; only the labels
+// changed to match the 3 billing plan names — see AccessTier's doc comment
+// in src/lib/types.ts.
 const TIER_TABS: Record<AccessTier, readonly NavKey[] | "all"> = {
-  business: ["video", "trends", "creators", "creation"],
-  vip: ["video", "trends", "creation"],
-  admin: "all",
+  starter: ["video", "trends", "creation"],
+  pro: "all",
+  business: "all",
 };
 
 // Unset (undefined/null) means no tier has been assigned yet — treated as

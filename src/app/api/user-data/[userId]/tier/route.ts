@@ -5,12 +5,13 @@ import type { AccessTier } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const VALID_TIERS: AccessTier[] = ["business", "vip", "admin"];
+const VALID_TIERS: AccessTier[] = ["starter", "pro", "business"];
 
 // Admin-only: set which nav tabs a member sees (src/lib/accessTier.ts) —
-// business/vip/admin here is purely a feature-visibility tag, distinct from
-// the real login-level UserRole (see the AccessTier doc comment in
-// src/lib/types.ts). Mirrors the tags/route.ts POST right above this one.
+// starter/pro/business here is purely a feature-visibility tag (reusing the
+// 3 billing plan names — see AccessTier's doc comment in src/lib/types.ts),
+// distinct from the real login-level UserRole. Mirrors the tags/route.ts
+// POST right above this one.
 export async function PATCH(req: NextRequest, { params }: { params: { userId: string } }) {
   const admin = getCurrentUser();
   if (!admin || admin.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
@@ -21,7 +22,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { userId: st
   const body = await req.json().catch(() => ({}));
   const tier = body?.accessTier;
   if (tier !== null && !VALID_TIERS.includes(tier)) {
-    return NextResponse.json({ error: "accessTier must be one of business/vip/admin, or null to clear it" }, { status: 400 });
+    return NextResponse.json({ error: "accessTier must be one of starter/pro/business, or null to clear it" }, { status: 400 });
   }
 
   updateUser(target.id, { accessTier: tier });

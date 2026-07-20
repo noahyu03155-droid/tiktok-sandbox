@@ -12,7 +12,11 @@ const PUBLIC_PATHS = ["/login", "/api/login", "/register", "/api/register", "/ap
 // not-yet-paid member could never reach /pricing at all (middleware would
 // keep redirecting them back to it) or finish the onboarding step that comes
 // right before it. See PricingPageContent.tsx / /api/billing/select-plan.
-const PLAN_EXEMPT_PATHS = ["/pricing", "/onboarding", "/api/onboarding"];
+// /api/logout is here too — an unpaid member stuck on /pricing still needs
+// to be able to log out (e.g. to try a different account); without this
+// exemption the logout POST itself got 402'd by the block below and the
+// cookie never actually cleared, so the button silently did nothing.
+const PLAN_EXEMPT_PATHS = ["/pricing", "/onboarding", "/api/onboarding", "/api/logout"];
 const PLAN_EXEMPT_PREFIXES = ["/api/billing/"];
 
 export async function middleware(req: NextRequest) {

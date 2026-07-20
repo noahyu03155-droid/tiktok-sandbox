@@ -503,12 +503,12 @@ export function createUser(username: string, password: string, role: UserRole = 
     username,
     passwordHash: hashPassword(password),
     role,
-    // Every freshly self-registered member starts on the VIP tab set
+    // Every freshly self-registered member starts on the Starter tab set
     // (Video Analysis / Trend Analysis / Creation — see
     // src/lib/accessTier.ts) rather than the "unset -> treated as business"
     // fallback used for pre-existing accounts. An admin can still upgrade
-    // to Business (adds Creator Tracker) or tag as Admin from User Data.
-    accessTier: role === "member" ? "vip" : null,
+    // to Pro/Business (adds Creator Tracker) from User Data.
+    accessTier: role === "member" ? "starter" : null,
     createdAt: new Date().toISOString(),
     // Every freshly self-registered member starts gated at /pricing (see
     // src/middleware.ts) — role "admin" bypasses the plan gate entirely

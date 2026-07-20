@@ -6,12 +6,19 @@ export type UserRole = "admin" | "member";
 // above, which is the real login-level admin/member split (controls things
 // like the /user-data admin panel and cross-member Creation visibility).
 // AccessTier instead just controls which top-level nav tabs a member sees
-// (see src/lib/accessTier.ts) — an admin-tagged member still can't see
+// (see src/lib/accessTier.ts) — a business-tagged member still can't see
 // /user-data, only the actual UserRole "admin" (the site owner) can. Unset
 // (undefined) means "no tier assigned yet" and is treated as "business" (the
 // broadest of the three) so existing/untagged members keep seeing what they
 // already could before this field existed — see tabsForTier.
-export type AccessTier = "business" | "vip" | "admin";
+//
+// Values deliberately reuse the 3 billing plan names (see PlanId below) —
+// this used to be an unrelated "business/vip/admin" naming scheme, renamed
+// to starter/pro/business so an admin tagging a member's feature access
+// isn't juggling two different vocabularies for "tier" on the same page.
+// The nav-tab sets themselves are unchanged from before the rename — see
+// TIER_TABS in accessTier.ts for exactly which tabs each value unlocks.
+export type AccessTier = "starter" | "pro" | "business";
 
 // ---- Billing plan (src/app/pricing, src/app/api/billing/select-plan) ----
 // A self-serve subscription tier picked on /pricing, gating access to the
