@@ -11,16 +11,20 @@
 // HeaderBar's shorter appTagline already does that job.
 const STEPS = ["Create", "Optimize", "Trend", "Operate", "Result"];
 
+// Sized as a bold statement piece, not a footnote: "md" (landing hero) is
+// display-scale, "sm" (login card / pricing) is still prominently large —
+// the user explicitly asked for this after an earlier, tiny version felt
+// like fine print rather than the brand's signature line.
 export default function SloganFlow({ size = "md", className = "" }: { size?: "sm" | "md"; className?: string }) {
-  const text = size === "sm" ? "text-[11px]" : "text-sm sm:text-base";
-  const gap = size === "sm" ? "gap-1.5" : "gap-2 sm:gap-3";
-  const arrow = size === "sm" ? "text-[10px]" : "text-xs sm:text-sm";
+  const text = size === "sm" ? "text-lg sm:text-xl" : "text-2xl sm:text-4xl";
+  const gap = size === "sm" ? "gap-2" : "gap-2.5 sm:gap-4";
+  const arrow = size === "sm" ? "text-base" : "text-xl sm:text-2xl";
   return (
     <div className={`flex items-center justify-center flex-wrap ${gap} ${className}`}>
       {STEPS.map((step, i) => (
-        <div key={step} className="flex items-center gap-1.5 sm:gap-2">
+        <div key={step} className="flex items-center gap-2 sm:gap-2.5">
           <span
-            className={`${text} font-semibold bg-gradient-to-r from-brand-500 via-sky-400 to-purple-500 bg-clip-text text-transparent whitespace-nowrap`}
+            className={`${text} font-bold tracking-tight bg-gradient-to-r from-brand-500 via-sky-400 to-purple-500 bg-clip-text text-transparent whitespace-nowrap`}
           >
             {step}
           </span>

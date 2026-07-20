@@ -29,6 +29,10 @@ const FavoritesContext = createContext<{
 interface EnrichedBatch {
   id: string;
   category: string;
+  // Present on every batch stored since category-id tracking shipped — see
+  // TrendBatch in src/lib/types.ts. Used to filter the batch list below
+  // down to whichever category the toolbar dropdown has selected.
+  category_id: string | null;
   date_from: string;
   date_to: string;
   top_by_views: EnrichedItem[];
@@ -1446,6 +1450,27 @@ export default function TrendsPageContent({
     [batches]
   );
 
+  // Picking a category in the toolbar dropdown used to only pre-fill the
+  // (admin-only) "Update" button's live-pull payload — the Top 20 list
+  // below kept showing every category's batch stacked together, with no
+  // visible reaction to the click at all for a regular member. This filters
+  // the already-loaded batch list down to just the selected category's most
+  // recent cached pull, so switching categories is instant (no live
+  // FastMoss call, no admin required) — Update remains for forcing a fresh
+  // pull when the cached data is stale or missing.
+  const visibleBatches = useMemo(() => {
+    if (!batches) return batches;
+    if (!selectedCategory) return batches;
+    const matches = batches.filter((b) => b.category_id === selectedCategory.id);
+    if (matches.length === 0) return matches;
+    // Multiple batches can accumulate for the same category over time
+    // (each Update pull adds a new one) — only the most recent is relevant
+    // here, same "latest wins" rule getLatestTrendBatchByCategory uses
+    // server-side.
+    const latest = matches.reduce((a, b) => (new Date(b.created_at).getTime() > new Date(a.created_at).getTime() ? b : a));
+    return [latest];
+  }, [batches, selectedCategory]);
+
   return (
     <FavoritesContext.Provider
       value={{
@@ -1646,7 +1671,12 @@ export default function TrendsPageContent({
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 mb-1">{t("trendPageHeading")}</h2>
-          <p className="text-sm text-zinc-500">{t("trendPageSubheading")}</p>
+          {/* Dynamic once a category is picked from the dropdown, instead
+              of the old text hardcoded to describe the pet/treats default
+              regardless of what's actually shown below. */}
+          <p className="text-sm text-zinc-500">
+            {selectedCategory ? t("trendPageSubheadingCategory", { category: selectedCategory.label }) : t("trendPageSubheading")}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {selectMode && selected.size > 0 && (
@@ -1848,7 +1878,13 @@ export default function TrendsPageContent({
         <div className="text-center py-24 text-zinc-500 text-sm">{t("trendEmptyState")}</div>
       )}
 
-      {batches?.map((batch) => (
+      {batches && batches.length > 0 && selectedCategory && visibleBatches?.length === 0 && (
+        <div className="text-center py-16 text-zinc-500 text-sm">
+          {t("trendNoDataForCategory", { category: selectedCategory.label })}
+        </div>
+      )}
+
+      {visibleBatches?.map((batch) => (
         <div key={batch.id} className="space-y-6 pb-8 border-b border-edge last:border-b-0">
           <div className="flex items-baseline justify-between gap-3 flex-wrap">
             <div className="flex items-baseline gap-3 flex-wrap">

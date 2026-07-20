@@ -178,6 +178,8 @@ export const translations = {
     trendPageHeading: "Trending Videos",
     trendPageSubheading:
       "Top pet food / treats videos from the last 7 days, pulled from FastMoss — split into Top 20 by views and Top 20 by sales.",
+    trendPageSubheadingCategory: "Top \"{category}\" videos, pulled from FastMoss — split into Top 20 by views and Top 20 by sales.",
+    trendNoDataForCategory: "No trend data pulled yet for \"{category}\" — check back later, or ask an admin to run Update for it.",
     trendEmptyState: "No trend data yet. Click Update, or ask Claude in chat to pull the latest videos from FastMoss.",
     trendCategory: "Category",
     trendWeekOf: "Date range",
@@ -600,6 +602,8 @@ export const translations = {
 
     trendPageHeading: "爆款视频",
     trendPageSubheading: "过去7天从 FastMoss 抓取的宠物食品/零食相关视频，分成「播放量Top20」和「销量Top20」两个榜单。",
+    trendPageSubheadingCategory: "「{category}」类目的热门视频，来自 FastMoss，分成「播放量Top20」和「销量Top20」两个榜单。",
+    trendNoDataForCategory: "「{category}」这个类目还没有抓取过数据——稍后再来看看，或者请管理员帮忙点一下更新。",
     trendEmptyState: "还没有趋势数据，点击更新，或者在 Claude 对话里让我去 FastMoss 抓取最新数据。",
     trendCategory: "类目",
     trendWeekOf: "时间范围",
