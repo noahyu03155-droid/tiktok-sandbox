@@ -28,6 +28,7 @@ import type { TranslationKey } from "@/lib/translations";
 import Logo from "@/components/Logo";
 import LanguageToggle from "@/components/LanguageToggle";
 import RegisterForm from "@/components/RegisterForm";
+import SloganFlow from "@/components/SloganFlow";
 
 const HOW_STEPS: { titleKey: TranslationKey; bodyKey: TranslationKey }[] = [
   { titleKey: "registerHowStep1Title", bodyKey: "registerHowStep1Body" },
@@ -196,6 +197,7 @@ export default function RegisterLanding({ showcaseVideos }: { showcaseVideos: Sh
           </span>
         </h1>
         <p className="mt-6 text-lg text-zinc-500 leading-relaxed max-w-xl mx-auto">{t("registerHeroSubtitle")}</p>
+        <SloganFlow className="mt-5" />
         <div className="mt-8 flex items-center justify-center gap-3 flex-wrap">
           <button
             onClick={handleGetStarted}

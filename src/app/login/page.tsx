@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useLocale } from "@/lib/i18n";
 import Logo from "@/components/Logo";
+import SloganFlow from "@/components/SloganFlow";
 
 function LoginForm() {
   const [username, setUsername] = useState("");
@@ -41,6 +42,7 @@ function LoginForm() {
       <div className="mb-6">
         <Logo />
         <p className="text-xs text-zinc-500 mt-2">{t("loginTitle")}</p>
+        <SloganFlow size="sm" className="mt-3" />
       </div>
       <label className="block text-xs text-zinc-500 mb-1">{t("usernameLabel")}</label>
       <input

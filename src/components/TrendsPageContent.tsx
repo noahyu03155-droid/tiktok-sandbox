@@ -6,6 +6,7 @@ import { useLocale } from "@/lib/i18n";
 import { formatCompactNumber, STATUS_KEY } from "@/lib/format";
 import type { TrendItem, VideoRecord } from "@/lib/types";
 import FavoriteButton from "./FavoriteButton";
+import ProjectPickerModal from "./ProjectPickerModal";
 
 interface EnrichedItem extends TrendItem {
   video: VideoRecord | null;
@@ -216,24 +217,31 @@ function TrendCard({
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<ProductAnalysis | null>(null);
 
-  // "Add to Creation" — imports this trending video into the user's own
-  // default Creation canvas (see /api/creation/import-trend-video). Per-card
-  // local state, same pattern as the AI-analysis panel above.
+  // "Add to Creation" — imports this trending video into a canvas project
+  // the user explicitly picks (see ProjectPickerModal.tsx), via
+  // /api/creation/import-trend-video. Per-card local state, same pattern as
+  // the AI-analysis panel above.
   const [addState, setAddState] = useState<"idle" | "adding" | "added" | "error">("idle");
   const [addedProjectId, setAddedProjectId] = useState<string | null>(null);
+  const [showProjectPicker, setShowProjectPicker] = useState(false);
 
-  async function handleAddToCreation(e: React.MouseEvent) {
+  function handleAddToCreation(e: React.MouseEvent) {
     // Same as toggleAnalysis: the whole card body sits inside a <Link> (or a
     // click-to-select div in select mode) — don't let this button navigate.
     e.preventDefault();
     e.stopPropagation();
     if (!item.video || addState === "adding" || addState === "added") return;
+    setShowProjectPicker(true);
+  }
+
+  async function confirmAddToCreation(projectId: string) {
+    if (!item.video) return;
     setAddState("adding");
     try {
       const res = await fetch("/api/creation/import-trend-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoRecordId: item.video.id }),
+        body: JSON.stringify({ videoRecordId: item.video.id, projectId }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.projectId) throw new Error(data.error || "Import failed");
@@ -241,6 +249,8 @@ function TrendCard({
       setAddState("added");
     } catch {
       setAddState("error");
+    } finally {
+      setShowProjectPicker(false);
     }
   }
 
@@ -535,6 +545,15 @@ function TrendCard({
           </>
         )}
       </div>
+      {showProjectPicker && (
+        // Wrapped with a click-stopping div — this whole card sits inside a
+        // <Link> (see the component's root element below), and without this
+        // a click anywhere in the modal (an input, the "+ New" button, a
+        // project row) would bubble up and navigate away mid-pick.
+        <div onClick={(e) => e.stopPropagation()}>
+          <ProjectPickerModal onPick={confirmAddToCreation} onClose={() => setShowProjectPicker(false)} />
+        </div>
+      )}
     </div>
   );
 
@@ -571,20 +590,26 @@ function ProductCard({ item }: { item: EnrichedItem }) {
 
   const [addState, setAddState] = useState<"idle" | "adding" | "added" | "error">("idle");
   const [addedProjectId, setAddedProjectId] = useState<string | null>(null);
+  const [showProjectPicker, setShowProjectPicker] = useState(false);
   // A product image straight off FastMoss/TikTok's own CDN, not cached
   // locally like video thumbnails — those links can 404/expire, so this
   // just falls back to a plain placeholder rather than showing a broken
   // image icon.
   const [imgFailed, setImgFailed] = useState(false);
 
-  async function handleAddToCreation() {
+  function handleAddToCreation() {
     if (!item.video || addState === "adding" || addState === "added") return;
+    setShowProjectPicker(true);
+  }
+
+  async function confirmAddToCreation(projectId: string) {
+    if (!item.video) return;
     setAddState("adding");
     try {
       const res = await fetch("/api/creation/import-trend-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoRecordId: item.video.id }),
+        body: JSON.stringify({ videoRecordId: item.video.id, projectId }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.projectId) throw new Error(data.error || "Import failed");
@@ -592,6 +617,8 @@ function ProductCard({ item }: { item: EnrichedItem }) {
       setAddState("added");
     } catch {
       setAddState("error");
+    } finally {
+      setShowProjectPicker(false);
     }
   }
 
@@ -809,6 +836,11 @@ function ProductCard({ item }: { item: EnrichedItem }) {
         )}
         {addState === "error" && <p className="text-[10px] text-red-400 mt-1">{t("trendAddToCreationError")}</p>}
       </div>
+      {showProjectPicker && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ProjectPickerModal onPick={confirmAddToCreation} onClose={() => setShowProjectPicker(false)} />
+        </div>
+      )}
     </div>
   );
 }

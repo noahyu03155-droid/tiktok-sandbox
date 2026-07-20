@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { formatTime } from "@/lib/format";
 import { useLocale } from "@/lib/i18n";
 import ProductPicker from "./ProductPicker";
-import StoryboardCanvas from "./StoryboardCanvas";
+import ProjectPickerModal from "./ProjectPickerModal";
 import type { GeneratedScript, GeneratedScriptStage, VideoRecord } from "@/lib/types";
 
 // "🖨 Print / PDF" on the Script Generator tab — opens a clean-print
@@ -62,6 +63,7 @@ export default function AnalysisTabs({
   const [tab, setTab] = useState<TabKey>("hook");
   const [startingBreakdown, setStartingBreakdown] = useState(false);
   const { t } = useLocale();
+  const router = useRouter();
   const analysis = video.analysis;
   const canRunBreakdown = video.status === "done" && !analysis && video.transcript_segments.length > 0;
   // Covers both an explicit status:"error" and the "done but somehow no
@@ -115,12 +117,40 @@ export default function AnalysisTabs({
   }
 
   const [showProductPicker, setShowProductPicker] = useState(false);
-  const [showStoryboard, setShowStoryboard] = useState(false);
+  const [showProjectPicker, setShowProjectPicker] = useState(false);
+  const [importingToProject, setImportingToProject] = useState(false);
+  const [storyboardImportError, setStoryboardImportError] = useState<string | null>(null);
   const [generatingScript, setGeneratingScript] = useState(false);
   const [scriptError, setScriptError] = useState<string | null>(null);
   const [activeScriptIdx, setActiveScriptIdx] = useState(video.generated_scripts.length - 1);
 
-  async function handleProductSelected(product: { id: string; title: string }) {
+  // "Generate video — plan the storyboard" — pushes the active script's
+  // stages into a Creation project the user explicitly picks (see
+  // ProjectPickerModal), then navigates there so the cards are visible
+  // right away instead of leaving the user to go find them.
+  async function handleImportToProject(projectId: string) {
+    const script = video.generated_scripts[activeScriptIdx];
+    if (!script) return;
+    setImportingToProject(true);
+    setStoryboardImportError(null);
+    try {
+      const res = await fetch(`/api/creation/projects/${projectId}/storyboard/import-script`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stages: script.stages }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to add to that project");
+      setShowProjectPicker(false);
+      router.push(`/creation/${projectId}`);
+    } catch (e: any) {
+      setStoryboardImportError(e.message || "Failed to add to that project");
+    } finally {
+      setImportingToProject(false);
+    }
+  }
+
+  async function runGenerateScript(body: { shopify_product_id: string } | { product_url: string }) {
     setShowProductPicker(false);
     setGeneratingScript(true);
     setScriptError(null);
@@ -128,7 +158,7 @@ export default function AnalysisTabs({
       const res = await fetch(`/api/videos/${video.id}/generate-script`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shopify_product_id: product.id }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate script");
@@ -140,6 +170,17 @@ export default function AnalysisTabs({
     } finally {
       setGeneratingScript(false);
     }
+  }
+
+  function handleProductSelected(product: { id: string; title: string }) {
+    runGenerateScript({ shopify_product_id: product.id });
+  }
+
+  // "Paste a link" tab on ProductPicker — not limited to Shopify, works for
+  // any product page URL (see /api/videos/[id]/generate-script's
+  // product_url branch, which scrapes it server-side).
+  function handleProductLinkSelected(url: string) {
+    runGenerateScript({ product_url: url });
   }
 
   // Called by a ScriptStageCard after a successful refine (server already
@@ -294,8 +335,8 @@ export default function AnalysisTabs({
             <div className="space-y-4">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <p className="text-xs text-zinc-500 max-w-md">
-                  Pick one of our Shopify products, and Claude will adapt this video's structure and hooks into a
-                  new script for briefing a creator.
+                  Pick one of our Shopify products (or paste any product link), and Claude will adapt this video's
+                  structure and hooks into a new script for briefing a creator.
                 </p>
                 <button
                   onClick={() => setShowProductPicker(true)}
@@ -353,11 +394,12 @@ export default function AnalysisTabs({
                         />
                       ))}
                       <button
-                        onClick={() => setShowStoryboard(true)}
+                        onClick={() => setShowProjectPicker(true)}
                         className="w-full py-2.5 rounded-lg border border-dashed border-edge2 text-zinc-600 hover:text-zinc-900 hover:border-brand-500 text-sm font-medium"
                       >
                         🎬 Generate video — plan the storyboard
                       </button>
+                      {storyboardImportError && <p className="text-sm text-red-400">{storyboardImportError}</p>}
                     </div>
                   )}
                 </>
@@ -368,15 +410,19 @@ export default function AnalysisTabs({
       )}
 
       {showProductPicker && (
-        <ProductPicker onSelect={handleProductSelected} onClose={() => setShowProductPicker(false)} />
+        <ProductPicker
+          onSelect={handleProductSelected}
+          onSelectLink={handleProductLinkSelected}
+          onClose={() => setShowProductPicker(false)}
+        />
       )}
 
-      {showStoryboard && video.generated_scripts[activeScriptIdx] && (
-        <StoryboardCanvas
-          apiBase={`/api/videos/${video.id}/generate-script/${video.generated_scripts[activeScriptIdx].id}/storyboard`}
-          initialStoryboard={video.generated_scripts[activeScriptIdx].storyboard || null}
-          seedStages={video.generated_scripts[activeScriptIdx].stages}
-          onClose={() => setShowStoryboard(false)}
+      {showProjectPicker && (
+        <ProjectPickerModal
+          title="Add this script's storyboard to which canvas project?"
+          confirmLabel={importingToProject ? "Adding..." : "Add here"}
+          onPick={handleImportToProject}
+          onClose={() => setShowProjectPicker(false)}
         />
       )}
     </div>

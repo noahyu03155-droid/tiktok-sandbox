@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import crypto from "crypto";
-import { getCurrentUser } from "@/lib/session";
-import { getVideo, getMediaDir, getOrCreateDefaultCreationProject, updateCreationProject } from "@/lib/db";
+import { getVideo, getMediaDir, updateCreationProject } from "@/lib/db";
+import { requireProjectAccess } from "@/lib/creationAuth";
 import { fetchTikTokVideo } from "@/lib/tiktok";
 import type { StoryboardState, StoryboardNode } from "@/lib/types";
 
@@ -17,18 +17,27 @@ const GAP_X = 70;
 
 // "Add to Creation" button on a Trend Analysis video card — downloads that
 // specific trending video via the same yt-dlp fetcher the canvas's own
-// "paste a TikTok link" feature uses, and drops it straight into the user's
-// own single default canvas (auto-created if they don't have one yet) as a
-// new card, ready to build off of without leaving Trend Analysis.
+// "paste a TikTok link" feature uses, and drops it as a new card into a
+// canvas project the user explicitly picked via ProjectPickerModal (see
+// StoryboardCanvas.tsx's sibling picker on AnalysisTabs.tsx). Used to
+// silently pick getOrCreateDefaultCreationProject — whichever project was
+// most recently updated, or a brand-new "My Canvas" — which meant a member
+// with more than one project could never tell (or control) where an import
+// landed. requireProjectAccess both confirms projectId belongs to this
+// user (or an admin) and 404s cleanly if it doesn't exist.
 export async function POST(req: NextRequest) {
-  const user = getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-
   const body = await req.json().catch(() => ({}));
   const videoRecordId = typeof body?.videoRecordId === "string" ? body.videoRecordId : "";
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
   if (!videoRecordId) {
     return NextResponse.json({ error: "videoRecordId is required" }, { status: 400 });
   }
+  if (!projectId) {
+    return NextResponse.json({ error: "projectId is required" }, { status: 400 });
+  }
+
+  const access = requireProjectAccess(projectId);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
   const video = getVideo(videoRecordId);
   if (!video) return NextResponse.json({ error: "Video not found" }, { status: 404 });
@@ -36,7 +45,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "This video doesn't have a usable TikTok link to import." }, { status: 400 });
   }
 
-  const project = getOrCreateDefaultCreationProject(user.userId);
+  const project = access.project;
   const board: StoryboardState = project.storyboard || {
     nodes: [],
     connections: [],

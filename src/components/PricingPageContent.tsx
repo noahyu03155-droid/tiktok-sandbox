@@ -7,6 +7,7 @@ import type { PlanId, BillingCycle } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
 import LogoutButton from "./LogoutButton";
 import LanguageToggle from "./LanguageToggle";
+import SloganFlow from "./SloganFlow";
 
 // The gate every non-admin account has to clear before reaching the rest of
 // the app (see src/middleware.ts's billing check) — reachable either right
@@ -117,6 +118,7 @@ export default function PricingPageContent({
         <div className="text-center mb-8">
           <h1 className="text-2xl md:text-3xl font-semibold text-zinc-900">{copy.heading}</h1>
           <p className="text-sm text-zinc-500 mt-2">{copy.subheading}</p>
+          <SloganFlow size="sm" className="mt-4" />
         </div>
 
         {/* billing cycle tabs */}
