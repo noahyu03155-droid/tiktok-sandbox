@@ -9,10 +9,13 @@ import type { BillingCycle, PlanId } from "./types";
 
 export interface PlanFeatureRow {
   labelZh: string;
+  labelEn: string;
   valueZh: string;
+  valueEn: string;
 }
 export interface PlanFeatureSection {
   titleZh: string;
+  titleEn: string;
   rows: PlanFeatureRow[];
 }
 
@@ -21,7 +24,9 @@ export interface PlanDef {
   nameZh: string;
   nameEn: string;
   taglineZh: string;
+  taglineEn: string;
   badgeZh: string; // small ribbon label, e.g. "低价试用"
+  badgeEn: string;
   accent: string; // hex, drives the card's header color
   monthlyUsd: number; // full (undiscounted) monthly price
   seatsIncluded: number;
@@ -37,7 +42,9 @@ export const PLANS: PlanDef[] = [
     nameZh: "标准版",
     nameEn: "Starter",
     taglineZh: "适合刚起步的个人创作者",
+    taglineEn: "For individual creators just getting started",
     badgeZh: "低价试用",
+    badgeEn: "Try it out",
     accent: "#ec4899",
     monthlyUsd: 29,
     seatsIncluded: 1,
@@ -47,25 +54,28 @@ export const PLANS: PlanDef[] = [
     sections: [
       {
         titleZh: "基础权益",
+        titleEn: "Core",
         rows: [
-          { labelZh: "视频拆解", valueZh: "15 次/月" },
-          { labelZh: "AI 脚本生成", valueZh: "30 次/月" },
-          { labelZh: "分镜画布项目", valueZh: "1 个" },
+          { labelZh: "视频拆解", labelEn: "Video breakdowns", valueZh: "15 次/月", valueEn: "15/mo" },
+          { labelZh: "AI 脚本生成", labelEn: "AI script generation", valueZh: "30 次/月", valueEn: "30/mo" },
+          { labelZh: "分镜画布项目", labelEn: "Storyboard canvas projects", valueZh: "1 个", valueEn: "1" },
         ],
       },
       {
         titleZh: "高级权益",
+        titleEn: "Advanced",
         rows: [
-          { labelZh: "手动剪辑导出", valueZh: "8 次/月，720p，带水印" },
-          { labelZh: "创作者追踪", valueZh: "不含" },
-          { labelZh: "团队席位", valueZh: "1 人" },
+          { labelZh: "手动剪辑导出", labelEn: "Manual edit exports", valueZh: "8 次/月，1080p/2K，无水印", valueEn: "8/mo, 1080p/2K, no watermark" },
+          { labelZh: "创作者追踪", labelEn: "Creator tracking", valueZh: "不含", valueEn: "Not included" },
+          { labelZh: "团队席位", labelEn: "Team seats", valueZh: "1 人", valueEn: "1 seat" },
         ],
       },
       {
         titleZh: "AI 权益",
+        titleEn: "AI",
         rows: [
-          { labelZh: "AI 自动字幕", valueZh: "支持" },
-          { labelZh: "趋势分析", valueZh: "仅 7 天榜单" },
+          { labelZh: "AI 自动字幕", labelEn: "AI auto captions", valueZh: "支持", valueEn: "Included" },
+          { labelZh: "趋势分析", labelEn: "Trend analysis", valueZh: "仅 7 天榜单", valueEn: "7-day charts only" },
         ],
       },
     ],
@@ -75,35 +85,40 @@ export const PLANS: PlanDef[] = [
     nameZh: "专业版",
     nameEn: "Pro",
     taglineZh: "适合每周稳定出片的创作者/小团队",
+    taglineEn: "For creators/small teams shipping every week",
     badgeZh: "最受欢迎",
+    badgeEn: "Most popular",
     accent: "#f43f5e",
     monthlyUsd: 69,
-    seatsIncluded: 3,
-    extraSeatAllowed: true,
-    extraSeatMonthlyUsd: 19,
-    maxExtraSeats: 20,
+    seatsIncluded: 1,
+    extraSeatAllowed: false,
+    extraSeatMonthlyUsd: 0,
+    maxExtraSeats: 0,
     sections: [
       {
         titleZh: "基础权益",
+        titleEn: "Core",
         rows: [
-          { labelZh: "视频拆解", valueZh: "60 次/月" },
-          { labelZh: "AI 脚本生成", valueZh: "150 次/月" },
-          { labelZh: "分镜画布项目", valueZh: "10 个" },
+          { labelZh: "视频拆解", labelEn: "Video breakdowns", valueZh: "60 次/月", valueEn: "60/mo" },
+          { labelZh: "AI 脚本生成", labelEn: "AI script generation", valueZh: "150 次/月", valueEn: "150/mo" },
+          { labelZh: "分镜画布项目", labelEn: "Storyboard canvas projects", valueZh: "6 个", valueEn: "6" },
         ],
       },
       {
         titleZh: "高级权益",
+        titleEn: "Advanced",
         rows: [
-          { labelZh: "手动剪辑导出", valueZh: "40 次/月，1080p，无水印" },
-          { labelZh: "创作者追踪", valueZh: "最多 25 个" },
-          { labelZh: "团队席位", valueZh: "3 人，可加购" },
+          { labelZh: "手动剪辑导出", labelEn: "Manual edit exports", valueZh: "40 次/月，1080p/4K，无水印", valueEn: "40/mo, 1080p/4K, no watermark" },
+          { labelZh: "创作者追踪", labelEn: "Creator tracking", valueZh: "最多 25 个", valueEn: "Up to 25" },
+          { labelZh: "团队席位", labelEn: "Team seats", valueZh: "1 人", valueEn: "1 seat" },
         ],
       },
       {
         titleZh: "AI 权益",
+        titleEn: "AI",
         rows: [
-          { labelZh: "AI 自动字幕", valueZh: "不限次" },
-          { labelZh: "趋势分析", valueZh: "完整 7/28/90 天 + 个性化推荐" },
+          { labelZh: "AI 自动字幕", labelEn: "AI auto captions", valueZh: "不限次", valueEn: "Unlimited" },
+          { labelZh: "趋势分析", labelEn: "Trend analysis", valueZh: "完整 7/28/90 天 + 个性化推荐", valueEn: "Full 7/28/90-day + personalized" },
         ],
       },
     ],
@@ -113,45 +128,50 @@ export const PLANS: PlanDef[] = [
     nameZh: "旗舰版",
     nameEn: "Business",
     taglineZh: "适合代运营公司、多账号矩阵、品牌方",
+    taglineEn: "For agencies, multi-account operations, and brands",
     badgeZh: "旗舰版",
+    badgeEn: "Flagship",
     accent: "#a21caf",
     monthlyUsd: 129,
     seatsIncluded: 10,
     extraSeatAllowed: true,
-    extraSeatMonthlyUsd: 12,
-    maxExtraSeats: 50,
+    extraSeatMonthlyUsd: 25,
+    maxExtraSeats: 2,
     sections: [
       {
         titleZh: "基础权益",
+        titleEn: "Core",
         rows: [
-          { labelZh: "视频拆解", valueZh: "不限次" },
-          { labelZh: "AI 脚本生成", valueZh: "不限次" },
-          { labelZh: "分镜画布项目", valueZh: "不限项目" },
+          { labelZh: "视频拆解", labelEn: "Video breakdowns", valueZh: "不限次", valueEn: "Unlimited" },
+          { labelZh: "AI 脚本生成", labelEn: "AI script generation", valueZh: "不限次", valueEn: "Unlimited" },
+          { labelZh: "分镜画布项目", labelEn: "Storyboard canvas projects", valueZh: "不限项目", valueEn: "Unlimited" },
         ],
       },
       {
         titleZh: "高级权益",
+        titleEn: "Advanced",
         rows: [
-          { labelZh: "手动剪辑导出", valueZh: "150 次/月，1080p/4K，无水印" },
-          { labelZh: "创作者追踪", valueZh: "不限，含联盟数据" },
-          { labelZh: "团队席位", valueZh: "10 人，可加购" },
+          { labelZh: "手动剪辑导出", labelEn: "Manual edit exports", valueZh: "150 次/月，1080p/4K，无水印", valueEn: "150/mo, 1080p/4K, no watermark" },
+          { labelZh: "创作者追踪", labelEn: "Creator tracking", valueZh: "不限，含联盟数据", valueEn: "Unlimited, incl. affiliate data" },
+          { labelZh: "团队席位", labelEn: "Team seats", valueZh: "10 人，最多加购 2 人", valueEn: "10 seats, up to 2 more addable" },
         ],
       },
       {
         titleZh: "AI 权益",
+        titleEn: "AI",
         rows: [
-          { labelZh: "AI 自动字幕", valueZh: "不限次" },
-          { labelZh: "趋势分析", valueZh: "完整 + 优先刷新" },
+          { labelZh: "AI 自动字幕", labelEn: "AI auto captions", valueZh: "不限次", valueEn: "Unlimited" },
+          { labelZh: "趋势分析", labelEn: "Trend analysis", valueZh: "完整 + 优先刷新", valueEn: "Full + priority refresh" },
         ],
       },
     ],
   },
 ];
 
-export const BILLING_CYCLES: { id: BillingCycle; labelZh: string; months: number; discount: number }[] = [
-  { id: "monthly", labelZh: "月付", months: 1, discount: 0 },
-  { id: "semiannual", labelZh: "半年付", months: 6, discount: 0.15 },
-  { id: "annual", labelZh: "年付", months: 12, discount: 0.2 },
+export const BILLING_CYCLES: { id: BillingCycle; labelZh: string; labelEn: string; months: number; discount: number }[] = [
+  { id: "monthly", labelZh: "月付", labelEn: "Monthly", months: 1, discount: 0 },
+  { id: "semiannual", labelZh: "半年付", labelEn: "6 months", months: 6, discount: 0.15 },
+  { id: "annual", labelZh: "年付", labelEn: "Annual", months: 12, discount: 0.2 },
 ];
 
 export function planById(id: string | null | undefined): PlanDef | undefined {

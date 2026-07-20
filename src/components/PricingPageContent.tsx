@@ -4,7 +4,9 @@ import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PLANS, BILLING_CYCLES, planCyclePrice, seatCyclePrice } from "@/lib/billing";
 import type { PlanId, BillingCycle } from "@/lib/types";
+import { useLocale } from "@/lib/i18n";
 import LogoutButton from "./LogoutButton";
+import LanguageToggle from "./LanguageToggle";
 
 // The gate every non-admin account has to clear before reaching the rest of
 // the app (see src/middleware.ts's billing check) — reachable either right
@@ -30,6 +32,37 @@ export default function PricingPageContent({
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") || "/";
+  const { locale } = useLocale();
+  const zh = locale === "zh";
+
+  // Small local copy table for the page chrome (headings, buttons, errors)
+  // — the plan/feature data itself lives in src/lib/billing.ts (nameZh/
+  // nameEn etc.) since that's shared with server-side validation; this is
+  // just page-only strings, so it doesn't need to go through the global
+  // translations.ts dictionary.
+  const copy = {
+    heading: zh ? "选择适合你的方案" : "Choose the plan that fits you",
+    subheading: zh
+      ? "解锁视频拆解、AI 脚本生成、分镜画布、手动剪辑等全部功能"
+      : "Unlock video breakdowns, AI script generation, storyboard canvas, and manual editing",
+    save: zh ? "省" : "Save ",
+    perMonth: zh ? "/月" : "/mo",
+    billedMonthly: zh ? "按月计费" : "Billed monthly",
+    billedTotal: (label: string, total: number) => (zh ? `${label}共 $${total}` : `${label} total $${total}`),
+    seatsLabel: (n: number) => (zh ? `额外席位（含 ${n} 个基础席位）` : `Extra seats (${n} included)`),
+    seatPricePerMonth: (p: number) => (zh ? `+$${p}/月/人` : `+$${p}/mo/seat`),
+    noExtraSeats: zh ? "不支持加购" : "Not addable",
+    noExtraSeatsTooltip: zh ? "该方案不支持加购子账号，仅旗舰版支持加购" : "This plan doesn't support extra seats — only Business does",
+    currentPlan: zh ? "当前方案" : "Current plan",
+    purchasing: zh ? "购买中…" : "Processing…",
+    switchPlan: zh ? "切换到此方案" : "Switch to this plan",
+    buyNow: zh ? "立即购买" : "Buy now",
+    footer: zh
+      ? "价格以美元计，随时可在此页面切换方案或调整席位。如需更大用量或专属功能，请联系我们定制方案。"
+      : "Prices in USD. Switch plans or adjust seats here anytime. Need more volume or custom features? Contact us.",
+    purchaseFailed: zh ? "购买失败，请重试" : "Purchase failed, please try again",
+    networkError: zh ? "网络错误，请重试" : "Network error, please try again",
+  };
 
   const [cycleId, setCycleId] = useState<BillingCycle>(currentBillingCycle || "annual");
   const [seatsByPlan, setSeatsByPlan] = useState<Record<PlanId, number>>({
@@ -62,14 +95,14 @@ export default function PricingPageContent({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || "购买失败，请重试");
+        setError(data.error || copy.purchaseFailed);
         setPurchasingPlan(null);
         return;
       }
       router.push(next);
       router.refresh();
     } catch {
-      setError("网络错误，请重试");
+      setError(copy.networkError);
       setPurchasingPlan(null);
     }
   }
@@ -77,12 +110,13 @@ export default function PricingPageContent({
   return (
     <div className="min-h-screen bg-ink py-10 px-4">
       <div className="max-w-6xl mx-auto">
-        <div className="flex justify-end mb-2">
+        <div className="flex justify-end items-center gap-2 mb-2">
+          <LanguageToggle />
           <LogoutButton />
         </div>
         <div className="text-center mb-8">
-          <h1 className="text-2xl md:text-3xl font-semibold text-zinc-900">选择适合你的方案</h1>
-          <p className="text-sm text-zinc-500 mt-2">解锁视频拆解、AI 脚本生成、分镜画布、手动剪辑等全部功能</p>
+          <h1 className="text-2xl md:text-3xl font-semibold text-zinc-900">{copy.heading}</h1>
+          <p className="text-sm text-zinc-500 mt-2">{copy.subheading}</p>
         </div>
 
         {/* billing cycle tabs */}
@@ -96,10 +130,10 @@ export default function PricingPageContent({
                   cycleId === c.id ? "bg-pawpink-500 text-white shadow" : "text-zinc-600 hover:text-zinc-900"
                 }`}
               >
-                {c.labelZh}
+                {zh ? c.labelZh : c.labelEn}
                 {c.discount > 0 && (
                   <span className={`ml-1.5 text-[10px] ${cycleId === c.id ? "text-white/80" : "text-pawpink-500"}`}>
-                    省{Math.round(c.discount * 100)}%
+                    {copy.save}{Math.round(c.discount * 100)}%
                   </span>
                 )}
               </button>
@@ -127,37 +161,35 @@ export default function PricingPageContent({
               >
                 <div className="px-5 pt-5 pb-4" style={{ background: `linear-gradient(135deg, ${plan.accent}, ${plan.accent}cc)` }}>
                   <div className="flex items-center justify-between">
-                    <span className="text-white font-semibold text-base">{plan.nameZh}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/20 text-white shrink-0">{plan.badgeZh}</span>
+                    <span className="text-white font-semibold text-base">{zh ? plan.nameZh : plan.nameEn}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/20 text-white shrink-0">{zh ? plan.badgeZh : plan.badgeEn}</span>
                   </div>
-                  <p className="text-white/80 text-xs mt-1">{plan.taglineZh}</p>
+                  <p className="text-white/80 text-xs mt-1">{zh ? plan.taglineZh : plan.taglineEn}</p>
                 </div>
 
                 <div className="px-5 pt-4">
                   <div className="flex items-baseline gap-1">
                     <span className="text-3xl font-bold text-zinc-900">${price.perMonth}</span>
-                    <span className="text-sm text-zinc-500">/月</span>
+                    <span className="text-sm text-zinc-500">{copy.perMonth}</span>
                   </div>
                   {cycle.discount > 0 ? (
                     <p className="text-xs text-zinc-400 mt-1">
                       <span className="line-through">${plan.monthlyUsd * cycle.months}</span>
                       <span className="ml-1.5 font-medium" style={{ color: plan.accent }}>
-                        {cycle.labelZh}共 ${price.total}
+                        {copy.billedTotal(zh ? cycle.labelZh : cycle.labelEn, price.total)}
                       </span>
                     </p>
                   ) : (
-                    <p className="text-xs text-zinc-400 mt-1">按月计费</p>
+                    <p className="text-xs text-zinc-400 mt-1">{copy.billedMonthly}</p>
                   )}
 
                   {/* extra-seat stepper */}
                   <div className="mt-4 flex items-center justify-between gap-2 rounded-lg border border-edge bg-panel px-3 py-2">
                     <div className="min-w-0">
-                      <p className="text-[11px] text-zinc-600 leading-snug">
-                        额外席位（含 {plan.seatsIncluded} 个基础席位）
-                      </p>
+                      <p className="text-[11px] text-zinc-600 leading-snug">{copy.seatsLabel(plan.seatsIncluded)}</p>
                       {plan.extraSeatAllowed && extraSeats > 0 && (
                         <p className="text-[11px] mt-0.5 font-medium" style={{ color: plan.accent }}>
-                          +${seatPrice.perMonth}/月/人
+                          {copy.seatPricePerMonth(seatPrice.perMonth)}
                         </p>
                       )}
                     </div>
@@ -182,11 +214,8 @@ export default function PricingPageContent({
                         </button>
                       </div>
                     ) : (
-                      <span
-                        className="text-[10.5px] text-zinc-400 shrink-0 text-right"
-                        title="该方案不支持加购子账号，升级到专业版即可加购"
-                      >
-                        不支持加购
+                      <span className="text-[10.5px] text-zinc-400 shrink-0 text-right" title={copy.noExtraSeatsTooltip}>
+                        {copy.noExtraSeats}
                       </span>
                     )}
                   </div>
@@ -195,12 +224,12 @@ export default function PricingPageContent({
                 <div className="px-5 py-4 flex-1">
                   {plan.sections.map((section) => (
                     <div key={section.titleZh} className="mb-3.5 last:mb-0">
-                      <p className="text-[11px] font-medium text-zinc-400 uppercase tracking-wide mb-1.5">{section.titleZh}</p>
+                      <p className="text-[11px] font-medium text-zinc-400 uppercase tracking-wide mb-1.5">{zh ? section.titleZh : section.titleEn}</p>
                       <ul className="space-y-1.5">
                         {section.rows.map((row) => (
                           <li key={row.labelZh} className="flex items-start justify-between gap-2 text-[13px]">
-                            <span className="text-zinc-600">{row.labelZh}</span>
-                            <span className="text-zinc-900 font-medium text-right">{row.valueZh}</span>
+                            <span className="text-zinc-600">{zh ? row.labelZh : row.labelEn}</span>
+                            <span className="text-zinc-900 font-medium text-right">{zh ? row.valueZh : row.valueEn}</span>
                           </li>
                         ))}
                       </ul>
@@ -216,13 +245,7 @@ export default function PricingPageContent({
                     className="w-full h-10 rounded-lg text-sm font-medium text-white disabled:opacity-60 transition-opacity"
                     style={{ background: isCurrent ? "#a1a1aa" : plan.accent }}
                   >
-                    {isCurrent
-                      ? "当前方案"
-                      : purchasingPlan === plan.id
-                        ? "购买中…"
-                        : planStatus === "active"
-                          ? "切换到此方案"
-                          : "立即购买"}
+                    {isCurrent ? copy.currentPlan : purchasingPlan === plan.id ? copy.purchasing : planStatus === "active" ? copy.switchPlan : copy.buyNow}
                   </button>
                 </div>
               </div>
@@ -230,9 +253,7 @@ export default function PricingPageContent({
           })}
         </div>
 
-        <p className="text-center text-[11px] text-zinc-400 mt-8">
-          价格以美元计，随时可在此页面切换方案或调整席位。如需更大用量或专属功能，请联系我们定制方案。
-        </p>
+        <p className="text-center text-[11px] text-zinc-400 mt-8">{copy.footer}</p>
       </div>
     </div>
   );
