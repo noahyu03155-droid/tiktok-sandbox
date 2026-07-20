@@ -128,6 +128,17 @@ interface BRollItem {
   track: number;
 }
 
+// Which corner of a B-roll's picture-in-picture box a resize handle grabs —
+// see beginBrollBoxResizeDrag. Four round handles (one per corner) replaced
+// the original single bottom-right square handle.
+type BoxCorner = "nw" | "ne" | "sw" | "se";
+const CORNER_HANDLE_POS: Record<BoxCorner, React.CSSProperties> = {
+  nw: { top: 0, left: 0, transform: "translate(-50%,-50%)", cursor: "nwse-resize" },
+  ne: { top: 0, right: 0, transform: "translate(50%,-50%)", cursor: "nesw-resize" },
+  sw: { bottom: 0, left: 0, transform: "translate(-50%,50%)", cursor: "nesw-resize" },
+  se: { bottom: 0, right: 0, transform: "translate(50%,50%)", cursor: "nwse-resize" },
+};
+
 // A single background-music slot — spans the whole render (looped/trimmed to
 // match the final duration server-side) rather than being placed at a
 // specific point, since that's how virtually every short-form editor treats
@@ -938,8 +949,10 @@ export default function ManualEditModal({
   // helpers above, which drag the block along the TIMELINE (when it plays).
   // These instead drag it WITHIN THE PREVIEW FRAME (where on screen it
   // shows), converting pixel deltas to 0-1 canvas fractions via the preview
-  // frame's own measured size. Top-left anchored: move only changes
-  // boxX/boxY, resize (bottom-right handle) only changes boxW/boxH.
+  // frame's own measured size. Move drags the whole box (changes boxX/boxY
+  // only); resize is now available from ALL FOUR corners (previously just
+  // bottom-right) — each one keeps the OPPOSITE corner anchored in place
+  // while it drags, same as every other editor's corner-resize convention.
   const MIN_BOX_FRAC = 0.12;
   function beginBrollBoxMoveDrag(b: BRollItem) {
     return (e: React.MouseEvent) => {
@@ -968,7 +981,7 @@ export default function ManualEditModal({
       window.addEventListener("mouseup", onUp);
     };
   }
-  function beginBrollBoxResizeDrag(b: BRollItem) {
+  function beginBrollBoxResizeDrag(b: BRollItem, corner: BoxCorner) {
     return (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -978,14 +991,38 @@ export default function ManualEditModal({
       const rect = frame.getBoundingClientRect();
       const startX = e.clientX;
       const startY = e.clientY;
+      const startBoxX = b.boxX;
+      const startBoxY = b.boxY;
       const startW = b.boxW;
       const startH = b.boxH;
+      // The corner OPPOSITE the one being dragged stays fixed — e.g.
+      // dragging "se" (bottom-right) keeps the top-left corner anchored
+      // (the original, only-supported behavior); dragging "nw" now keeps
+      // the bottom-right corner anchored instead, and so on.
+      const anchorRight = startBoxX + startW;
+      const anchorBottom = startBoxY + startH;
       function onMove(ev: MouseEvent) {
         const dxFrac = (ev.clientX - startX) / rect.width;
         const dyFrac = (ev.clientY - startY) / rect.height;
-        const nextW = Math.max(MIN_BOX_FRAC, Math.min(1 - b.boxX, startW + dxFrac));
-        const nextH = Math.max(MIN_BOX_FRAC, Math.min(1 - b.boxY, startH + dyFrac));
-        updateBroll(b.id, { boxW: nextW, boxH: nextH });
+        let nextX = startBoxX;
+        let nextY = startBoxY;
+        let nextW = startW;
+        let nextH = startH;
+        if (corner === "se" || corner === "ne") {
+          nextW = Math.max(MIN_BOX_FRAC, Math.min(1 - startBoxX, startW + dxFrac));
+        } else {
+          const rawX = Math.min(anchorRight - MIN_BOX_FRAC, Math.max(0, startBoxX + dxFrac));
+          nextX = rawX;
+          nextW = anchorRight - rawX;
+        }
+        if (corner === "se" || corner === "sw") {
+          nextH = Math.max(MIN_BOX_FRAC, Math.min(1 - startBoxY, startH + dyFrac));
+        } else {
+          const rawY = Math.min(anchorBottom - MIN_BOX_FRAC, Math.max(0, startBoxY + dyFrac));
+          nextY = rawY;
+          nextH = anchorBottom - rawY;
+        }
+        updateBroll(b.id, { boxX: nextX, boxY: nextY, boxW: nextW, boxH: nextH });
       }
       function onUp() {
         window.removeEventListener("mousemove", onMove);
@@ -1738,16 +1775,63 @@ export default function ManualEditModal({
                         {isActive && b.kind === "image" && (
                           <img src={b.url} className="w-full h-full object-cover" alt={b.label} />
                         )}
-                        {isSelected && (
-                          <div
-                            onMouseDown={beginBrollBoxResizeDrag(b)}
-                            className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-nwse-resize"
-                            style={{ background: "#a78bfa", borderTopLeftRadius: 3, boxShadow: "0 0 6px rgba(167,139,250,0.9)" }}
-                          />
-                        )}
+                        {isSelected &&
+                          (Object.keys(CORNER_HANDLE_POS) as BoxCorner[]).map((corner) => (
+                            <div
+                              key={corner}
+                              onMouseDown={beginBrollBoxResizeDrag(b, corner)}
+                              className="absolute w-3 h-3 rounded-full"
+                              style={{
+                                ...CORNER_HANDLE_POS[corner],
+                                background: "#a78bfa",
+                                border: "1.5px solid white",
+                                boxShadow: "0 0 6px rgba(167,139,250,0.9)",
+                              }}
+                            />
+                          ))}
                       </div>
                     );
                   })}
+
+                {/* Text overlays — rendered LAST (highest in DOM order, and
+                    z-30 vs B-roll's z-20) so captions always sit on top of
+                    everything else, matching what the export actually
+                    burns in. Previously these were only ever drawn into the
+                    exported MP4 (see storyboardRender.ts's drawtext pass)
+                    and never shown in the live preview at all, which is why
+                    they appeared to not exist while editing. Position/size/
+                    bold/color mirror the export's own conventions (top/
+                    center/bottom anchoring, small/medium/large sizing) —
+                    exact pixel parity with the server's fontsize isn't
+                    attempted here, just the same relative proportions. */}
+                {overlays.map((o) => {
+                  const itemIndex = items.findIndex((it) => it.id === o.itemId);
+                  if (itemIndex === -1 || !o.text.trim()) return null;
+                  const base = offsetOfItem(items, itemIndex);
+                  const absStart = base + o.startSec;
+                  const absEnd = base + o.endSec;
+                  if (playheadSec < absStart - 0.02 || playheadSec >= absEnd + 0.02) return null;
+                  return (
+                    <div
+                      key={o.id}
+                      className="absolute left-1/2 -translate-x-1/2 z-30 px-2.5 py-1 rounded text-center pointer-events-none"
+                      style={{
+                        top: o.position === "top" ? "6%" : o.position === "center" ? "50%" : undefined,
+                        bottom: o.position === "bottom" ? "8%" : undefined,
+                        transform: o.position === "center" ? "translate(-50%,-50%)" : "translateX(-50%)",
+                        maxWidth: "88%",
+                        background: "rgba(0,0,0,0.55)",
+                        color: o.color || "#ffffff",
+                        fontWeight: o.bold ? 700 : 500,
+                        fontSize: o.size === "small" ? "clamp(10px, 3.1vw, 26px)" : o.size === "large" ? "clamp(15px, 5.4vw, 46px)" : "clamp(12px, 4vw, 34px)",
+                        lineHeight: 1.25,
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {o.text}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
