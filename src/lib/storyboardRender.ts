@@ -1038,7 +1038,12 @@ function buildBrollFilterComplex(
     const boxHpx = Math.max(2, Math.round(seg.boxH * H));
     const boxXpx = Math.round(seg.boxX * W);
     const boxYpx = Math.round(seg.boxY * H);
-    const segScalePad = `scale=${boxWpx}:${boxHpx}:force_original_aspect_ratio=decrease,pad=${boxWpx}:${boxHpx}:(ow-iw)/2:(oh-ih)/2,fps=${FPS}`;
+    // setpts=PTS-STARTPTS+absStart/TB does the timestamp shift that used to
+    // be `-itsoffset` on the input: normalize the (possibly -ss'd) input's
+    // own timestamps back to 0, then slide them to open exactly at
+    // absStart — done deterministically inside the graph, immune to
+    // input-option ordering quirks across ffmpeg builds.
+    const segScalePad = `scale=${boxWpx}:${boxHpx}:force_original_aspect_ratio=decrease,pad=${boxWpx}:${boxHpx}:(ow-iw)/2:(oh-ih)/2,fps=${FPS},setpts=PTS-STARTPTS+${seg.absStart.toFixed(2)}/TB`;
     parts.push(`[${inIdx}:v]${segScalePad}[${brollPad}]`);
     parts.push(
       `[${cur}][${brollPad}]overlay=${boxXpx}:${boxYpx}:enable='between(t\\,${seg.absStart.toFixed(2)}\\,${seg.absEnd.toFixed(2)})'[${overlayPad}]`
@@ -1196,6 +1201,13 @@ export function startManualRenderJob(
         // clamped to it and re-expressed in the clip's own absolute-source
         // time (0 = clip's untrimmed source start — see manualCaptionFilter's
         // doc comment for why that's the basis `enable=between(t,...)` needs).
+        // `seekInto` — how far into the B-roll's OWN source this clip's
+        // overlap begins. For the FIRST clip a B-roll touches that's just
+        // its trim-in; for a B-roll SPANNING a cut, the next clip's segment
+        // must continue from wherever the previous one left off
+        // (trimStart + however much already played), not restart from the
+        // B-roll's beginning — which is what the old code (plain
+        // b.trimStart) wrongly did.
         const brollHits = broll
           .map((b) => {
             const overlapStart = Math.max(b.startSec, clipStart);
@@ -1205,11 +1217,12 @@ export function startManualRenderJob(
               b,
               absStart: clipTrimStart + (overlapStart - clipStart),
               absEnd: clipTrimStart + (overlapEnd - clipStart),
+              seekInto: b.kind === "video" ? b.trimStart + (overlapStart - b.startSec) : 0,
             };
           })
-          .filter((h): h is { b: ManualEditBRollInput; absStart: number; absEnd: number } => h !== null);
+          .filter((h): h is { b: ManualEditBRollInput; absStart: number; absEnd: number; seekInto: number } => h !== null);
         // Cap each VIDEO B-roll hit's visible window to however much of its
-        // own source footage actually exists past its trim-in point — a
+        // own source footage actually exists past its seek-in point — a
         // duration dragged out further than the source's real length would
         // otherwise leave the overlay filter waiting on frames that were
         // never going to arrive.
@@ -1219,25 +1232,46 @@ export function startManualRenderJob(
           if (!brollSrc || !fs.existsSync(brollSrc)) continue;
           const srcDur = await probeDurationSec(brollSrc);
           if (srcDur > 0) {
-            const available = Math.max(0.3, srcDur - hit.b.trimStart);
+            const available = Math.max(0.3, srcDur - hit.seekInto);
             hit.absEnd = Math.min(hit.absEnd, hit.absStart + available);
           }
         }
-        const validHits = brollHits.filter((h) => {
+        // A dropped B-roll must NEVER be silent — the exact failure the
+        // user hit was an export that quietly shipped without the overlay
+        // they'd placed, with nothing telling them why. Anything that can't
+        // be composited goes into `skipped`, which rides along on
+        // job.result and gets surfaced in the editor UI after the export.
+        const validHits: typeof brollHits = [];
+        for (const h of brollHits) {
           const p = mediaPathFromUrl(h.b.url);
-          return !!p && fs.existsSync(p) && h.absEnd - h.absStart > 0.05;
-        });
+          if (!p || !fs.existsSync(p)) {
+            skipped.push(`B-roll "${h.b.label || "untitled"}" (file missing on server)`);
+            continue;
+          }
+          if (h.absEnd - h.absStart <= 0.05) {
+            skipped.push(`B-roll "${h.b.label || "untitled"}" (no usable footage in its window)`);
+            continue;
+          }
+          validHits.push(h);
+        }
+        if (validHits.length > 0) {
+          job.step = `Encoding clip ${i + 1} of ${clips.length} (+${validHits.length} B-roll overlay${validHits.length > 1 ? "s" : ""})...`;
+        }
         const brollInputArgs: string[] = [];
         validHits.forEach((hit) => {
           const brollSrc = mediaPathFromUrl(hit.b.url)!;
           if (hit.b.kind === "image") {
-            brollInputArgs.push("-loop", "1", "-itsoffset", hit.absStart.toFixed(3), "-i", brollSrc);
+            brollInputArgs.push("-loop", "1", "-i", brollSrc);
           } else {
-            // -itsoffset delays this input's OWN presented timestamps so it
-            // starts showing ITS OWN frame 0 exactly when the overlay window
-            // opens, rather than already being `absStart` seconds into
-            // itself the moment it becomes visible.
-            brollInputArgs.push("-ss", String(hit.b.trimStart), "-itsoffset", hit.absStart.toFixed(3), "-i", brollSrc);
+            // Plain input seek only — the shift that used to be done here
+            // with `-itsoffset` now happens INSIDE the filter graph via
+            // setpts (see buildBrollFilterComplex), which behaves
+            // identically across ffmpeg versions/builds; -itsoffset's
+            // interaction with input -ss and framesync'd overlay inputs is
+            // exactly the kind of version-sensitive input-option stacking
+            // that can make an overlay silently never show up on one
+            // machine while working on another.
+            brollInputArgs.push("-ss", hit.seekInto.toFixed(3), "-i", brollSrc);
           }
         });
 
@@ -1406,7 +1440,9 @@ export function startManualRenderJob(
         }
       }
 
-      job.result = { url: `${publicUrlPrefix}/manual-render.mp4`, skipped, styleApplied: null, appliedFeedback: null };
+      // Dedupe: a B-roll spanning several clips reports the same problem
+      // once per clip it touches — one line in the UI is enough.
+      job.result = { url: `${publicUrlPrefix}/manual-render.mp4`, skipped: Array.from(new Set(skipped)), styleApplied: null, appliedFeedback: null };
       job.status = "done";
       job.step = "Done";
       job.finishedAt = new Date().toISOString();

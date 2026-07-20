@@ -491,6 +491,16 @@ export default function ManualEditModal({
   // shrink the editor out of the way, and keep working on other videos on
   // the page behind it while ffmpeg grinds server-side.
   const [minimized, setMinimized] = useState(false);
+  // Anything the server couldn't composite into the last export (missing
+  // B-roll file, empty window, ...) — surfaced loudly in the Result tab
+  // instead of the old behavior of shipping a video that silently lacked
+  // pieces the user had placed.
+  const [exportSkipped, setExportSkipped] = useState<string[]>([]);
+  // Which pane the right-hand panel shows — Properties (contextual
+  // editing controls), the full Script reference, or the finished export.
+  // Freely switchable any time; auto-jumps to "result" when an export
+  // starts/finishes so the outcome is impossible to miss.
+  const [rightTab, setRightTab] = useState<"props" | "script" | "result">("props");
 
   // ---- Undo history — snapshot-based (simplest correct approach given how
   // many independent state slices a single action can touch — e.g. split
@@ -1382,6 +1392,11 @@ export default function ManualEditModal({
       if (job.result) {
         const url = `${job.result.url}?t=${Date.now()}`;
         setExportResult({ url });
+        // Anything the render couldn't include (e.g. a B-roll whose file
+        // was missing server-side) — shown in the Result tab so a partial
+        // export is never mistaken for a complete one.
+        setExportSkipped(Array.isArray(job.result.skipped) ? job.result.skipped : []);
+        setRightTab("result");
         // Auto-save into "Your Works" (src/app/favorites 3rd tab) — same
         // fire-and-forget treatment as the AI-render path in
         // StoryboardCanvas.tsx's applyRenderJob. Title falls back to the
@@ -1419,12 +1434,28 @@ export default function ManualEditModal({
       setExportError("Add at least one clip to the timeline first.");
       return;
     }
+    // A B-roll sitting on a hidden track is deliberately excluded from the
+    // export (hiding = "pretend this track doesn't exist") — but that must
+    // be a CONFIRMED choice, not a silent surprise discovered after the
+    // render. This is the guard for the accidental-hide case: the eye
+    // toggles used to be tiny enough to mis-click without noticing.
+    const hiddenBrollCount = broll.filter((b) => trackHidden[b.track]).length;
+    if (
+      hiddenBrollCount > 0 &&
+      !window.confirm(
+        `${hiddenBrollCount} B-roll clip${hiddenBrollCount > 1 ? "s are" : " is"} on a hidden track and will NOT be included in the export. Export without ${hiddenBrollCount > 1 ? "them" : "it"}? (Cancel, then click the eye icon next to the track to un-hide.)`
+      )
+    ) {
+      return;
+    }
     stopPlayback();
     setPlaying(false);
     setExporting(true);
     setExportError(null);
     setExportResult(null);
     setExportProgress(null);
+    setExportSkipped([]);
+    setRightTab("result");
     stopPoll();
     try {
       const clips = items.map((it) => ({
@@ -2372,9 +2403,88 @@ export default function ManualEditModal({
 
           {/* Inspector */}
           <div className="w-72 shrink-0 border-l border-white/10 flex flex-col min-h-0">
-            <div className="px-3 py-2.5 text-[10px] uppercase tracking-widest text-slate-500 font-medium shrink-0 border-b border-white/5">⚙️ Properties</div>
+            {/* Tab bar — Properties / Script always available, Result
+                appears once an export has started so progress + the
+                finished video have a permanent home the user can flip to
+                and from (the request behind this: after exporting, the
+                result and the script should be side-by-side switchable,
+                not the result squatting under the properties). */}
+            <div className="flex items-stretch shrink-0 border-b border-white/5">
+              {(["props", "script", "result"] as const).map((tab) => {
+                if (tab === "result" && !exporting && !exportResult && !exportError) return null;
+                const active = rightTab === tab;
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setRightTab(tab)}
+                    className="flex-1 px-2 py-2.5 text-[10px] uppercase tracking-widest font-medium transition-colors"
+                    style={{
+                      color: active ? "#22d3ee" : "#64748b",
+                      borderBottom: active ? "2px solid #22d3ee" : "2px solid transparent",
+                      background: active ? "rgba(34,211,238,0.04)" : "transparent",
+                    }}
+                  >
+                    {tab === "props" ? "⚙️ Properties" : tab === "script" ? "📝 Script" : "🎬 Result"}
+                  </button>
+                );
+              })}
+            </div>
             <div className="flex-1 overflow-y-auto p-3">
-              {musicSelected && !selected && !selectedBrollId && music ? (
+              {rightTab === "script" ? (
+                items.length === 0 ? (
+                  <p className="text-xs text-slate-500">Add clips to the timeline first — each shot&apos;s script text will show here.</p>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {items.map((it, i) => (
+                      <div key={it.id} className="rounded-lg p-2.5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                        <p className="text-[10.5px] text-cyan-300/90 font-medium mb-1 truncate">
+                          {i + 1}. {it.label}
+                        </p>
+                        <p className="text-[11px] text-slate-400 leading-relaxed whitespace-pre-wrap">
+                          {it.script?.trim() || "(no script text for this shot)"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : rightTab === "result" ? (
+                <div className="flex flex-col gap-3">
+                  {exporting && (
+                    <p className="text-[11px] text-slate-400">
+                      {exportProgress && exportProgress.totalShots > 0
+                        ? `Exporting ${exportProgress.completedShots}/${exportProgress.totalShots}… ${exportProgress.step || ""}`
+                        : "Starting export…"}
+                    </p>
+                  )}
+                  {!exporting && exportError && <p className="text-[11px] text-rose-400">{exportError}</p>}
+                  {!exporting && !exportResult && !exportError && (
+                    <p className="text-[11px] text-slate-500">No export yet — hit Export in the top-right and the finished video will land here.</p>
+                  )}
+                  {exportResult && (
+                    <>
+                      <video src={exportResult.url} controls className="w-full rounded-lg" style={{ border: "1px solid rgba(255,255,255,0.1)" }} />
+                      <a
+                        href={exportResult.url}
+                        download
+                        className="text-[11px] px-3 py-1.5 rounded-lg text-cyan-300 hover:text-cyan-200 transition-colors self-start"
+                        style={{ background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)" }}
+                      >
+                        ⬇ Download
+                      </a>
+                    </>
+                  )}
+                  {exportSkipped.length > 0 && (
+                    <div className="rounded-lg p-2.5" style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.3)" }}>
+                      <p className="text-[10.5px] text-amber-300 font-medium mb-1">⚠ Not included in this export:</p>
+                      {exportSkipped.map((s) => (
+                        <p key={s} className="text-[10.5px] text-amber-200/80 leading-relaxed">
+                          • {s}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : musicSelected && !selected && !selectedBrollId && music ? (
                 <div className="flex flex-col gap-3">
                   <div>
                     <span className="text-sm text-slate-100 font-medium block truncate">🎵 {music.label}</span>
@@ -2622,11 +2732,6 @@ export default function ManualEditModal({
                 </div>
               )}
             </div>
-            {exportResult && (
-              <div className="p-3 border-t border-white/10 shrink-0">
-                <video src={exportResult.url} controls className="w-full rounded-lg" style={{ border: "1px solid rgba(255,255,255,0.1)" }} />
-              </div>
-            )}
           </div>
         </div>
       </div>
