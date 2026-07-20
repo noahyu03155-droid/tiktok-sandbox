@@ -262,11 +262,12 @@ function SwapIcon() {
     </svg>
   );
 }
-// ---- per-track (lock/hide/mute) icons — tiny, sit in the narrow fixed
-// header column to the left of each B-roll track row (see brollTrackTop). ----
+// ---- per-track (lock/hide/mute) icons — sit in the fixed header column to
+// the left of each B-roll track row (see brollTrackTop). 12px, up from an
+// original 7px the user reported as unreadably small. ----
 function LockIcon() {
   return (
-    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3.5" y="7" width="9" height="7" rx="1.2" />
       <path d="M5.5 7V4.5a2.5 2.5 0 0 1 5 0V7" />
     </svg>
@@ -274,7 +275,7 @@ function LockIcon() {
 }
 function UnlockIcon() {
   return (
-    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3.5" y="7" width="9" height="7" rx="1.2" />
       <path d="M5.5 7V4.5a2.5 2.5 0 0 1 4.7-1.2" />
     </svg>
@@ -282,7 +283,7 @@ function UnlockIcon() {
 }
 function EyeIcon() {
   return (
-    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
       <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" />
       <circle cx="8" cy="8" r="1.8" />
     </svg>
@@ -290,7 +291,7 @@ function EyeIcon() {
 }
 function EyeOffIcon() {
   return (
-    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
       <path d="M2 2l12 12" />
       <path d="M6.6 4.1A6.6 6.6 0 0 1 8 3.5c4 0 6.5 4.5 6.5 4.5a11.6 11.6 0 0 1-2.3 2.9M4.2 4.9A11.7 11.7 0 0 0 1.5 8s2.5 4.5 6.5 4.5c.9 0 1.7-.2 2.5-.5" />
     </svg>
@@ -298,7 +299,7 @@ function EyeOffIcon() {
 }
 function VolumeIcon() {
   return (
-    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
       <path d="M2 6h2.5L8 3v10L4.5 10H2z" fill="currentColor" stroke="none" />
       <path d="M10.5 5.5a4 4 0 0 1 0 5" />
     </svg>
@@ -306,7 +307,7 @@ function VolumeIcon() {
 }
 function MuteIcon() {
   return (
-    <svg width="7" height="7" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
       <path d="M2 6h2.5L8 3v10L4.5 10H2z" fill="currentColor" stroke="none" />
       <path d="M10.5 6l3 4M13.5 6l-3 4" />
     </svg>
@@ -483,6 +484,13 @@ export default function ManualEditModal({
   const [exportResult, setExportResult] = useState<{ url: string } | null>(null);
   const [exportProgress, setExportProgress] = useState<{ completedShots: number; totalShots: number; step: string } | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Minimize-to-pill — hides the fullscreen overlay (display:none, NOT
+  // unmount, so every state slice, the hidden <video> probes, and the
+  // export poll timer all keep running) and shows a small floating pill
+  // with live export progress instead. Lets the user kick off an export,
+  // shrink the editor out of the way, and keep working on other videos on
+  // the page behind it while ffmpeg grinds server-side.
+  const [minimized, setMinimized] = useState(false);
 
   // ---- Undo history — snapshot-based (simplest correct approach given how
   // many independent state slices a single action can touch — e.g. split
@@ -1502,7 +1510,8 @@ export default function ManualEditModal({
   }, [items, binClips]);
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 p-3 md:p-6 flex items-center justify-center">
+    <>
+    <div className={`fixed inset-0 bg-black/80 backdrop-blur-sm z-50 p-3 md:p-6 items-center justify-center ${minimized ? "hidden" : "flex"}`}>
       <div
         className="w-full h-full rounded-2xl flex flex-col overflow-hidden border border-white/10"
         style={{
@@ -1552,6 +1561,23 @@ export default function ManualEditModal({
               style={{ background: "linear-gradient(135deg, #22d3ee, #6366f1)", boxShadow: "0 4px 16px -4px rgba(99,102,241,0.6)" }}
             >
               {exporting ? (exportProgress && exportProgress.totalShots > 0 ? `Exporting ${exportProgress.completedShots}/${exportProgress.totalShots}...` : "Starting...") : "Export"}
+            </button>
+            {/* Minimize — collapse to a floating progress pill so the user
+                can keep using the page (e.g. start editing another video)
+                while an export runs. Playback is stopped first so a hidden
+                <video> doesn't keep narrating from off-screen. */}
+            <button
+              onClick={() => {
+                stopPlayback();
+                setPlaying(false);
+                setMinimized(true);
+              }}
+              title="Minimize — keep exporting in the background"
+              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-200 hover:bg-white/5 transition-colors"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <path d="M3 12.5h10" />
+              </svg>
             </button>
             <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-200 hover:bg-white/5 text-base leading-none transition-colors">
               ✕
@@ -1904,7 +1930,7 @@ export default function ManualEditModal({
                   scrolling track div below, so it stays put while the user
                   scrolls a long timeline left/right. */}
               {items.length > 0 && (
-                <div className="relative shrink-0" style={{ width: 24, height: "100%" }}>
+                <div className="relative shrink-0" style={{ width: 56, height: "100%" }}>
                   {Array.from({ length: NUM_BROLL_TRACKS }, (_, track) => (
                     <div
                       key={track}
@@ -1919,7 +1945,7 @@ export default function ManualEditModal({
                       <button
                         onClick={() => toggleTrackLocked(track)}
                         title={trackLocked[track] ? "Unlock this B-roll track" : "Lock this B-roll track (blocks new drops/edits)"}
-                        className="transition-colors"
+                        className="transition-colors flex items-center justify-center w-4 h-4 rounded hover:bg-white/10"
                         style={{ color: trackLocked[track] ? "#fbbf24" : "#64748b" }}
                       >
                         {trackLocked[track] ? <LockIcon /> : <UnlockIcon />}
@@ -1927,7 +1953,7 @@ export default function ManualEditModal({
                       <button
                         onClick={() => toggleTrackHidden(track)}
                         title={trackHidden[track] ? "Show this B-roll track" : "Hide this B-roll track (skips it in preview + export)"}
-                        className="transition-colors"
+                        className="transition-colors flex items-center justify-center w-4 h-4 rounded hover:bg-white/10"
                         style={{ color: trackHidden[track] ? "#f87171" : "#64748b" }}
                       >
                         {trackHidden[track] ? <EyeOffIcon /> : <EyeIcon />}
@@ -1935,7 +1961,7 @@ export default function ManualEditModal({
                       <button
                         onClick={() => toggleTrackMuted(track)}
                         title={trackMuted[track] ? "Unmute this track's preview audio" : "Mute this track's preview audio (preview-only — B-roll audio isn't mixed into the export)"}
-                        className="transition-colors"
+                        className="transition-colors flex items-center justify-center w-4 h-4 rounded hover:bg-white/10"
                         style={{ color: trackMuted[track] ? "#f87171" : "#64748b" }}
                       >
                         {trackMuted[track] ? <MuteIcon /> : <VolumeIcon />}
@@ -2605,5 +2631,53 @@ export default function ManualEditModal({
         </div>
       </div>
     </div>
+      {/* ---- minimized floating pill — the whole modal stays mounted above
+          (just display:none via the root's `hidden` class), so export
+          polling, all edit state, and the hidden <video> probes keep
+          running; this pill shows the export's live progress. Clicking
+          anywhere on it restores the full editor. Sits OUTSIDE the hidden
+          root (sibling in the fragment) so it stays visible while the
+          overlay is display:none. ---- */}
+      {minimized && (
+        <div
+          onClick={() => setMinimized(false)}
+          title="Restore Manual Edit"
+          className="fixed bottom-5 right-5 z-50 flex items-center gap-2.5 pl-2.5 pr-4 py-2.5 rounded-full cursor-pointer border border-white/15 hover:border-cyan-400/50 transition-colors"
+          style={{
+            background: "linear-gradient(160deg, #0c1120, #0a0e1a)",
+            boxShadow: "0 8px 30px -8px rgba(0,0,0,0.8), 0 0 24px -8px rgba(56,189,248,0.35)",
+          }}
+        >
+          <span
+            className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
+            style={{ background: "linear-gradient(135deg, #22d3ee, #6366f1)" }}
+          >
+            {exporting ? (
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" className="animate-spin">
+                <path d="M8 1.5a6.5 6.5 0 1 1-6.5 6.5" />
+              </svg>
+            ) : (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                <circle cx="6" cy="6" r="2.4" stroke="white" strokeWidth="1.7" />
+                <circle cx="6" cy="18" r="2.4" stroke="white" strokeWidth="1.7" />
+                <path d="M8 7.5L20 17" stroke="white" strokeWidth="1.7" strokeLinecap="round" />
+                <path d="M8 16.5L20 7" stroke="white" strokeWidth="1.7" strokeLinecap="round" />
+              </svg>
+            )}
+          </span>
+          <span className="text-xs text-slate-200 font-medium whitespace-nowrap">
+            {exporting
+              ? exportProgress && exportProgress.totalShots > 0
+                ? `Exporting ${exportProgress.completedShots}/${exportProgress.totalShots}…`
+                : "Exporting…"
+              : exportError
+                ? "Export failed — click to reopen"
+                : exportResult
+                  ? "Export done ✓ — click to open"
+                  : "Manual Edit — click to reopen"}
+          </span>
+        </div>
+      )}
+    </>
   );
 }

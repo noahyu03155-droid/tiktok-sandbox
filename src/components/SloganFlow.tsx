@@ -11,26 +11,37 @@
 // HeaderBar's shorter appTagline already does that job.
 const STEPS = ["Create", "Optimize", "Trend", "Operate", "Result"];
 
-// Sized as a bold statement piece, not a footnote: "md" (landing hero) is
-// display-scale, "sm" (login card / pricing) is still prominently large —
-// the user explicitly asked for this after an earlier, tiny version felt
-// like fine print rather than the brand's signature line.
+// Sized as a bold statement piece, not a footnote — but ALWAYS on a single
+// line (the user explicitly asked for both). Fixed Tailwind text sizes
+// can't guarantee that, because this renders in wildly different widths
+// (narrow max-w-sm login card vs. full-width landing hero), so the font
+// size is fluid: container-query units (cqw) scale the text to whatever
+// width the parent actually has, with clamp() keeping it inside sane
+// min/max bounds. The whole 5-word + 4-arrow row measures ~26em, so
+// 3.6cqw fits it with a small margin at ANY container width. Gaps and
+// arrows are em-based so they shrink/grow with the text.
 export default function SloganFlow({ size = "md", className = "" }: { size?: "sm" | "md"; className?: string }) {
-  const text = size === "sm" ? "text-lg sm:text-xl" : "text-2xl sm:text-4xl";
-  const gap = size === "sm" ? "gap-2" : "gap-2.5 sm:gap-4";
-  const arrow = size === "sm" ? "text-base" : "text-xl sm:text-2xl";
+  const fontSize =
+    size === "sm" ? "clamp(0.72rem, 3.6cqw, 1.35rem)" : "clamp(0.9rem, 3.6cqw, 2.1rem)";
   return (
-    <div className={`flex items-center justify-center flex-wrap ${gap} ${className}`}>
-      {STEPS.map((step, i) => (
-        <div key={step} className="flex items-center gap-2 sm:gap-2.5">
-          <span
-            className={`${text} font-bold tracking-tight bg-gradient-to-r from-brand-500 via-sky-400 to-purple-500 bg-clip-text text-transparent whitespace-nowrap`}
-          >
-            {step}
-          </span>
-          {i < STEPS.length - 1 && <span className={`${arrow} text-zinc-400`}>→</span>}
-        </div>
-      ))}
+    <div className={`w-full ${className}`} style={{ containerType: "inline-size" }}>
+      <div
+        className="flex items-center justify-center flex-nowrap whitespace-nowrap"
+        style={{ fontSize, gap: "0.5em" }}
+      >
+        {STEPS.map((step, i) => (
+          <div key={step} className="flex items-center" style={{ gap: "0.5em" }}>
+            <span className="font-bold tracking-tight bg-gradient-to-r from-brand-500 via-sky-400 to-purple-500 bg-clip-text text-transparent">
+              {step}
+            </span>
+            {i < STEPS.length - 1 && (
+              <span className="text-zinc-400" style={{ fontSize: "0.8em" }}>
+                →
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
