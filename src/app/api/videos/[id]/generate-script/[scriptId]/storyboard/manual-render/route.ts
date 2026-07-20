@@ -31,6 +31,9 @@ export async function POST(
   const broll: ManualEditBRollInput[] = Array.isArray(body?.broll) ? body.broll : [];
   const music: ManualEditMusicInput | null =
     body?.music && typeof body.music.url === "string" ? { url: body.music.url, volume: Number(body.music.volume) || 0 } : null;
+  // Mirror of the creation route: user-chosen export name → sanitized,
+  // timestamped output filename (see safeExportFilename).
+  const outputName = typeof body?.outputName === "string" ? body.outputName : undefined;
 
   const outDir = path.join(getMediaDir(), "storyboard", params.scriptId);
   const { job } = startManualRenderJob(
@@ -41,7 +44,8 @@ export async function POST(
     broll,
     music,
     outDir,
-    `/api/media/storyboard/${params.scriptId}`
+    `/api/media/storyboard/${params.scriptId}`,
+    outputName
   );
   return NextResponse.json({ job });
 }

@@ -501,6 +501,17 @@ export default function ManualEditModal({
   // Freely switchable any time; auto-jumps to "result" when an export
   // starts/finishes so the outcome is impossible to miss.
   const [rightTab, setRightTab] = useState<"props" | "script" | "result">("props");
+  // Pre-export / pre-download naming dialog — the user names every export
+  // (becomes the server-side filename + the Works title) and every
+  // download (becomes the saved file's name). Server side, the name gets a
+  // timestamp suffix so re-using a name can never overwrite an earlier
+  // export's file.
+  const [nameDialog, setNameDialog] = useState<null | "export" | "download">(null);
+  const [exportName, setExportName] = useState("");
+  // What the LAST started export was named — read inside applyJob (fires
+  // from a poll-timer closure) when auto-saving into Works, so the saved
+  // title always matches the name the user actually typed.
+  const exportNameRef = useRef<string>("");
 
   // ---- Undo history — snapshot-based (simplest correct approach given how
   // many independent state slices a single action can touch — e.g. split
@@ -1405,7 +1416,7 @@ export default function ManualEditModal({
         fetch("/api/works", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url, title: items[0]?.label || "Manual edit", source: "manual-edit" }),
+          body: JSON.stringify({ url, title: exportNameRef.current || items[0]?.label || "Manual edit", source: "manual-edit" }),
         }).catch(() => {});
       } else {
         setExportResult(null);
@@ -1429,11 +1440,36 @@ export default function ManualEditModal({
     }
   }
 
-  async function handleExport() {
+  // Kicks off the naming dialog rather than exporting straight away — the
+  // actual export happens in handleExport once a name is confirmed.
+  function requestExport() {
     if (items.length === 0) {
       setExportError("Add at least one clip to the timeline first.");
       return;
     }
+    setExportName((cur) => cur || items[0]?.label || "My video");
+    setNameDialog("export");
+  }
+
+  // Saves the finished export to the user's computer under a name of their
+  // choosing (same dialog as export) — the `download` attribute renames
+  // the file client-side, no server round-trip needed.
+  function downloadResult(name: string) {
+    if (!exportResult) return;
+    const a = document.createElement("a");
+    a.href = exportResult.url;
+    a.download = `${name.trim() || "video"}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  async function handleExport(outputName: string) {
+    if (items.length === 0) {
+      setExportError("Add at least one clip to the timeline first.");
+      return;
+    }
+    exportNameRef.current = outputName.trim();
     // A B-roll sitting on a hidden track is deliberately excluded from the
     // export (hiding = "pretend this track doesn't exist") — but that must
     // be a CONFIRMED choice, not a silent surprise discovered after the
@@ -1507,6 +1543,7 @@ export default function ManualEditModal({
           transitions,
           broll: brollPayload,
           music: music ? { url: music.url, volume: music.volume } : null,
+          outputName: exportNameRef.current,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1576,17 +1613,19 @@ export default function ManualEditModal({
           </div>
           <div className="flex items-center gap-2">
             {exportResult && (
-              <a
-                href={exportResult.url}
-                download
+              <button
+                onClick={() => {
+                  setExportName((cur) => cur || exportNameRef.current || items[0]?.label || "My video");
+                  setNameDialog("download");
+                }}
                 className="px-3 py-1.5 rounded-lg text-white text-xs font-medium transition-transform hover:scale-105"
                 style={{ background: "linear-gradient(135deg, #22d3ee, #6366f1)" }}
               >
                 ⬇ Download
-              </a>
+              </button>
             )}
             <button
-              onClick={handleExport}
+              onClick={requestExport}
               disabled={exporting || items.length === 0}
               className="px-4 py-1.5 rounded-lg text-white text-xs font-semibold disabled:opacity-40 transition-transform hover:enabled:scale-105"
               style={{ background: "linear-gradient(135deg, #22d3ee, #6366f1)", boxShadow: "0 4px 16px -4px rgba(99,102,241,0.6)" }}
@@ -2463,14 +2502,16 @@ export default function ManualEditModal({
                   {exportResult && (
                     <>
                       <video src={exportResult.url} controls className="w-full rounded-lg" style={{ border: "1px solid rgba(255,255,255,0.1)" }} />
-                      <a
-                        href={exportResult.url}
-                        download
+                      <button
+                        onClick={() => {
+                          setExportName((cur) => cur || exportNameRef.current || items[0]?.label || "My video");
+                          setNameDialog("download");
+                        }}
                         className="text-[11px] px-3 py-1.5 rounded-lg text-cyan-300 hover:text-cyan-200 transition-colors self-start"
                         style={{ background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)" }}
                       >
                         ⬇ Download
-                      </a>
+                      </button>
                     </>
                   )}
                   {exportSkipped.length > 0 && (
@@ -2736,6 +2777,67 @@ export default function ManualEditModal({
         </div>
       </div>
     </div>
+      {/* ---- export/download naming dialog — one small prompt reused for
+          both actions: on export the name becomes the server-side output
+          filename (+timestamp, so re-exports never overwrite an earlier
+          file) and the Works title; on download it's the filename the
+          browser saves as. ---- */}
+      {nameDialog && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setNameDialog(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-xl border border-white/10 p-4 flex flex-col gap-3"
+            style={{ background: "linear-gradient(160deg, #0c1120, #090c16)", boxShadow: "0 20px 60px -16px rgba(0,0,0,0.8)" }}
+          >
+            <p className="text-sm text-slate-100 font-semibold">
+              {nameDialog === "export" ? "Name this export" : "Save video as"}
+            </p>
+            <input
+              autoFocus
+              value={exportName}
+              onChange={(e) => setExportName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && exportName.trim()) {
+                  setNameDialog(null);
+                  if (nameDialog === "export") handleExport(exportName);
+                  else downloadResult(exportName);
+                }
+                if (e.key === "Escape") setNameDialog(null);
+              }}
+              placeholder="My video"
+              className="text-sm rounded-lg px-3 py-2 outline-none"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)", color: "#e2e8f0" }}
+            />
+            <p className="text-[10.5px] text-slate-500">
+              {nameDialog === "export"
+                ? "Used as the video's file name and its title in Your Works. Each export is saved as its own file — exporting again won't overwrite this one."
+                : "The file name this video will be saved as on your computer."}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setNameDialog(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (!exportName.trim()) return;
+                  setNameDialog(null);
+                  if (nameDialog === "export") handleExport(exportName);
+                  else downloadResult(exportName);
+                }}
+                disabled={!exportName.trim()}
+                className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-40 transition-transform hover:enabled:scale-105"
+                style={{ background: "linear-gradient(135deg, #22d3ee, #6366f1)" }}
+              >
+                {nameDialog === "export" ? "Start export" : "Download"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ---- minimized floating pill — the whole modal stays mounted above
           (just display:none via the root's `hidden` class), so export
           polling, all edit state, and the hidden <video> probes keep

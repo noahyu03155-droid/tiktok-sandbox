@@ -28,9 +28,12 @@ export async function POST(req: NextRequest, { params }: { params: { projectId: 
   const broll: ManualEditBRollInput[] = Array.isArray(body?.broll) ? body.broll : [];
   const music: ManualEditMusicInput | null =
     body?.music && typeof body.music.url === "string" ? { url: body.music.url, volume: Number(body.music.volume) || 0 } : null;
+  // User-chosen export name from the pre-export naming dialog — becomes the
+  // (sanitized, timestamped) output filename. See safeExportFilename.
+  const outputName = typeof body?.outputName === "string" ? body.outputName : undefined;
 
   const outDir = path.join(getMediaDir(), "storyboard", params.projectId);
-  const { job } = startManualRenderJob(jobKey(params.projectId), clips, textOverlays, transitions, broll, music, outDir, `/api/media/storyboard/${params.projectId}`);
+  const { job } = startManualRenderJob(jobKey(params.projectId), clips, textOverlays, transitions, broll, music, outDir, `/api/media/storyboard/${params.projectId}`, outputName);
   return NextResponse.json({ job });
 }
 

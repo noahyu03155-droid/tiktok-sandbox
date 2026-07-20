@@ -842,12 +842,18 @@ export function startRenderJob(
         throw new Error("None of the attached clips could be read from disk.");
       }
 
-      const finalPath = path.join(outDir, "render.mp4");
+      // Unique per render (was a fixed "render.mp4" overwritten in place
+      // every time) — an earlier render's result card / Works entry keeps
+      // pointing at ITS OWN file instead of silently mutating into
+      // whatever got rendered last. This was the root of "my saved work
+      // turned into a different video".
+      const renderFilename = `render-${Date.now()}.mp4`;
+      const finalPath = path.join(outDir, renderFilename);
       job.step = "Assembling final video (transitions + audio crossfade)...";
       await assembleFinalVideo(segmentPaths, segDurations, tmpDir, finalPath, effectiveTransition, effectiveTransitionSec);
 
       job.result = {
-        url: `${publicUrlPrefix}/render.mp4`,
+        url: `${publicUrlPrefix}/${renderFilename}`,
         skipped,
         styleApplied: styleProfile ? { pacing: styleProfile.pacing, transition: styleProfile.transition, notes: styleProfile.notes } : null,
         appliedFeedback,
@@ -1112,6 +1118,19 @@ async function mergeSequentialWithTransitions(
 // (StoryboardCanvas.tsx namespaces it, e.g. `manual:${aiRenderKey}`) so a
 // manual-edit render and an AI render for the same board can't collide in
 // the shared `jobs` map.
+// Turns a user-chosen export name into a filename that's safe on every
+// filesystem AND unique per export (timestamp suffix) — uniqueness is what
+// stops a re-export from overwriting the file an earlier Works entry still
+// points at. Keeps word chars, CJK, and dashes; everything else becomes _.
+export function safeExportFilename(name: string | undefined | null, fallback: string): string {
+  const base =
+    (name || "")
+      .replace(/[^\w一-鿿-]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 60) || fallback;
+  return `${base}-${Date.now()}.mp4`;
+}
+
 export function startManualRenderJob(
   key: string,
   clips: ManualEditClipInput[],
@@ -1120,7 +1139,8 @@ export function startManualRenderJob(
   broll: ManualEditBRollInput[],
   music: ManualEditMusicInput | null,
   outDir: string,
-  publicUrlPrefix: string
+  publicUrlPrefix: string,
+  outputName?: string
 ): { started: boolean; job: RenderJob } {
   const existing = jobs.get(key);
   if (existing && existing.status === "running") {
@@ -1389,12 +1409,12 @@ export function startManualRenderJob(
         throw new Error("None of the clips could be read from disk.");
       }
 
-      // Separate filename from the AI pipeline's render.mp4 — an AI render
-      // and a manual-edit export for the same board are two independent
-      // artifacts (different jobs keys let them even run "concurrently" in
-      // the jobs map), and sharing one filename would let whichever
-      // finishes last silently clobber the other's output on disk.
-      const finalPath = path.join(outDir, "manual-render.mp4");
+      // User-named + timestamped (was a fixed "manual-render.mp4"
+      // overwritten on every export) — each export is now its own file, so
+      // Works entries / download links from earlier exports stay valid
+      // forever instead of silently becoming the latest render.
+      const manualFilename = safeExportFilename(outputName, "manual-render");
+      const finalPath = path.join(outDir, manualFilename);
       job.step = "Assembling final video...";
       // Per-boundary transitions, in original order — see
       // mergeSequentialWithTransitions's doc comment for why this path uses
@@ -1442,7 +1462,7 @@ export function startManualRenderJob(
 
       // Dedupe: a B-roll spanning several clips reports the same problem
       // once per clip it touches — one line in the UI is enough.
-      job.result = { url: `${publicUrlPrefix}/manual-render.mp4`, skipped: Array.from(new Set(skipped)), styleApplied: null, appliedFeedback: null };
+      job.result = { url: `${publicUrlPrefix}/${manualFilename}`, skipped: Array.from(new Set(skipped)), styleApplied: null, appliedFeedback: null };
       job.status = "done";
       job.step = "Done";
       job.finishedAt = new Date().toISOString();
