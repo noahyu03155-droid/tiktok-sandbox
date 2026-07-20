@@ -135,7 +135,28 @@ function load(): Store {
     cache = { videos: {}, trendBatches: {}, creators: {}, users: {}, creationProjects: {}, journalEntries: {} };
   }
   seedAdminUser(cache as Store);
+  grandfatherPreExistingAccounts(cache as Store);
   return cache as Store;
+}
+
+// One-time grandfathering for the /pricing plan-gate feature (see
+// src/middleware.ts + src/lib/auth.ts's planActive). Accounts created
+// before this feature shipped never had a planStatus field at all, so it
+// reads as `undefined` — distinct from a freshly-registered member, who
+// always gets an explicit "none" from createUser() below. Only rows with
+// the field truly absent get grandfathered to "active" here, so brand-new
+// signups are never accidentally let in for free. Safe to call on every
+// load(): once a user's planStatus is set to anything, this becomes a
+// no-op for them.
+function grandfatherPreExistingAccounts(store: Store) {
+  let changed = false;
+  for (const user of Object.values(store.users)) {
+    if (user.planStatus === undefined) {
+      user.planStatus = "active";
+      changed = true;
+    }
+  }
+  if (changed) persist();
 }
 
 // The app originally had exactly one account, authenticated straight
@@ -489,6 +510,10 @@ export function createUser(username: string, password: string, role: UserRole = 
     // to Business (adds Creator Tracker) or tag as Admin from User Data.
     accessTier: role === "member" ? "vip" : null,
     createdAt: new Date().toISOString(),
+    // Every freshly self-registered member starts gated at /pricing (see
+    // src/middleware.ts) — role "admin" bypasses the plan gate entirely
+    // regardless of this field, so it's harmless left "none" here too.
+    planStatus: role === "member" ? "none" : "active",
   };
   store.users[id] = user;
   persist();

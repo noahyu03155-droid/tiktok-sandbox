@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 // edge dark showcase band, in particular — see src/app/register/page.tsx)
 // that would otherwise get squeezed into the app's normal centered
 // max-w-6xl/padded column, breaking the full-width design.
-const BARE_ROUTES = ["/login", "/register", "/onboarding"];
+const BARE_ROUTES = ["/login", "/register", "/onboarding", "/pricing"];
 
 export default function MainShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

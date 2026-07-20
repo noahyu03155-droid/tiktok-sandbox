@@ -7,6 +7,14 @@ import { verifySessionToken, SESSION_COOKIE_NAME } from "@/lib/auth";
 // — it's read-only public category metadata, nothing sensitive.
 const PUBLIC_PATHS = ["/login", "/api/login", "/register", "/api/register", "/api/trends/fastmoss-categories"];
 
+// Paths that DO require a logged-in session but are exempt from the "must
+// have an active billing plan" check below — otherwise a freshly-registered,
+// not-yet-paid member could never reach /pricing at all (middleware would
+// keep redirecting them back to it) or finish the onboarding step that comes
+// right before it. See PricingPageContent.tsx / /api/billing/select-plan.
+const PLAN_EXEMPT_PATHS = ["/pricing", "/onboarding", "/api/onboarding"];
+const PLAN_EXEMPT_PREFIXES = ["/api/billing/"];
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
@@ -37,6 +45,26 @@ export async function middleware(req: NextRequest) {
     const entryUrl = new URL("/register", req.url);
     entryUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(entryUrl);
+  }
+
+  // Billing gate — role "admin" (the real site owner) always bypasses this,
+  // same as it bypasses every other tier/tab restriction in this app. Every
+  // "member" account needs planActive (see auth.ts's doc comment on why
+  // that's read off the token instead of a fresh DB lookup) or gets sent to
+  // /pricing before reaching anything else.
+  const isPlanExempt =
+    user.role === "admin" ||
+    user.planActive ||
+    PLAN_EXEMPT_PATHS.some((p) => pathname === p) ||
+    PLAN_EXEMPT_PREFIXES.some((p) => pathname.startsWith(p));
+
+  if (!isPlanExempt) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "请先选择付费方案" }, { status: 402 });
+    }
+    const pricingUrl = new URL("/pricing", req.url);
+    pricingUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(pricingUrl);
   }
 
   // Forward the decoded session onto the request as headers — route

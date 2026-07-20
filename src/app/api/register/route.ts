@@ -39,7 +39,10 @@ export async function POST(req: NextRequest) {
   if (categoryId) {
     updateUser(user.id, { preferredCategoryId: categoryId, preferredCategoryLabel: categoryLabel });
   }
-  const token = await createSessionToken({ userId: user.id, username: user.username, role: user.role });
+  // Brand-new member accounts always start with no active plan — see
+  // db.ts's createUser (planStatus: "none") and src/middleware.ts's
+  // billing gate, which will send them to /pricing right after this.
+  const token = await createSessionToken({ userId: user.id, username: user.username, role: user.role, planActive: false });
   const res = NextResponse.json({ ok: true });
   res.cookies.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,

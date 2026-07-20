@@ -21,7 +21,7 @@ export default function HeaderBar({
   const { t } = useLocale();
   const pathname = usePathname();
 
-  if (pathname === "/login" || pathname === "/register" || pathname === "/onboarding") return null;
+  if (pathname === "/login" || pathname === "/register" || pathname === "/onboarding" || pathname === "/pricing") return null;
 
   const isSuperAdmin = role === "admin";
   // Built as a plain push list (rather than filter/concat on object

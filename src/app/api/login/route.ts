@@ -17,7 +17,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Incorrect username or password" }, { status: 401 });
   }
 
-  const token = await createSessionToken({ userId: user.id, username: user.username, role: user.role });
+  // planActive is read fresh off the DB record at login time (unlike
+  // register, where a brand-new account can never already have a plan) —
+  // admin bypasses the gate regardless (see middleware.ts), so this only
+  // really matters for "member" accounts.
+  const planActive = user.role === "admin" || user.planStatus === "active";
+  const token = await createSessionToken({ userId: user.id, username: user.username, role: user.role, planActive });
   const res = NextResponse.json({ ok: true });
   res.cookies.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,

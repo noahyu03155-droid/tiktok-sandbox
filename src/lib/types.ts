@@ -13,6 +13,17 @@ export type UserRole = "admin" | "member";
 // already could before this field existed — see tabsForTier.
 export type AccessTier = "business" | "vip" | "admin";
 
+// ---- Billing plan (src/app/pricing, src/app/api/billing/select-plan) ----
+// A self-serve subscription tier picked on /pricing, gating access to the
+// whole app (see src/middleware.ts) for anyone who isn't UserRole "admin".
+// NOTE: as of this pass there is no real payment processor wired in yet —
+// "purchasing" a plan just writes these fields and flips planStatus to
+// "active" immediately (see /api/billing/select-plan's doc comment). Swap
+// in real Stripe Checkout + a webhook later without touching the gating
+// logic itself, which only cares about planStatus.
+export type PlanId = "starter" | "pro" | "business";
+export type BillingCycle = "monthly" | "semiannual" | "annual";
+
 // A handful of short answers collected right after registration (see
 // /onboarding) — used purely to nudge the AI script generator's tone,
 // persona, and filming-direction detail toward this specific creator
@@ -170,6 +181,18 @@ export interface User {
   // the top over time (src/app/api/reaction-emotions/route.ts). Not present
   // until they've generated at least one script with an emotion selected.
   reactionEmotionUsage?: Partial<Record<ReactionEmotion, number>>;
+  // ---- Billing plan selection (see PlanId/BillingCycle above) ----
+  // planStatus "active" is what src/middleware.ts checks to let a non-admin
+  // account past the /pricing gate. undefined/"none" = hasn't picked a plan
+  // yet (or a pre-existing account from before this feature shipped — see
+  // /api/billing/select-plan's doc comment for the migration note). Extra
+  // seats beyond the plan's included count are purchased via the stepper on
+  // /pricing; Starter doesn't allow extra seats (seats is always 0 there).
+  plan?: PlanId | null;
+  billingCycle?: BillingCycle | null;
+  seats?: number; // EXTRA sub-accounts purchased beyond the plan's included seat count, not the total
+  planStatus?: "active" | "none" | null;
+  planSelectedAt?: string | null;
 }
 
 // ---- Daily journal chat ("write like a diary, AI replies like a friend") ----
