@@ -90,18 +90,18 @@ export async function GET(req: NextRequest) {
   const qsCategoryLabel = req.nextUrl.searchParams.get("categoryLabel");
   let categoryId = qsCategoryId || user?.preferredCategoryId || null;
   let categoryLabel = (qsCategoryId ? qsCategoryLabel : null) || user?.preferredCategoryLabel || null;
-  // No category anywhere (no dropdown pick, no saved registration category):
-  // ADMINS get an "all categories" pull instead of a dead end — the custom
-  // trend API treats a null category_id as "across the whole catalog",
-  // which is exactly what an admin poking the Update button to smoke-test
-  // the new API wants. Members keep the old "pick a category first" nudge
-  // (an unscoped live pull on every member who never registered a category
-  // would waste API quota for a list that isn't personalized anyway).
-  const allCategories = !categoryId;
-  if (allCategories && sessionUser.role !== "admin") {
-    return NextResponse.json({ products: null, needsCategory: true });
+  // ?all=1 forces an "all categories" pull even when the user HAS a saved
+  // category — that powers the Product tab's second section (the catalog-
+  // wide Top 20 shown UNDER the personalized For You list). With no
+  // category anywhere, all-categories is also the default rather than a
+  // dead end. The custom trend API treats a null category_id as "across
+  // the whole catalog".
+  const forceAll = req.nextUrl.searchParams.get("all") === "1";
+  const allCategories = forceAll || !categoryId;
+  if (allCategories) {
+    categoryId = null;
+    categoryLabel = "All categories";
   }
-  if (allCategories) categoryLabel = "All categories";
 
   if (!process.env.FASTMOSS_API_KEY && !isCustomTrendApiConfigured()) {
     return NextResponse.json(
@@ -115,7 +115,11 @@ export async function GET(req: NextRequest) {
     // defaults to 7 if missing/invalid.
     const qsDays = Number(req.nextUrl.searchParams.get("days"));
     const days = qsDays === 28 || qsDays === 90 ? qsDays : 7;
-    let raw = await fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit: 50, categoryId });
+    // Optional ?limit= (clamped 5-50, default 50) — the all-categories
+    // second section only wants a Top 20, no point pulling/scoring 50.
+    const qsLimit = Number(req.nextUrl.searchParams.get("limit"));
+    const limit = Number.isFinite(qsLimit) ? Math.max(5, Math.min(50, Math.round(qsLimit))) : 50;
+    let raw = await fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit, categoryId });
     let usedFallbackCategory: string | null = null;
 
     if (raw.length === 0 && !allCategories) {
@@ -152,7 +156,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const dedupedRaw = dedupeBySales(raw.map(toRawItem), 50).map((item, i) => ({ ...item, rank: i + 1 }));
+    const dedupedRaw = dedupeBySales(raw.map(toRawItem), limit).map((item, i) => ({ ...item, rank: i + 1 }));
 
     // COTORX-side relevance filter + per-user recommendation scoring — see
     // productRelevance.ts. FastMoss tags category on the VIDEO, not the

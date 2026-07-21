@@ -164,8 +164,29 @@ export async function fetchCustomTrendVideos(
       }
       if (!res.ok) throw new Error(`codeX /v1/videos/rank HTTP ${res.status}`);
       const json = await res.json();
-      const items: any[] = Array.isArray(json?.list) ? json.list : Array.isArray(json?.items) ? json.items : Array.isArray(json) ? json : [];
+      let items: any[] = Array.isArray(json?.list) ? json.list : Array.isArray(json?.items) ? json.items : Array.isArray(json) ? json : [];
       discoveredOrder[orderField] = orderBy;
+      // Trust-but-verify the category filter: the user reported a
+      // "Fashion Accessories" pull coming back full of pet products —
+      // i.e. codeX either ignored category_id or its items aren't tagged
+      // with the same category scheme this app's picker uses (FastMoss
+      // c_codes). If the returned items DO carry category tags, enforce
+      // the requested category here; anything left over is genuinely that
+      // category. If that leaves nothing (scheme mismatch or codeX has no
+      // data for it), return [] so the caller's FastMoss fallback kicks in
+      // and the user still sees CORRECT-category data rather than a
+      // mislabeled list. Items with no category tags at all are left
+      // alone — nothing to verify against.
+      if (opts.categoryId != null && opts.categoryId !== "") {
+        const want = String(opts.categoryId);
+        const tagged = items.filter((it: any) => it && (it.category_id != null || it.category_code != null));
+        if (tagged.length > 0) {
+          items = items.filter((it: any) => {
+            const cid = it?.category_id ?? it?.category_code;
+            return cid != null && String(cid) === want;
+          });
+        }
+      }
       return items
         .map(mapItem)
         .filter((v): v is FastMossVideoResult => v !== null)

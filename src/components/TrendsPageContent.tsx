@@ -960,6 +960,12 @@ export default function TrendsPageContent({
   const [topProductsLoading, setTopProductsLoading] = useState(false);
   const [topProductsError, setTopProductsError] = useState<string | null>(null);
   const [topProductsFallback, setTopProductsFallback] = useState<string | null>(null);
+  // Second section under the category-scoped list: a catalog-wide Top 20
+  // (?all=1&limit=20) — the user's For You / picked category always ranks
+  // FIRST on the page, with this broader market pulse below it.
+  const [topProductsAll, setTopProductsAll] = useState<EnrichedItem[] | null>(null);
+  const [topProductsAllLoading, setTopProductsAllLoading] = useState(false);
+  const lastTopProductsAllKey = useRef<string | null>(null);
   const [productCategory, setProductCategory] = useState<{ id: string; label: string } | null>(preferredCategory);
   const [productCategoryQuery, setProductCategoryQuery] = useState("");
   const [productCategoryDropdownOpen, setProductCategoryDropdownOpen] = useState(false);
@@ -1147,11 +1153,38 @@ export default function TrendsPageContent({
   // to it (or when they pick a different category/day-range) — this is its
   // own live FastMoss pull, no need to pay that cost for someone who never
   // opens the tab, or to re-pull every time they just toggle back.
+  // Catalog-wide Top 20 for the second section — separate loader/key so it
+  // doesn't refetch when only the scoped category changes.
+  async function loadTopProductsAll(days: 7 | 28 | 90) {
+    setTopProductsAllLoading(true);
+    lastTopProductsAllKey.current = `all:${days}`;
+    try {
+      const qs = new URLSearchParams({ days: String(days), all: "1", limit: "20" });
+      const res = await fetch(`/api/trends/top-products?${qs.toString()}`, { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setTopProductsAll(data.products || []);
+    } catch {
+      // Second section is best-effort — a failure just leaves it hidden,
+      // never blocks the primary For You list above it.
+    } finally {
+      setTopProductsAllLoading(false);
+    }
+  }
+
   useEffect(() => {
-    if (viewMode !== "product" || !productCategory) return;
-    const key = `${productCategory.id}:${productDays}`;
-    if (lastTopProductsKey.current === key) return;
-    loadTopProducts(productCategory, productDays);
+    if (viewMode !== "product") return;
+    // Primary (category-scoped when one is picked/saved, otherwise the
+    // catalog-wide pull IS the primary list).
+    const key = `${productCategory?.id ?? "all"}:${productDays}`;
+    if (lastTopProductsKey.current !== key) {
+      loadTopProducts(productCategory, productDays);
+    }
+    // Secondary all-categories Top 20 — only when a category is scoped
+    // above (otherwise the primary list already covers all categories).
+    if (productCategory) {
+      const allKey = `all:${productDays}`;
+      if (lastTopProductsAllKey.current !== allKey) loadTopProductsAll(productDays);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, productCategory, productDays]);
 
@@ -1598,7 +1631,10 @@ export default function TrendsPageContent({
                   don't get a manual override button. */}
               {role === "admin" && (
                 <button
-                  onClick={() => loadTopProducts(productCategory, productDays)}
+                  onClick={() => {
+                    loadTopProducts(productCategory, productDays);
+                    if (productCategory) loadTopProductsAll(productDays);
+                  }}
                   disabled={topProductsLoading}
                   className="px-4 py-1.5 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium whitespace-nowrap"
                   title={productCategory ? undefined : "No category selected — pulls top sellers across ALL categories"}
@@ -1631,6 +1667,27 @@ export default function TrendsPageContent({
               onToggleSelect={() => {}}
               variant="product"
             />
+          )}
+          {/* Catalog-wide Top 20 — always shown UNDER the user's own
+              category list (For You / picked category stays first). Only
+              rendered when a category is scoped above; with no category,
+              the primary list already IS the all-categories pull. */}
+          {productCategory && topProductsAllLoading && !topProductsAll && (
+            <p className="text-sm text-zinc-400 animate-pulse">{t("trendUpdating")}</p>
+          )}
+          {productCategory && topProductsAll && topProductsAll.length > 0 && (
+            <div className="pt-6 border-t border-edge">
+              <TrendSection
+                title={t("trendTopSellingProductsAllCats")}
+                items={topProductsAll}
+                metric="sales"
+                batchId="top-products-all"
+                selectMode={false}
+                selected={EMPTY_SELECTION}
+                onToggleSelect={() => {}}
+                variant="product"
+              />
+            </div>
           )}
         </div>
       ) : (
