@@ -1307,13 +1307,19 @@ export default function StoryboardCanvas({
   // way addNode places one) and asks the server to yt-dlp the video into
   // this storyboard's media folder, then attaches it as a playable clip.
   async function importTikTokClip(url: string) {
-    const rightmost = board.nodes.reduce((max, n) => Math.max(max, n.x), 0);
+    // Placed at the CENTER of whatever the user is currently looking at
+    // (viewportCenterWorld + findFreeSpot, same as addNode) — previously
+    // this went to "right of the rightmost card, y=120", which on a big
+    // board could be far off-screen, forcing the user to go hunting for
+    // the card they just pasted.
+    const center = viewportCenterWorld();
+    const spot = findFreeSpot(center.x - NODE_W / 2, center.y - TIKTOK_PREVIEW_H / 2, NODE_W, TIKTOK_PREVIEW_H);
     const node: StoryboardNode = {
       id: crypto.randomUUID(),
       label: "TikTok clip",
       instruction: "",
-      x: board.nodes.length === 0 ? 60 : rightmost + NODE_W + GAP_X,
-      y: 120,
+      x: spot.x,
+      y: spot.y,
       clip: null,
     };
     setBoard((b) => ({ ...b, nodes: [...b.nodes, node] }));
@@ -1341,13 +1347,16 @@ export default function StoryboardCanvas({
   // scrape isn't an error state for the card itself — productRef comes back
   // with scrapeFailed: true and the user fills the fields in by hand.
   async function importProductLink(url: string) {
-    const rightmost = board.nodes.reduce((max, n) => Math.max(max, n.x), 0);
+    // Same viewport-centered placement as importTikTokClip above — the
+    // pasted product card lands where the user is actually looking.
+    const center = viewportCenterWorld();
+    const spot = findFreeSpot(center.x - NODE_W / 2, center.y - PRODUCT_CARD_H / 2, NODE_W, PRODUCT_CARD_H);
     const node: StoryboardNode = {
       id: crypto.randomUUID(),
       label: "Product",
       instruction: "",
-      x: board.nodes.length === 0 ? 60 : rightmost + NODE_W + GAP_X,
-      y: 120,
+      x: spot.x,
+      y: spot.y,
       clip: null,
       productRef: { sourceUrl: url, title: "", description: "", imageUrl: null, price: null, rating: null, soldOrReviews: null, storeName: null, scrapeFailed: false },
     };
