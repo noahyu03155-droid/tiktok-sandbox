@@ -264,6 +264,82 @@ export async function fetchCustomProductRank(opts: {
     .slice(0, opts.limit ?? 50);
 }
 
+// ---- per-product sales trend (POST /v1/products/trend) ----
+// Replaces FastMoss's /product/v1/salesTrend for the product detail page's
+// Overview chart — the FastMoss plan lost access to that endpoint (403
+// "can not access current endpoint"). The codeX ProductTrendRequest/
+// Response schemas sat past the fetched spec's truncation point, so both
+// the request (two likely shapes tried in order, 422 = try next) and the
+// response parse (several plausible field spellings) are tolerant. Returns
+// null on any failure — the caller falls back to FastMoss, and failing
+// THAT surfaces the same error as before.
+export async function fetchCustomProductTrend(
+  productId: string,
+  days: number
+): Promise<{ list: { dt: string; units_sold: number; gmv: number }[]; overview: { units_sold: number; gmv: number; live_count: number; creator_count: number; aweme_count: number; currency: string; region: string } } | null> {
+  const cfg = apiConfig();
+  if (!cfg) return null;
+  const bodies: Record<string, any>[] = [
+    { product_id: productId, days },
+    { product_id: productId, period: periodFromDays(days) },
+    { product_id: productId },
+  ];
+  for (const body of bodies) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      const res = await fetch(`${cfg.base}/v1/products/trend`, {
+        method: "POST",
+        headers: { ...cfg.headers, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.status === 422) continue; // wrong request shape — try the next candidate
+      if (!res.ok) return null;
+      const json: any = await res.json();
+      const rawPoints: any[] = Array.isArray(json?.list)
+        ? json.list
+        : Array.isArray(json?.points)
+        ? json.points
+        : Array.isArray(json?.trend)
+        ? json.trend
+        : Array.isArray(json?.data)
+        ? json.data
+        : Array.isArray(json)
+        ? json
+        : [];
+      const list = rawPoints
+        .map((p: any) => ({
+          dt: str(p?.dt) ?? str(p?.date) ?? str(p?.day) ?? str(p?.ranking_date) ?? "",
+          units_sold: num(p?.units_sold) ?? num(p?.sales) ?? 0,
+          gmv: num(p?.gmv) ?? 0,
+        }))
+        .filter((p) => p.dt);
+      if (list.length === 0) return null;
+      const totals = list.reduce(
+        (acc, p) => ({ units: acc.units + p.units_sold, gmv: acc.gmv + p.gmv }),
+        { units: 0, gmv: 0 }
+      );
+      return {
+        list,
+        overview: {
+          units_sold: num(json?.overview?.units_sold) ?? totals.units,
+          gmv: num(json?.overview?.gmv) ?? totals.gmv,
+          live_count: num(json?.overview?.live_count) ?? 0,
+          creator_count: num(json?.overview?.creator_count) ?? 0,
+          aweme_count: num(json?.overview?.aweme_count) ?? 0,
+          currency: str(json?.overview?.currency) ?? "USD",
+          region: str(json?.overview?.region) ?? "US",
+        },
+      };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 // The app asks in days (7/28/90); codeX ranks come in day/week/month
 // snapshots. 7 -> week, anything longer -> month, shorter -> day.
 function periodFromDays(days: number): "day" | "week" | "month" {

@@ -117,8 +117,15 @@ export async function GET(req: NextRequest) {
     const days = qsDays === 28 || qsDays === 90 ? qsDays : 7;
     // Optional ?limit= (clamped 5-50, default 50) — the all-categories
     // second section only wants a Top 20, no point pulling/scoring 50.
-    const qsLimit = Number(req.nextUrl.searchParams.get("limit"));
-    const limit = Number.isFinite(qsLimit) ? Math.max(5, Math.min(50, Math.round(qsLimit))) : 50;
+    // NOTE the null check BEFORE Number(): Number(null) is 0 (not NaN), so
+    // the earlier `Number.isFinite(Number(get("limit")))` version turned
+    // "no limit param at all" into 0 → clamped to 5 — which is exactly why
+    // the Product tab (which never sends limit) showed only 5 cards while
+    // direct testing with an explicit limit=50 showed all 50.
+    const qsLimitRaw = req.nextUrl.searchParams.get("limit");
+    const limit = qsLimitRaw !== null && Number.isFinite(Number(qsLimitRaw))
+      ? Math.max(5, Math.min(50, Math.round(Number(qsLimitRaw))))
+      : 50;
 
     // PREFERRED source: codeX's dedicated product ranking — real products,
     // directly. The older path below derives products from the VIDEO rank's
