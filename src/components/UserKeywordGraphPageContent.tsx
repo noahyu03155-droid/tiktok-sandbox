@@ -26,34 +26,39 @@ const TIER_HINT_KEY: Record<AccessTier, TranslationKey> = {
   business: "userDataTierBusinessHint",
 };
 
-// Starter/Pro/Business tab-visibility selector (names match the 3 billing
-// plans — see AccessTier's doc comment in src/lib/types.ts) — see
-// src/lib/accessTier.ts for what each tier actually unlocks. A plain PATCH
-// to /api/user-data/[userId]/tier, same low-stakes "just save it" treatment
-// as the custom-tag add form below (no confirmation dialog — an admin can
-// freely flip a member between tiers).
+// Starter/Pro/Business tier selector (names match the 3 billing plans — see
+// AccessTier's doc comment in src/lib/types.ts; src/lib/accessTier.ts for
+// what each unlocks). Explicit two-step select-then-Save (was save-on-click
+// with no visible confirmation): since setting a tier now also ACTIVATES
+// the same-named billing plan for the member (see the tier route's doc
+// comment), the admin should get an unmistakable "this took effect" moment
+// — pick a chip, hit Save, see "✓ Saved — plan activated".
 function TierSelector({ userId, initialTier }: { userId: string; initialTier: AccessTier | null }) {
   const { t } = useLocale();
   const [tier, setTier] = useState<AccessTier | null>(initialTier);
+  const [savedTier, setSavedTier] = useState<AccessTier | null>(initialTier);
   const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function pick(next: AccessTier) {
-    if (next === tier || saving) return;
-    const previous = tier;
-    setTier(next); // optimistic — this is a low-stakes admin toggle, not a destructive action
+  const dirty = tier !== savedTier;
+
+  async function save() {
+    if (!dirty || saving || tier === null) return;
     setSaving(true);
     setError(null);
+    setJustSaved(false);
     try {
       const res = await fetch(`/api/user-data/${userId}/tier`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessTier: next }),
+        body: JSON.stringify({ accessTier: tier }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Failed");
+      setSavedTier(tier);
+      setJustSaved(true);
     } catch {
-      setTier(previous);
       setError(t("userDataTierUpdateFailed"));
     } finally {
       setSaving(false);
@@ -63,14 +68,17 @@ function TierSelector({ userId, initialTier }: { userId: string; initialTier: Ac
   return (
     <div className="mb-6">
       <p className="text-xs font-medium text-zinc-500 mb-2">{t("userDataTierLabel")}</p>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {TIERS.map((option) => {
           const active = (tier || "business") === option;
           return (
             <button
               key={option}
               type="button"
-              onClick={() => pick(option)}
+              onClick={() => {
+                setTier(option);
+                setJustSaved(false);
+              }}
               disabled={saving}
               title={t(TIER_HINT_KEY[option])}
               className={`text-xs px-3 py-1.5 rounded-full border transition-colors disabled:opacity-60 ${
@@ -83,6 +91,15 @@ function TierSelector({ userId, initialTier }: { userId: string; initialTier: Ac
             </button>
           );
         })}
+        <button
+          type="button"
+          onClick={save}
+          disabled={!dirty || saving}
+          className="text-xs px-4 py-1.5 rounded-full font-medium text-white bg-brand-500 hover:bg-brand-600 disabled:opacity-40 transition-colors"
+        >
+          {saving ? "…" : t("userDataTierSave")}
+        </button>
+        {justSaved && !dirty && <span className="text-xs text-emerald-600">{t("userDataTierSaved")}</span>}
       </div>
       {error && <p className="text-xs text-red-400 mt-1.5">{error}</p>}
     </div>

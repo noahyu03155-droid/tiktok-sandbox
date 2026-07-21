@@ -334,6 +334,8 @@ export const translations = {
     userDataTierProHint: "Sees Video Analysis, Trend Analysis, Creator Tracker, and Creation.",
     userDataTierBusinessHint: "Sees everything except the User Data admin panel.",
     userDataTierUpdateFailed: "Couldn't update this member's tier — try again.",
+    userDataTierSave: "Save",
+    userDataTierSaved: "✓ Saved — plan activated",
 
     scriptFeedbackLabel: "Feedback on this beat",
     scriptFeedbackPlaceholder: "e.g. make this punchier, mention the 30-day guarantee instead...",
@@ -756,6 +758,8 @@ export const translations = {
     userDataTierProHint: "可看到Video Analysis、Trend Analysis、Creator Tracker、Creation。",
     userDataTierBusinessHint: "除User Data管理面板外全部可见。",
     userDataTierUpdateFailed: "权限等级更新失败，请重试。",
+    userDataTierSave: "保存",
+    userDataTierSaved: "✓ 已保存，方案已开通",
 
     scriptFeedbackLabel: "对这一段的反馈",
     scriptFeedbackPlaceholder: "例如：语气更有冲击力一点、改成提保修期而不是这个卖点...",
