@@ -209,17 +209,20 @@ export async function fetchCustomProductRank(opts: {
   const codexCategoryId = await resolveCodexCategoryId(opts.categoryId);
   if (codexCategoryId === null) return [];
 
-  const params = new URLSearchParams({
-    period: periodFromDays(opts.days ?? 7),
-    region: opts.region ?? "US",
-    category_id: codexCategoryId,
-    page: "1",
-    page_size: String(Math.max(1, Math.min(100, opts.limit ?? 50))),
-    // Legal per the spec's ^(rank|units_sold|gmv|total_units_sold|total_gmv)$.
-    order_by: "units_sold",
+  const limit = opts.limit ?? 50;
+  const items = await fetchWithPeriodFallback(periodFromDays(opts.days ?? 7), limit, async (period) => {
+    const params = new URLSearchParams({
+      period,
+      region: opts.region ?? "US",
+      category_id: codexCategoryId,
+      page: "1",
+      page_size: String(Math.max(1, Math.min(100, limit))),
+      // Legal per the spec's ^(rank|units_sold|gmv|total_units_sold|total_gmv)$.
+      order_by: "units_sold",
+    });
+    const json = await getWithTimeout(`${cfg.base}/v1/products/rank?${params.toString()}`, cfg.headers);
+    return Array.isArray(json?.list) ? (json.list as any[]) : [];
   });
-  const json = await getWithTimeout(`${cfg.base}/v1/products/rank?${params.toString()}`, cfg.headers);
-  const items: any[] = Array.isArray(json?.list) ? json.list : [];
   return items
     .map((raw): CustomProductRankItem | null => {
       if (!raw || typeof raw !== "object") return null;
@@ -249,6 +252,39 @@ function periodFromDays(days: number): "day" | "week" | "month" {
   return "day";
 }
 
+// codeX's week/month snapshots are much sparser than its day snapshots (a
+// 7D pull came back with 5 rows while day rankings held far more) — so if
+// the preferred period can't fill the request, try the other periods and
+// keep whichever returned the MOST rows. Order: preferred first, then
+// shorter periods (denser data), month last.
+function periodFallbackOrder(preferred: "day" | "week" | "month"): ("day" | "week" | "month")[] {
+  if (preferred === "month") return ["month", "week", "day"];
+  if (preferred === "week") return ["week", "day", "month"];
+  return ["day", "week", "month"];
+}
+
+// Runs `fetchForPeriod` across the fallback order until one period fills
+// `wanted` rows; otherwise returns the largest result seen. Shared by the
+// video and product rank fetchers below.
+async function fetchWithPeriodFallback<T>(
+  preferred: "day" | "week" | "month",
+  wanted: number,
+  fetchForPeriod: (period: "day" | "week" | "month") => Promise<T[]>
+): Promise<T[]> {
+  let best: T[] = [];
+  for (const period of periodFallbackOrder(preferred)) {
+    try {
+      const items = await fetchForPeriod(period);
+      if (items.length >= wanted) return items;
+      if (items.length > best.length) best = items;
+    } catch {
+      // A single period failing shouldn't kill the whole pull — the caller
+      // treats an overall empty result as "fall back to FastMoss" anyway.
+    }
+  }
+  return best;
+}
+
 // Same signature semantics as fastmoss.ts's fetchCategoryTrendVideos so the
 // two sources are interchangeable at the call site. Throws on hard failure —
 // the caller (fastmoss.ts) catches and falls back to FastMoss. Returns []
@@ -264,21 +300,23 @@ export async function fetchCustomTrendVideos(
   const codexCategoryId = await resolveCodexCategoryId(opts.categoryId);
   if (codexCategoryId === null) return [];
 
-  const params = new URLSearchParams({
-    period: periodFromDays(opts.days ?? 7),
-    region: opts.region ?? "US",
-    category_id: codexCategoryId,
-    page: "1",
-    page_size: String(Math.max(1, Math.min(100, opts.limit ?? 20))),
-    // Both are legal order_by values per the spec's ^(rank|units_sold|gmv|
-    // play_count|engagement_rate)$ pattern.
-    order_by: orderField,
+  const limit = opts.limit ?? 20;
+  const items = await fetchWithPeriodFallback(periodFromDays(opts.days ?? 7), limit, async (period) => {
+    const params = new URLSearchParams({
+      period,
+      region: opts.region ?? "US",
+      category_id: codexCategoryId,
+      page: "1",
+      page_size: String(Math.max(1, Math.min(100, limit))),
+      // Both are legal order_by values per the spec's ^(rank|units_sold|gmv|
+      // play_count|engagement_rate)$ pattern.
+      order_by: orderField,
+    });
+    const json = await getWithTimeout(`${cfg.base}/v1/videos/rank?${params.toString()}`, cfg.headers);
+    return Array.isArray(json?.list) ? (json.list as any[]) : [];
   });
-
-  const json = await getWithTimeout(`${cfg.base}/v1/videos/rank?${params.toString()}`, cfg.headers);
-  const items: any[] = Array.isArray(json?.list) ? json.list : [];
   return items
     .map(mapItem)
     .filter((v): v is FastMossVideoResult => v !== null)
-    .slice(0, opts.limit ?? 20);
+    .slice(0, limit);
 }
