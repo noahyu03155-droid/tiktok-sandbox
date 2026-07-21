@@ -7,11 +7,18 @@ export const dynamic = "force-dynamic";
 
 const VALID_TIERS: AccessTier[] = ["starter", "pro", "business"];
 
-// Admin-only: set which nav tabs a member sees (src/lib/accessTier.ts) —
-// starter/pro/business here is purely a feature-visibility tag (reusing the
-// 3 billing plan names — see AccessTier's doc comment in src/lib/types.ts),
-// distinct from the real login-level UserRole. Mirrors the tags/route.ts
-// POST right above this one.
+// Admin-only: set a member's tier. Two things happen at once:
+// 1. accessTier (nav-tab visibility, src/lib/accessTier.ts) is set.
+// 2. The SAME-NAMED billing plan is granted as active (a comp / manual
+//    grant) — without this, an admin-tagged "Starter" account still had
+//    planStatus "none" and stayed stuck at the /pricing paywall, which is
+//    exactly the confusion the tag/plan name reuse invited ("I gave them
+//    Starter, why can't they get in?"). The user's browser picks the
+//    grant up via /api/billing/refresh-session (polled by the pricing
+//    page) or on their next login — an admin can't rewrite someone
+//    else's session cookie from here.
+// Clearing the tier (null) deliberately does NOT touch billing — revoking
+// a possibly-PAID plan should never be a side effect of removing a tab tag.
 export async function PATCH(req: NextRequest, { params }: { params: { userId: string } }) {
   const admin = getCurrentUser();
   if (!admin || admin.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
@@ -25,6 +32,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { userId: st
     return NextResponse.json({ error: "accessTier must be one of starter/pro/business, or null to clear it" }, { status: 400 });
   }
 
-  updateUser(target.id, { accessTier: tier });
+  if (tier === null) {
+    updateUser(target.id, { accessTier: tier });
+  } else {
+    updateUser(target.id, {
+      accessTier: tier,
+      plan: tier,
+      billingCycle: target.billingCycle ?? "monthly",
+      seats: target.seats ?? 0,
+      planStatus: "active",
+      planSelectedAt: new Date().toISOString(),
+    });
+  }
   return NextResponse.json({ accessTier: tier });
 }

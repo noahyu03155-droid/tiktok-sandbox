@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PLANS, BILLING_CYCLES, planCyclePrice, seatCyclePrice } from "@/lib/billing";
 import type { PlanId, BillingCycle } from "@/lib/types";
@@ -73,6 +73,27 @@ export default function PricingPageContent({
   });
   const [purchasingPlan, setPurchasingPlan] = useState<PlanId | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Self-heal a stale paywall: if an admin granted this account a plan from
+  // the User Data page (DB active, but this browser's cookie still says
+  // planActive=false), refresh-session re-signs the cookie and we leave the
+  // pricing page immediately — no re-login, no fake "purchase" needed.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/billing/refresh-session", { method: "POST" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled && data?.active) {
+          router.push(next);
+          router.refresh();
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const cycle = BILLING_CYCLES.find((c) => c.id === cycleId) || BILLING_CYCLES[0];
 
