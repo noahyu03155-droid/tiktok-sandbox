@@ -11,18 +11,23 @@
 //   CUSTOM_TREND_API_KEY         the codeX-issued key (mk_live_...)
 //   CUSTOM_TREND_API_KEY_HEADER  defaults to "X-API-Key" (what codeX expects)
 //
-// ---- codeX conventions (read from its live OpenAPI spec) ----
-//   POST {base}/v1/videos/rank
-//   body: { region?, category_id? (string|null), days (1-90, default 7),
-//           order_by (enum), descending (default true),
-//           page (default 1), page_size (1-100, default 20) }
-//   response: { total, page, page_size, list: [ ...items ] }
-//   auth: X-API-Key header. GMV values arrive as decimal STRINGS.
-// The VideoRank item/enum schemas sat past the point where the spec fetch
-// truncated, so the item mapper below is deliberately tolerant (nested
-// `creator`/`product` objects OR flattened fields, several plausible field
-// names per value), and the order_by enum value is discovered by trying
-// likely candidates and treating a 422 as "wrong enum, try the next one".
+// ---- codeX unified rankings API (read from its live OpenAPI spec) ----
+//   GET /v1/videos/rank?period=day|week|month&region=US&category_id=all
+//        &page=1&page_size=20&order_by=rank|units_sold|gmv|play_count|engagement_rate
+//     -> { total, page, page_size, latest_ranking_date, list: [...],
+//          period, region, category_id, source_category_id }
+//   GET /v1/rank/categories
+//     -> { total, list: [ { category_id, category_name, source_category_id } ] }
+//   auth: X-API-Key header. GMV values may arrive as decimal STRINGS.
+//
+// Category mapping: this app's category picker uses FastMoss c_codes, while
+// codeX ranks are keyed by its own category_id — but each codeX category
+// carries the FastMoss id it was sourced from as `source_category_id`, so
+// /v1/rank/categories is the bridge (cached below). A requested category
+// that maps to nothing in codeX returns [] here, which makes the caller
+// fall back to FastMoss — correct-category data over mislabeled data,
+// always (this exact failure — a "Fashion Accessories" pull rendering pet
+// products — is what motivated the mapping).
 
 import type { FastMossProductInfo, FastMossVideoResult } from "./fastmoss";
 
@@ -39,6 +44,76 @@ function str(v: any): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+function apiConfig(): { base: string; headers: Record<string, string> } | null {
+  const base = (process.env.CUSTOM_TREND_API_URL || "").replace(/\/+$/, "");
+  const key = process.env.CUSTOM_TREND_API_KEY || "";
+  if (!base || !key) return null;
+  const headerName = process.env.CUSTOM_TREND_API_KEY_HEADER || "X-API-Key";
+  return {
+    base,
+    headers: { [headerName]: headerName.toLowerCase() === "authorization" ? `Bearer ${key}` : key },
+  };
+}
+
+async function getWithTimeout(url: string, headers: Record<string, string>, timeoutMs = 20_000): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { headers, signal: controller.signal });
+    if (!res.ok) throw new Error(`codeX ${new URL(url).pathname} HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ---- category bridge (FastMoss c_code <-> codeX category_id) ----
+interface CodexRankCategory {
+  category_id: string;
+  category_name: string;
+  source_category_id: string;
+}
+
+let codexCategoriesCache: { at: number; list: CodexRankCategory[] } | null = null;
+const CODEX_CATEGORIES_TTL_MS = 10 * 60 * 1000;
+
+export async function fetchCodexRankCategories(): Promise<CodexRankCategory[]> {
+  const cfg = apiConfig();
+  if (!cfg) return [];
+  if (codexCategoriesCache && Date.now() - codexCategoriesCache.at < CODEX_CATEGORIES_TTL_MS) {
+    return codexCategoriesCache.list;
+  }
+  const json = await getWithTimeout(`${cfg.base}/v1/rank/categories`, cfg.headers);
+  const list: CodexRankCategory[] = Array.isArray(json?.list)
+    ? json.list.filter((c: any) => c && typeof c.category_id === "string")
+    : [];
+  codexCategoriesCache = { at: Date.now(), list };
+  return list;
+}
+
+// Resolves the app-side category (a FastMoss c_code from the picker, or
+// possibly already a codeX id) to the codeX category_id the rank endpoints
+// expect. null/"" -> "all". Unmappable -> null (caller returns [] so the
+// FastMoss fallback serves the category instead).
+async function resolveCodexCategoryId(requested: number | string | null | undefined): Promise<string | null> {
+  if (requested == null || requested === "") return "all";
+  const want = String(requested);
+  try {
+    const cats = await fetchCodexRankCategories();
+    const direct = cats.find((c) => c.category_id === want);
+    if (direct) return direct.category_id;
+    const bySource = cats.find((c) => c.source_category_id === want);
+    if (bySource) return bySource.category_id;
+    return null;
+  } catch {
+    // Category listing unavailable — send the raw id through rather than
+    // giving up entirely; codeX treats an unknown id as no rows, which
+    // still lands in the FastMoss fallback.
+    return want;
+  }
+}
+
+// ---- item mapping ----
 function mapProduct(p: any): FastMossProductInfo | null {
   if (!p || typeof p !== "object") return null;
   return {
@@ -61,8 +136,8 @@ function mapItem(raw: any, index: number): FastMossVideoResult | null {
     ? raw.product_info
     : raw.product
     ? [raw.product]
-    : // Flattened single-product fields on the item itself (codeX's rank
-      // items flatten related entities — see CreatorRankItem's shape).
+    : // Flattened single-product fields on the item itself (codeX rank
+      // items flatten related entities, same style as its creator ranks).
     raw.product_id || raw.product_name || raw.product_title
     ? [
         {
@@ -77,9 +152,10 @@ function mapItem(raw: any, index: number): FastMossVideoResult | null {
       ]
     : [];
   const creator = raw.creator && typeof raw.creator === "object" ? raw.creator : null;
-  const creatorHandle = str(creator?.unique_id) ?? str(raw.creator_unique_id) ?? str(raw.unique_id);
+  const creatorHandle =
+    str(creator?.unique_id) ?? str(raw.creator_unique_id) ?? str(raw.unique_id) ?? str(raw.creator_handle);
   return {
-    video_id: str(raw.video_id) ?? str(raw.id) ?? `custom-${index}`,
+    video_id: str(raw.video_id) ?? str(raw.video_external_id) ?? str(raw.id) ?? `custom-${index}`,
     desc: str(raw.title) ?? str(raw.desc) ?? str(raw.description),
     video_url: videoUrl,
     cover: str(raw.cover_url) ?? str(raw.cover) ?? str(raw.thumbnail),
@@ -92,7 +168,7 @@ function mapItem(raw: any, index: number): FastMossVideoResult | null {
     gmv: num(raw.gmv),
     creator: creatorHandle
       ? {
-          uid: str(creator?.uid) ?? str(raw.creator_id) ?? creatorHandle,
+          uid: str(creator?.uid) ?? str(raw.creator_id) ?? str(raw.creator_external_id) ?? creatorHandle,
           unique_id: creatorHandle,
           nickname: str(creator?.nickname) ?? str(raw.nickname) ?? str(raw.creator_nickname) ?? creatorHandle,
           avatar: str(creator?.avatar_url) ?? str(creator?.avatar) ?? str(raw.avatar_url) ?? str(raw.creator_avatar),
@@ -103,97 +179,44 @@ function mapItem(raw: any, index: number): FastMossVideoResult | null {
   };
 }
 
-// order_by enum candidates per sort intent, tried in order until one isn't
-// rejected with a 422 — the winning value is remembered per process so the
-// discovery cost is paid once. (The spec's VideoOrder enum definition was
-// past the truncation point of the fetched OpenAPI doc; codeX's
-// CreatorOrder uses plain snake_case metric names, so these are the
-// plausible spellings of the two sorts this app needs.)
-const ORDER_CANDIDATES: Record<"play_count" | "units_sold", string[]> = {
-  play_count: ["play_count", "views", "view_count"],
-  units_sold: ["units_sold", "sales", "gmv"],
-};
-const discoveredOrder: Partial<Record<"play_count" | "units_sold", string>> = {};
+// The app asks in days (7/28/90); codeX ranks come in day/week/month
+// snapshots. 7 -> week, anything longer -> month, shorter -> day.
+function periodFromDays(days: number): "day" | "week" | "month" {
+  if (days >= 28) return "month";
+  if (days >= 7) return "week";
+  return "day";
+}
 
 // Same signature semantics as fastmoss.ts's fetchCategoryTrendVideos so the
 // two sources are interchangeable at the call site. Throws on hard failure —
-// the caller (fastmoss.ts) catches and falls back to FastMoss.
+// the caller (fastmoss.ts) catches and falls back to FastMoss. Returns []
+// (also triggering the fallback) when the requested category doesn't exist
+// in codeX at all.
 export async function fetchCustomTrendVideos(
   orderField: "play_count" | "units_sold",
   opts: { days?: number; region?: string; limit?: number; categoryId?: number | string | null } = {}
 ): Promise<FastMossVideoResult[]> {
-  const base = (process.env.CUSTOM_TREND_API_URL || "").replace(/\/+$/, "");
-  const key = process.env.CUSTOM_TREND_API_KEY || "";
-  if (!base || !key) return [];
+  const cfg = apiConfig();
+  if (!cfg) return [];
 
-  const headerName = process.env.CUSTOM_TREND_API_KEY_HEADER || "X-API-Key";
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    [headerName]: headerName.toLowerCase() === "authorization" ? `Bearer ${key}` : key,
-  };
+  const codexCategoryId = await resolveCodexCategoryId(opts.categoryId);
+  if (codexCategoryId === null) return [];
 
-  const candidates = discoveredOrder[orderField]
-    ? [discoveredOrder[orderField] as string]
-    : ORDER_CANDIDATES[orderField];
+  const params = new URLSearchParams({
+    period: periodFromDays(opts.days ?? 7),
+    region: opts.region ?? "US",
+    category_id: codexCategoryId,
+    page: "1",
+    page_size: String(Math.max(1, Math.min(100, opts.limit ?? 20))),
+    // Both are legal order_by values per the spec's ^(rank|units_sold|gmv|
+    // play_count|engagement_rate)$ pattern.
+    order_by: orderField,
+  });
 
-  let lastErr: string = "no order_by candidate accepted";
-  for (const orderBy of candidates) {
-    const body = {
-      region: opts.region ?? "US",
-      category_id: opts.categoryId != null && opts.categoryId !== "" ? String(opts.categoryId) : null,
-      days: Math.max(1, Math.min(90, Math.round(opts.days ?? 7))),
-      order_by: orderBy,
-      descending: true,
-      page: 1,
-      page_size: Math.max(1, Math.min(100, opts.limit ?? 20)),
-    };
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20_000);
-    try {
-      const res = await fetch(`${base}/v1/videos/rank`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      if (res.status === 422) {
-        // Validation error — most likely this order_by spelling isn't in
-        // codeX's enum. Try the next candidate.
-        lastErr = `order_by "${orderBy}" rejected (422)`;
-        continue;
-      }
-      if (!res.ok) throw new Error(`codeX /v1/videos/rank HTTP ${res.status}`);
-      const json = await res.json();
-      let items: any[] = Array.isArray(json?.list) ? json.list : Array.isArray(json?.items) ? json.items : Array.isArray(json) ? json : [];
-      discoveredOrder[orderField] = orderBy;
-      // Trust-but-verify the category filter: the user reported a
-      // "Fashion Accessories" pull coming back full of pet products —
-      // i.e. codeX either ignored category_id or its items aren't tagged
-      // with the same category scheme this app's picker uses (FastMoss
-      // c_codes). If the returned items DO carry category tags, enforce
-      // the requested category here; anything left over is genuinely that
-      // category. If that leaves nothing (scheme mismatch or codeX has no
-      // data for it), return [] so the caller's FastMoss fallback kicks in
-      // and the user still sees CORRECT-category data rather than a
-      // mislabeled list. Items with no category tags at all are left
-      // alone — nothing to verify against.
-      if (opts.categoryId != null && opts.categoryId !== "") {
-        const want = String(opts.categoryId);
-        const tagged = items.filter((it: any) => it && (it.category_id != null || it.category_code != null));
-        if (tagged.length > 0) {
-          items = items.filter((it: any) => {
-            const cid = it?.category_id ?? it?.category_code;
-            return cid != null && String(cid) === want;
-          });
-        }
-      }
-      return items
-        .map(mapItem)
-        .filter((v): v is FastMossVideoResult => v !== null)
-        .slice(0, opts.limit ?? 20);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw new Error(lastErr);
+  const json = await getWithTimeout(`${cfg.base}/v1/videos/rank?${params.toString()}`, cfg.headers);
+  const items: any[] = Array.isArray(json?.list) ? json.list : [];
+  return items
+    .map(mapItem)
+    .filter((v): v is FastMossVideoResult => v !== null)
+    .slice(0, opts.limit ?? 20);
 }
