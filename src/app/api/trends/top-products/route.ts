@@ -135,6 +135,9 @@ export async function GET(req: NextRequest) {
     // path whenever codeX isn't configured, errors, or has nothing for
     // this category.
     let dedupedRaw: RawTrendItem[] | null = null;
+    // True when the list came from codeX's dedicated PRODUCT ranking — those
+    // items have no videos at all, which matters below (no batch persist).
+    let fromProductRank = false;
     if (isCustomTrendApiConfigured()) {
       try {
         const prodItems = await fetchCustomProductRank({ days, region: REGION, limit, categoryId });
@@ -149,6 +152,7 @@ export async function GET(req: NextRequest) {
             gmv: p.gmv != null ? formatUsd(p.gmv) || undefined : undefined,
             sales: p.units_sold ?? undefined,
           }));
+          fromProductRank = true;
         }
       } catch {
         // codeX product rank unavailable — video-derived fallback below.
@@ -237,30 +241,43 @@ export async function GET(req: NextRequest) {
     if (filteredRaw.length === 0) filteredRaw = dedupedRaw;
     filteredRaw = filteredRaw.map((item, i) => ({ ...item, rank: i + 1 }));
 
-    // Reuses the shared ingest pipeline purely so each product gets the same
-    // video hydration (video_id lookup/creation + transcribe queueing) that
-    // powers the "Add to Creation" button on ProductCard — not because this
-    // needs to persist as a "views" batch too (top_by_views is empty here).
-    const batch = ingestTrendBatch({
-      category: categoryLabel || String(categoryId ?? "All categories"),
-      category_id: categoryId ? String(categoryId) : null,
-      date_from: new Date(Date.now() - days * 86400 * 1000).toISOString().slice(0, 10),
-      date_to: new Date().toISOString().slice(0, 10),
-      days,
-      top_by_views: [],
-      top_by_sales: filteredRaw,
-    });
-
-    const products = batch.top_by_sales.map((item) => ({
-      ...item,
-      video: item.video_id ? getVideo(item.video_id) : null,
-      recommendationScore: item.product_id ? score.get(item.product_id) ?? null : null,
-    }));
+    // Video-derived items go through the shared ingest pipeline purely so
+    // each product gets video hydration (video_id lookup/creation +
+    // transcribe queueing) for ProductCard's "Add to Creation" button.
+    // Items from codeX's PRODUCT ranking carry no videos at all — for
+    // those, persisting a batch would just write video-less "top_by_sales"
+    // entries into the trend store, which the VIDEO tab's merged Best
+    // Selling list then renders as rows of dead "No thumbnail" cards (the
+    // exact pollution the user reported). So product-rank results are
+    // returned directly and never persisted as a batch.
+    let products;
+    if (fromProductRank) {
+      products = filteredRaw.map((item) => ({
+        ...item,
+        video: null,
+        recommendationScore: item.product_id ? score.get(item.product_id) ?? null : null,
+      }));
+    } else {
+      const batch = ingestTrendBatch({
+        category: categoryLabel || String(categoryId ?? "All categories"),
+        category_id: categoryId ? String(categoryId) : null,
+        date_from: new Date(Date.now() - days * 86400 * 1000).toISOString().slice(0, 10),
+        date_to: new Date().toISOString().slice(0, 10),
+        days,
+        top_by_views: [],
+        top_by_sales: filteredRaw,
+      });
+      products = batch.top_by_sales.map((item) => ({
+        ...item,
+        video: item.video_id ? getVideo(item.video_id) : null,
+        recommendationScore: item.product_id ? score.get(item.product_id) ?? null : null,
+      }));
+    }
 
     return NextResponse.json({
       products,
       categoryId,
-      categoryLabel: categoryLabel || batch.category,
+      categoryLabel: categoryLabel || String(categoryId ?? "All categories"),
       usedFallbackCategory,
     });
   } catch (err: any) {

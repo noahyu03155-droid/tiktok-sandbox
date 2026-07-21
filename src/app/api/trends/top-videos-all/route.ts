@@ -40,10 +40,17 @@ export async function GET(req: NextRequest) {
     // enrichAndBackfillTop in trends.ts, just applied across categories
     // instead of within one.
     for (const item of batch.top_by_sales) {
-      const key = item.video_id || item.fastmoss_url;
-      if (!key) continue;
-      const video = item.video_id ? getVideo(item.video_id) : null;
-      if (video && video.status === "error") continue;
+      // This is the VIDEO tab's merged feed — an item with no linked video
+      // at all has nothing to show here (no thumbnail, no breakdown, no
+      // playback) and renders as a dead grey tile. These exist in storage
+      // from the era when the Product tab persisted codeX PRODUCT-rank
+      // pulls as batches (since removed — see top-products/route.ts), and
+      // from FastMoss sales rows whose TikTok URL never resolved. Either
+      // way: videos only, in the videos feed.
+      if (!item.video_id) continue;
+      const video = getVideo(item.video_id);
+      if (!video || video.status === "error") continue;
+      const key = item.video_id;
       const existing = byVideoKey.get(key);
       if (!existing || numericSales(item) > numericSales(existing.item)) {
         byVideoKey.set(key, { item, video });
