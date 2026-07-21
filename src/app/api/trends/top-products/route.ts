@@ -5,6 +5,7 @@ import { buildFastmossVideoUrl, fetchCategoryTrendVideos, fetchFastMossCategorie
 import type { FastMossVideoResult } from "@/lib/fastmoss";
 import { ingestTrendBatch, type RawTrendItem } from "@/lib/trends";
 import { filterAndScoreProducts } from "@/lib/productRelevance";
+import { isCustomTrendApiConfigured } from "@/lib/customTrendApi";
 
 export const dynamic = "force-dynamic";
 
@@ -89,13 +90,22 @@ export async function GET(req: NextRequest) {
   const qsCategoryLabel = req.nextUrl.searchParams.get("categoryLabel");
   let categoryId = qsCategoryId || user?.preferredCategoryId || null;
   let categoryLabel = (qsCategoryId ? qsCategoryLabel : null) || user?.preferredCategoryLabel || null;
-  if (!categoryId) {
+  // No category anywhere (no dropdown pick, no saved registration category):
+  // ADMINS get an "all categories" pull instead of a dead end — the custom
+  // trend API treats a null category_id as "across the whole catalog",
+  // which is exactly what an admin poking the Update button to smoke-test
+  // the new API wants. Members keep the old "pick a category first" nudge
+  // (an unscoped live pull on every member who never registered a category
+  // would waste API quota for a list that isn't personalized anyway).
+  const allCategories = !categoryId;
+  if (allCategories && sessionUser.role !== "admin") {
     return NextResponse.json({ products: null, needsCategory: true });
   }
+  if (allCategories) categoryLabel = "All categories";
 
-  if (!process.env.FASTMOSS_API_KEY) {
+  if (!process.env.FASTMOSS_API_KEY && !isCustomTrendApiConfigured()) {
     return NextResponse.json(
-      { error: "FASTMOSS_API_KEY isn't set — can't pull live product data." },
+      { error: "Neither CUSTOM_TREND_API_URL/KEY nor FASTMOSS_API_KEY is set — can't pull live product data." },
       { status: 400 }
     );
   }
@@ -108,10 +118,13 @@ export async function GET(req: NextRequest) {
     let raw = await fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit: 50, categoryId });
     let usedFallbackCategory: string | null = null;
 
-    if (raw.length === 0) {
+    if (raw.length === 0 && !allCategories) {
       try {
         const tree = (await fetchFastMossCategories()) as FastMossCategoryNode[];
-        const parent = findParentCategory(tree || [], categoryId);
+        // categoryId is guaranteed non-null in this branch (allCategories
+        // is false), but it's a `let` reassigned below so TS can't narrow
+        // it across the awaits — hence the String() instead of a bare pass.
+        const parent = findParentCategory(tree || [], String(categoryId));
         if (parent) {
           const parentRaw = await fetchCategoryTrendVideos("units_sold", {
             days,
@@ -148,12 +161,17 @@ export async function GET(req: NextRequest) {
     // FastMoss's own data is otherwise fine; this is COTORX filtering its
     // own display, not a FastMoss bug workaround. Non-fatal — falls back to
     // showing everything, unscored, if the AI call fails.
-    const candidates = dedupedRaw
-      .filter((item) => item.product_id && (item.product_name || item.fastmoss_title))
-      .map((item) => ({
-        product_id: item.product_id as string,
-        title: (item.product_name || item.fastmoss_title || "").toString(),
-      }));
+    // "All categories" pulls skip the relevance filter entirely — there's
+    // no category to be relevant TO, and asking the AI to filter against
+    // "All categories" would just produce noise.
+    const candidates = allCategories
+      ? []
+      : dedupedRaw
+          .filter((item) => item.product_id && (item.product_name || item.fastmoss_title))
+          .map((item) => ({
+            product_id: item.product_id as string,
+            title: (item.product_name || item.fastmoss_title || "").toString(),
+          }));
     const { keep, score } = await filterAndScoreProducts(
       categoryLabel || String(categoryId),
       candidates,
@@ -179,8 +197,8 @@ export async function GET(req: NextRequest) {
     // powers the "Add to Creation" button on ProductCard — not because this
     // needs to persist as a "views" batch too (top_by_views is empty here).
     const batch = ingestTrendBatch({
-      category: categoryLabel || String(categoryId),
-      category_id: String(categoryId),
+      category: categoryLabel || String(categoryId ?? "All categories"),
+      category_id: categoryId ? String(categoryId) : null,
       date_from: new Date(Date.now() - days * 86400 * 1000).toISOString().slice(0, 10),
       date_to: new Date().toISOString().slice(0, 10),
       days,

@@ -1111,12 +1111,20 @@ export default function TrendsPageContent({
     }
   }
 
-  async function loadTopProducts(category: { id: string; label: string }, days: 7 | 28 | 90) {
+  // `category` may be null — an ADMIN pressing Update with "All categories"
+  // still selected triggers a catalog-wide pull (the server rejects this
+  // for non-admins; see top-products/route.ts). Handy for smoke-testing a
+  // freshly wired data source without first hunting for a category.
+  async function loadTopProducts(category: { id: string; label: string } | null, days: 7 | 28 | 90) {
     setTopProductsLoading(true);
     setTopProductsError(null);
-    lastTopProductsKey.current = `${category.id}:${days}`;
+    lastTopProductsKey.current = `${category?.id ?? "all"}:${days}`;
     try {
-      const qs = new URLSearchParams({ categoryId: category.id, categoryLabel: category.label, days: String(days) });
+      const qs = new URLSearchParams({ days: String(days) });
+      if (category) {
+        qs.set("categoryId", category.id);
+        qs.set("categoryLabel", category.label);
+      }
       const res = await fetch(`/api/trends/top-products?${qs.toString()}`, { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Failed to load top products");
@@ -1590,16 +1598,17 @@ export default function TrendsPageContent({
                   don't get a manual override button. */}
               {role === "admin" && (
                 <button
-                  onClick={() => productCategory && loadTopProducts(productCategory, productDays)}
-                  disabled={topProductsLoading || !productCategory}
+                  onClick={() => loadTopProducts(productCategory, productDays)}
+                  disabled={topProductsLoading}
                   className="px-4 py-1.5 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-xs font-medium whitespace-nowrap"
+                  title={productCategory ? undefined : "No category selected — pulls top sellers across ALL categories"}
                 >
                   {topProductsLoading ? t("trendUpdating") : t("trendUpdateButton")}
                 </button>
               )}
             </div>
           </div>
-          {!productCategory && (
+          {!productCategory && !topProducts && (
             <p className="text-sm text-zinc-500">{t("trendNoCategoryForProducts")}</p>
           )}
           {topProductsLoading && !topProducts && (
@@ -1611,7 +1620,7 @@ export default function TrendsPageContent({
               No data yet for "{productCategory.label}" specifically — showing the broader category "{topProductsFallback}" instead.
             </p>
           )}
-          {productCategory && topProducts && (
+          {topProducts && (
             <TrendSection
               title={t("trendTopSellingProducts")}
               items={topProducts}
