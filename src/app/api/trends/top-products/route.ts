@@ -5,7 +5,7 @@ import { buildFastmossVideoUrl, fetchCategoryTrendVideos, fetchFastMossCategorie
 import type { FastMossVideoResult } from "@/lib/fastmoss";
 import { ingestTrendBatch, type RawTrendItem } from "@/lib/trends";
 import { filterAndScoreProducts } from "@/lib/productRelevance";
-import { isCustomTrendApiConfigured } from "@/lib/customTrendApi";
+import { fetchCustomProductRank, isCustomTrendApiConfigured } from "@/lib/customTrendApi";
 
 export const dynamic = "force-dynamic";
 
@@ -119,10 +119,42 @@ export async function GET(req: NextRequest) {
     // second section only wants a Top 20, no point pulling/scoring 50.
     const qsLimit = Number(req.nextUrl.searchParams.get("limit"));
     const limit = Number.isFinite(qsLimit) ? Math.max(5, Math.min(50, Math.round(qsLimit))) : 50;
-    let raw = await fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit, categoryId });
-    let usedFallbackCategory: string | null = null;
 
-    if (raw.length === 0 && !allCategories) {
+    // PREFERRED source: codeX's dedicated product ranking — real products,
+    // directly. The older path below derives products from the VIDEO rank's
+    // attached product info, and since only a minority of ranked videos
+    // carry product data, a "Top 50" regularly came out as 4-5 cards (the
+    // exact complaint that added this). Falls through to the video-derived
+    // path whenever codeX isn't configured, errors, or has nothing for
+    // this category.
+    let dedupedRaw: RawTrendItem[] | null = null;
+    if (isCustomTrendApiConfigured()) {
+      try {
+        const prodItems = await fetchCustomProductRank({ days, region: REGION, limit, categoryId });
+        if (prodItems.length > 0) {
+          dedupedRaw = prodItems.map((p, i) => ({
+            rank: i + 1,
+            fastmoss_url: p.detail_url || "",
+            product_name: p.title,
+            product_id: p.product_id,
+            product_image: p.image || undefined,
+            product_price: p.price || undefined,
+            gmv: p.gmv != null ? formatUsd(p.gmv) || undefined : undefined,
+            sales: p.units_sold ?? undefined,
+          }));
+        }
+      } catch {
+        // codeX product rank unavailable — video-derived fallback below.
+      }
+    }
+
+    let raw: FastMossVideoResult[] = [];
+    let usedFallbackCategory: string | null = null;
+    if (!dedupedRaw) {
+      raw = await fetchCategoryTrendVideos("units_sold", { days, region: REGION, limit, categoryId });
+    }
+
+    if (!dedupedRaw && raw.length === 0 && !allCategories) {
       try {
         const tree = (await fetchFastMossCategories()) as FastMossCategoryNode[];
         // categoryId is guaranteed non-null in this branch (allCategories
@@ -149,14 +181,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    if (raw.length === 0) {
+    if (!dedupedRaw && raw.length === 0) {
       return NextResponse.json(
         { error: `No product data yet for your saved category (${categoryLabel || categoryId}) — check back later.` },
         { status: 502 }
       );
     }
 
-    const dedupedRaw = dedupeBySales(raw.map(toRawItem), limit).map((item, i) => ({ ...item, rank: i + 1 }));
+    if (!dedupedRaw) {
+      dedupedRaw = dedupeBySales(raw.map(toRawItem), limit).map((item, i) => ({ ...item, rank: i + 1 }));
+    }
 
     // COTORX-side relevance filter + per-user recommendation scoring — see
     // productRelevance.ts. FastMoss tags category on the VIDEO, not the

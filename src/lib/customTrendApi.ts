@@ -179,6 +179,68 @@ function mapItem(raw: any, index: number): FastMossVideoResult | null {
   };
 }
 
+// ---- dedicated PRODUCT ranking (GET /v1/products/rank) ----
+// The Product tab used to derive products from the VIDEO rank's attached
+// product info — but only a minority of ranked videos carry product data,
+// so a "Top 50" regularly shriveled to a handful of cards. codeX's product
+// rank endpoint returns actual products directly (order_by=units_sold),
+// which is what the tab wants. Returned as a neutral intermediate shape —
+// NOT RawTrendItem — so this module doesn't need value imports from
+// trends.ts/fastmoss.ts (fastmoss.ts already imports from here; a value
+// import back would create a cycle).
+export interface CustomProductRankItem {
+  product_id: string;
+  title: string;
+  image: string | null;
+  price: string | null;
+  units_sold: number | null;
+  gmv: number | null;
+  detail_url: string | null;
+}
+
+export async function fetchCustomProductRank(opts: {
+  days?: number;
+  region?: string;
+  limit?: number;
+  categoryId?: number | string | null;
+}): Promise<CustomProductRankItem[]> {
+  const cfg = apiConfig();
+  if (!cfg) return [];
+  const codexCategoryId = await resolveCodexCategoryId(opts.categoryId);
+  if (codexCategoryId === null) return [];
+
+  const params = new URLSearchParams({
+    period: periodFromDays(opts.days ?? 7),
+    region: opts.region ?? "US",
+    category_id: codexCategoryId,
+    page: "1",
+    page_size: String(Math.max(1, Math.min(100, opts.limit ?? 50))),
+    // Legal per the spec's ^(rank|units_sold|gmv|total_units_sold|total_gmv)$.
+    order_by: "units_sold",
+  });
+  const json = await getWithTimeout(`${cfg.base}/v1/products/rank?${params.toString()}`, cfg.headers);
+  const items: any[] = Array.isArray(json?.list) ? json.list : [];
+  return items
+    .map((raw): CustomProductRankItem | null => {
+      if (!raw || typeof raw !== "object") return null;
+      const id = str(raw.product_id) ?? str(raw.product_external_id) ?? str(raw.id);
+      const title = str(raw.title) ?? str(raw.product_name) ?? str(raw.name);
+      if (!id || !title) return null;
+      const priceNum = num(raw.price);
+      return {
+        product_id: id,
+        title,
+        image: str(raw.cover_url) ?? str(raw.image_url) ?? str(raw.cover) ?? str(raw.image),
+        price: str(raw.price) ?? (priceNum != null ? `$${priceNum}` : null),
+        units_sold: num(raw.units_sold) ?? num(raw.total_units_sold),
+        gmv: num(raw.gmv) ?? num(raw.total_gmv),
+        detail_url: str(raw.detail_url) ?? str(raw.product_url) ?? str(raw.url),
+      };
+    })
+    .filter((p): p is CustomProductRankItem => p !== null)
+    .slice(0, opts.limit ?? 50);
+}
+
 // The app asks in days (7/28/90); codeX ranks come in day/week/month
 // snapshots. 7 -> week, anything longer -> month, shorter -> day.
 function periodFromDays(days: number): "day" | "week" | "month" {
