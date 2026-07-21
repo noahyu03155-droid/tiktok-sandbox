@@ -452,12 +452,23 @@ function TrendCard({
           </div>
         )}
 
-        {item.product_id && (
+        {/* Direct jump to the ORIGINAL TikTok video — replaced the in-card
+            "AI Analysis" toggle at the user's request (same treatment the
+            product cards got). A <button> + window.open rather than a
+            nested <a>, because this whole card's root element is already a
+            <Link> and anchors can't nest; preventDefault/stopPropagation
+            keep the click from also triggering the card's own navigation. */}
+        {(item.video?.source_url || /tiktok\.com/.test(item.fastmoss_url || "")) && (
           <button
-            onClick={toggleAnalysis}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const url = item.video?.source_url || item.fastmoss_url;
+              if (url) window.open(url, "_blank", "noopener,noreferrer");
+            }}
             className="mt-2 w-full text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-500 hover:text-zinc-900 hover:border-brand-500"
           >
-            {analysisOpen ? `▲ ${t("trendHideAnalysis")}` : `🔍 ${t("trendShowAnalysis")}`}
+            🔗 {t("trendOriginalVideoLink")}
           </button>
         )}
         {item.product_id && analysisOpen && (
