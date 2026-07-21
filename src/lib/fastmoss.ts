@@ -12,6 +12,7 @@
 // by the Creator Tracker pipeline, so this still works with zero config.
 
 import { isPetRelevant } from "./petCategories";
+import { fetchCustomTrendVideos, isCustomTrendApiConfigured } from "./customTrendApi";
 import type { CreatorInfo } from "./types";
 
 const BASE_URL = "https://openapi.fastmoss.com";
@@ -156,6 +157,22 @@ export async function fetchCategoryTrendVideos(
   const days = opts.days ?? 7;
   const region = opts.region ?? "US";
   const limit = opts.limit ?? 20;
+
+  // The user's own trend API is the PREFERRED source when configured (see
+  // customTrendApi.ts for the env vars + response contract) — this one
+  // choke point covers every caller (personalized For You, top-products,
+  // manual Update, the scheduled full refresh). FastMoss stays as the
+  // fallback: custom API unconfigured, erroring, or returning an empty
+  // list all fall through to the original FastMoss path below unchanged.
+  if (isCustomTrendApiConfigured()) {
+    try {
+      const custom = await fetchCustomTrendVideos(orderField, { days, region, limit, categoryId: opts.categoryId });
+      if (custom.length > 0) return custom;
+      console.warn("[customTrendApi] returned 0 items — falling back to FastMoss");
+    } catch (e: any) {
+      console.warn(`[customTrendApi] failed (${e?.message || e}) — falling back to FastMoss`);
+    }
+  }
 
   let categoryId: number | undefined;
   if (opts.categoryId != null && opts.categoryId !== "") {
