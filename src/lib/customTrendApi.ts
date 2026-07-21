@@ -44,6 +44,17 @@ function str(v: any): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+// codeX prices arrive as a min/max pair (live-verified field names:
+// price_min / price_max) — render as "$a - $b", collapsing to "$a" when
+// equal or when only one side exists.
+function priceRange(min: any, max: any): string | null {
+  const a = num(min);
+  const b = num(max);
+  if (a == null && b == null) return null;
+  if (a != null && b != null && a !== b) return `$${a} - $${b}`;
+  return `$${a ?? b}`;
+}
+
 function apiConfig(): { base: string; headers: Record<string, string> } | null {
   const base = (process.env.CUSTOM_TREND_API_URL || "").replace(/\/+$/, "");
   const key = process.env.CUSTOM_TREND_API_KEY || "";
@@ -144,10 +155,12 @@ function mapItem(raw: any, index: number): FastMossVideoResult | null {
           product_id: raw.product_id,
           title: raw.product_title ?? raw.product_name,
           cover_url: raw.product_cover_url ?? raw.product_image,
-          price: raw.product_price,
-          units_sold: raw.product_units_sold,
-          gmv: raw.product_gmv,
-          detail_url: raw.product_url,
+          // Live-verified: video rank items carry the linked product's
+          // price as price_min/price_max on the item itself.
+          price: raw.product_price ?? priceRange(raw.price_min, raw.price_max),
+          units_sold: raw.product_units_sold ?? raw.units_sold,
+          gmv: raw.product_gmv ?? raw.gmv,
+          detail_url: raw.product_url ?? raw.source_url,
         },
       ]
     : [];
@@ -159,7 +172,10 @@ function mapItem(raw: any, index: number): FastMossVideoResult | null {
     desc: str(raw.title) ?? str(raw.desc) ?? str(raw.description),
     video_url: videoUrl,
     cover: str(raw.cover_url) ?? str(raw.cover) ?? str(raw.thumbnail),
-    publish_time: num(raw.publish_time),
+    // published_at is an ISO string live; publish_time (epoch seconds) kept
+    // as a fallback spelling.
+    publish_time:
+      num(raw.publish_time) ?? (str(raw.published_at) ? Math.floor(Date.parse(raw.published_at) / 1000) || null : null),
     play_count: num(raw.play_count) ?? num(raw.views) ?? num(raw.view_count),
     digg_count: num(raw.digg_count) ?? num(raw.likes) ?? num(raw.like_count),
     comment_count: num(raw.comment_count) ?? num(raw.comments),
@@ -170,8 +186,11 @@ function mapItem(raw: any, index: number): FastMossVideoResult | null {
       ? {
           uid: str(creator?.uid) ?? str(raw.creator_id) ?? str(raw.creator_external_id) ?? creatorHandle,
           unique_id: creatorHandle,
-          nickname: str(creator?.nickname) ?? str(raw.nickname) ?? str(raw.creator_nickname) ?? creatorHandle,
-          avatar: str(creator?.avatar_url) ?? str(creator?.avatar) ?? str(raw.avatar_url) ?? str(raw.creator_avatar),
+          // Live-verified codeX spellings: creator_name / creator_avatar_url.
+          nickname:
+            str(creator?.nickname) ?? str(raw.creator_name) ?? str(raw.nickname) ?? str(raw.creator_nickname) ?? creatorHandle,
+          avatar:
+            str(creator?.avatar_url) ?? str(creator?.avatar) ?? str(raw.creator_avatar_url) ?? str(raw.avatar_url) ?? str(raw.creator_avatar),
           follower_count: num(creator?.follower_count) ?? num(raw.follower_count),
         }
       : null,
@@ -229,15 +248,16 @@ export async function fetchCustomProductRank(opts: {
       const id = str(raw.product_id) ?? str(raw.product_external_id) ?? str(raw.id);
       const title = str(raw.title) ?? str(raw.product_name) ?? str(raw.name);
       if (!id || !title) return null;
-      const priceNum = num(raw.price);
       return {
         product_id: id,
         title,
         image: str(raw.cover_url) ?? str(raw.image_url) ?? str(raw.cover) ?? str(raw.image),
-        price: str(raw.price) ?? (priceNum != null ? `$${priceNum}` : null),
+        // Live-verified codeX fields: price_min/price_max (no plain `price`),
+        // source_url (no `detail_url`).
+        price: str(raw.price) ?? priceRange(raw.price_min, raw.price_max),
         units_sold: num(raw.units_sold) ?? num(raw.total_units_sold),
         gmv: num(raw.gmv) ?? num(raw.total_gmv),
-        detail_url: str(raw.detail_url) ?? str(raw.product_url) ?? str(raw.url),
+        detail_url: str(raw.source_url) ?? str(raw.detail_url) ?? str(raw.product_url) ?? str(raw.url),
       };
     })
     .filter((p): p is CustomProductRankItem => p !== null)
