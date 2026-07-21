@@ -752,13 +752,19 @@ function ProductCard({ item }: { item: EnrichedItem }) {
           )}
         </div>
 
-        {item.product_id && (
-          <button
-            onClick={toggleAnalysis}
-            className="mt-2 w-full text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-500 hover:text-zinc-900 hover:border-brand-500"
+        {/* Direct link to the product's ORIGINAL page (codeX's source_url,
+            carried in fastmoss_url) — replaced the old in-card "AI
+            Analysis" toggle at the user's request; the full analysis still
+            lives on the product detail page reached by clicking the card. */}
+        {item.fastmoss_url && (
+          <a
+            href={item.fastmoss_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 block w-full text-center text-[10px] px-2 py-1.5 rounded border border-dashed border-edge2 text-zinc-500 hover:text-zinc-900 hover:border-brand-500"
           >
-            {analysisOpen ? `▲ ${t("trendHideAnalysis")}` : `🔍 ${t("trendShowAnalysis")}`}
-          </button>
+            🔗 {t("trendProductLink")}
+          </a>
         )}
         {item.product_id && analysisOpen && (
           <div className="mt-2 pt-2 border-t border-edge space-y-3">
