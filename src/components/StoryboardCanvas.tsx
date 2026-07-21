@@ -310,6 +310,22 @@ export default function StoryboardCanvas({
   onClose: () => void;
 }) {
   const [board, setBoard] = useState<StoryboardState>(() => initialStoryboard || defaultStoryboard(seedStages));
+  // How tall the app's sticky <header> (HeaderBar) currently is — the
+  // canvas takeover starts BELOW it instead of covering the whole viewport
+  // (`fixed inset-0`, the previous behavior), which was hiding the entire
+  // top nav whenever a canvas was open and reported as "the menu bar all
+  // disappeared". Measured live (not hardcoded) since the header's height
+  // depends on breakpoint/locale line-wrapping.
+  const [headerOffset, setHeaderOffset] = useState(0);
+  useEffect(() => {
+    const measure = () => {
+      const el = document.querySelector("header");
+      setHeaderOffset(el ? Math.round(el.getBoundingClientRect().height) : 0);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
   const [pickerForNode, setPickerForNode] = useState<string | null>(null);
   // Which pending TikTok card the "Generate product script" product picker
   // is currently open for (null = closed).
@@ -1945,7 +1961,11 @@ export default function StoryboardCanvas({
   const connectionGeoms = board.connections.map((c) => ({ c, g: connectionGeometry(c) }));
 
   return (
-    <div className="fixed inset-0 bg-panel2 z-50 flex flex-col">
+    // z-10 (below HeaderBar's z-20) + a measured top offset so the sticky
+    // top nav stays visible and clickable above the canvas — full-screen
+    // overlays that SHOULD cover everything (Manual Edit, modals) have
+    // their own fixed inset-0 z-50 containers inside and are unaffected.
+    <div className="fixed left-0 right-0 bottom-0 bg-panel2 z-10 flex flex-col" style={{ top: headerOffset }}>
       <input ref={fileInputRef} type="file" accept="video/*,image/*" className="hidden" onChange={handleFileChosen} />
       <input ref={styleFileInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" onChange={handleStyleFileChosen} />
       <input ref={refFileInputRef} type="file" accept="video/*" className="hidden" onChange={handleRefFileChosen} />

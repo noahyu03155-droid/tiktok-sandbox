@@ -754,6 +754,17 @@ export function startRenderJob(
         if (clip.kind === "video") {
           let targetSec = Math.min(20, Math.max(1, estimateSpeechSeconds(text) * durationMultiplier));
           const clipDurationSec = await probeDurationSec(srcPath);
+          const hasAudio = await probeHasAudio(srcPath);
+          // Timed transcript of the ENTIRE take (not just the final window)
+          // for the smart-trim pass below — this is what lets segment
+          // selection avoid moments where an off-camera person is audibly
+          // giving filming directions (reported as "the export includes the
+          // prompter talking in the background"). Best-effort: null just
+          // means the pick falls back to frames-only, as before.
+          const fullTranscript =
+            hasAudio && clipDurationSec > targetSec
+              ? await transcribeShotAudio(srcPath, 0, clipDurationSec, clipDurationSec, tmpDir, i)
+              : null;
           const startSec =
             clipDurationSec > targetSec
               ? await pickBestSegment({
@@ -763,9 +774,9 @@ export function startRenderJob(
                   clipDurationSec,
                   tmpDir,
                   apiKey: openaiApiKey,
+                  timedTranscript: fullTranscript,
                 })
               : 0;
-          const hasAudio = await probeHasAudio(srcPath);
           if (hasAudio) {
             // Don't hard-cut exactly at the script-text estimate if that
             // lands mid-word or mid-expression right before the transition

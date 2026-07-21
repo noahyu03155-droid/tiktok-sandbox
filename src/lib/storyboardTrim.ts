@@ -90,8 +90,17 @@ export async function pickBestSegment(opts: {
   clipDurationSec: number;
   tmpDir: string;
   apiKey: string | undefined;
+  // Optional timed transcript of the WHOLE source take (absolute seconds,
+  // same clock as the frame timestamps) — lets the model "hear" the clip,
+  // not just see it. Raw UGC takes routinely have an off-camera person
+  // giving directions between/behind deliveries ("okay now hold it up",
+  // "look at the camera", counting in) — those show up as transcript lines
+  // that clearly aren't the creator delivering the shot's script, and the
+  // model is told to treat their time ranges as off-limits when choosing
+  // the window.
+  timedTranscript?: { start: number; end: number; text: string }[] | null;
 }): Promise<number> {
-  const { srcPath, text, targetSec, clipDurationSec, tmpDir, apiKey } = opts;
+  const { srcPath, text, targetSec, clipDurationSec, tmpDir, apiKey, timedTranscript } = opts;
   const latestStart = Math.max(0, clipDurationSec - targetSec);
   if (!apiKey || latestStart <= 0.1 || !text.trim()) return 0;
 
@@ -153,7 +162,19 @@ export async function pickBestSegment(opts: {
           `marked with 🎬, e.g. "show a close-up reaction after trying it" or "demonstrate the product working") ` +
           `treat that as a literal, high-priority instruction for which visual moment to find — it's telling you ` +
           `exactly what should be on screen. ` +
-          `Respond with ONLY a JSON object: {"start_sec": <number>}`,
+          (timedTranscript && timedTranscript.length
+            ? `\n\nHere is a timed transcript of EVERYTHING audible in the clip (same seconds clock as the frames):\n` +
+              timedTranscript.map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`).join("\n") +
+              `\n\nCRITICAL audio rule: this is a raw take, so some lines may be an OFF-CAMERA person giving ` +
+              `filming directions ("okay now hold it up", "look at the camera", counting in, crew chatter) or the ` +
+              `creator breaking character to ask/respond — anything that is clearly NOT the creator delivering the ` +
+              `shot content described above. The final video keeps the clip's real audio, so a window that overlaps ` +
+              `those moments ships with a stranger's voice in the background. Treat every such line's time range as ` +
+              `OFF-LIMITS: pick a window that avoids them entirely, even if that means choosing a visually ` +
+              `second-best moment. If every possible window overlaps direction-chatter, pick the one where it ` +
+              `overlaps the least. ` +
+              `\n\nRespond with ONLY a JSON object: {"start_sec": <number>}`
+            : `Respond with ONLY a JSON object: {"start_sec": <number>}`),
       },
       ...frames.map((f) => ({
         type: "image_url",
