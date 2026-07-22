@@ -21,6 +21,12 @@ export interface EditingFeedbackAdjustment {
   transitionSec: number;
   durationMultiplier: number;
   captionStyle: StoryboardCaptionStyle;
+  // Seconds to physically cut off the END of the finished video (0 = no
+  // trim). Added because "remove the last 2 seconds" is one of the most
+  // common notes and none of the other knobs can actually do it — the
+  // interpreter used to CLAIM it was applied while the render came out
+  // unchanged (reported live by the user).
+  trimEndSec: number;
   notes: string;
 }
 
@@ -46,8 +52,10 @@ export async function interpretEditingFeedback(opts: {
           content:
             `A short-form product video is about to be re-rendered from the same shots, in the same order — no re-shoot, no re-ordering, no clip changes possible. The creator left this note about what to change about the EDIT:\n"${feedbackText.trim()}"\n\n` +
             `Current render settings: transition=${current.transition}, transitionSec=${current.transitionSec}, durationMultiplier=${current.durationMultiplier} (>1 = slower/longer shots, <1 = faster/shorter shots), captionStyle=${current.captionStyle}.\n\n` +
-            `Only these four settings can actually change. Read the note and decide which of them should change to honor it, leaving anything the note doesn't address at its current value (don't change a setting just because you can — only change what the note implies). ` +
-            `Output ONLY a single JSON object (no markdown fences): {"transition": one of ${JSON.stringify(TRANSITION_PRESETS)}, "transitionSec": number (0.05 to 0.6), "durationMultiplier": number (0.5 to 1.8), "captionStyle": one of ${JSON.stringify(CAPTION_STYLES)}, "notes": "one short plain-English sentence describing what you changed and why, to show the creator"}`,
+            `Only these settings can actually change. Read the note and decide which of them should change to honor it, leaving anything the note doesn't address at its current value (don't change a setting just because you can — only change what the note implies). ` +
+            `"trimEndSec" physically cuts that many seconds off the END of the finished video — use it when the note asks to remove/cut/shorten the ending (e.g. "把最后2秒去掉" / "cut the last 2 seconds" → trimEndSec 2). Leave it 0 otherwise. ` +
+            `HONESTY rule: if the note asks for something NONE of these settings can do (re-ordering shots, swapping clips, changing what's said), say so plainly in "notes" — never claim a change was applied when it wasn't. ` +
+            `Output ONLY a single JSON object (no markdown fences): {"transition": one of ${JSON.stringify(TRANSITION_PRESETS)}, "transitionSec": number (0.05 to 0.6), "durationMultiplier": number (0.5 to 1.8), "captionStyle": one of ${JSON.stringify(CAPTION_STYLES)}, "trimEndSec": number (0 to 10, seconds to cut from the end; 0 = none), "notes": "one short plain-English sentence describing what you changed and why, to show the creator"}`,
         },
       ],
       response_format: { type: "json_object" },
@@ -60,7 +68,8 @@ export async function interpretEditingFeedback(opts: {
     const transitionSec = Number.isFinite(parsed?.transitionSec) ? Math.min(0.6, Math.max(0.05, parsed.transitionSec)) : current.transitionSec;
     const durationMultiplier = Number.isFinite(parsed?.durationMultiplier) ? Math.min(1.8, Math.max(0.5, parsed.durationMultiplier)) : current.durationMultiplier;
     const notes = typeof parsed?.notes === "string" && parsed.notes.trim() ? parsed.notes.trim() : "Applied your note.";
-    return { transition, transitionSec, durationMultiplier, captionStyle, notes };
+    const trimEndSec = Number.isFinite(parsed?.trimEndSec) ? Math.min(10, Math.max(0, parsed.trimEndSec)) : 0;
+    return { transition, transitionSec, durationMultiplier, captionStyle, trimEndSec, notes };
   } catch {
     // Feedback interpretation is a nice-to-have, not worth failing the
     // whole render over — the render just proceeds with unchanged settings.

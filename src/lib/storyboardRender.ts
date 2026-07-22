@@ -34,7 +34,7 @@ import { resolveStoryboardOrder, resolveChainNodeIds } from "@/lib/storyboard";
 import { estimateSpeechSeconds, probeDurationSec, pickBestSegment } from "@/lib/storyboardTrim";
 import { wrapCaption, CAPTION_FONT_FILE, CAPTION_FONT_FILE_BOLD, type CaptionStylePreset } from "@/lib/storyboardCaptions";
 import { interpretEditingFeedback } from "@/lib/storyboardFeedback";
-import type { StoryboardState, StoryboardTransitionPreset, TranscriptSegment } from "@/lib/types";
+import type { StoryboardState, StoryboardStyleProfile, StoryboardTransitionPreset, TranscriptSegment } from "@/lib/types";
 
 // "off" — no captions at all, burn nothing in (the default; captions are
 // opt-in, see the modal StoryboardCanvas.tsx shows before every render).
@@ -740,7 +740,11 @@ export function startRenderJob(
 
   const scalePad = `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=${FPS}`;
   const openaiApiKey = process.env.OPENAI_API_KEY;
-  const styleProfile = board.styleProfile || null;
+  // Reference-style feature removed at the user's request — any profile
+  // still saved on old boards is deliberately IGNORED, so every render
+  // uses the default pacing/transition/caption settings (plus whatever
+  // the editing-feedback note adjusts).
+  const styleProfile = null as StoryboardStyleProfile | null;
   let captionStyle: CaptionStylePreset = styleProfile?.captionStyle || "descriptive";
   // Caption VISUAL design learned from the reference video (position /
   // weight / case / color / boxed-vs-outline) — the "copy the reference's
@@ -757,6 +761,10 @@ export function startRenderJob(
   let effectiveTransition: StoryboardTransitionPreset = styleProfile && styleProfile.transition !== "hard_cut" ? styleProfile.transition : "fade";
   let effectiveTransitionSec = styleProfile?.transition === "hard_cut" ? 0.05 : styleProfile?.transitionSec ?? TRANSITION_SEC;
   const feedbackText = (board.direction || "").trim();
+  // Set from the feedback interpreter — seconds physically cut off the END
+  // of the finished video (the "remove the last 2 seconds" class of note,
+  // which no other knob could actually honor).
+  let feedbackTrimEndSec = 0;
 
   (async () => {
     const jobStartMs = Date.now();
@@ -774,6 +782,7 @@ export function startRenderJob(
           durationMultiplier = adjustment.durationMultiplier;
           effectiveTransition = adjustment.transition;
           effectiveTransitionSec = adjustment.transitionSec;
+          feedbackTrimEndSec = adjustment.trimEndSec;
           appliedFeedback = { notes: adjustment.notes };
         }
       }
@@ -933,6 +942,27 @@ export function startRenderJob(
       const finalPath = path.join(outDir, renderFilename);
       job.step = "Assembling final video (transitions + audio crossfade)...";
       await assembleFinalVideo(segmentPaths, segDurations, tmpDir, finalPath, effectiveTransition, effectiveTransitionSec);
+
+      // Physically cut the requested seconds off the END of the assembled
+      // video — the real mechanism behind "remove the last N seconds"
+      // notes. Runs on the FINAL file (post-assembly) so what's removed is
+      // exactly the ending the user watched, transitions included.
+      if (feedbackTrimEndSec > 0) {
+        const finalDur = await probeDurationSec(finalPath);
+        const keepSec = finalDur - feedbackTrimEndSec;
+        if (finalDur > 0 && keepSec > 1) {
+          job.step = `Trimming the last ${feedbackTrimEndSec.toFixed(1)}s...`;
+          const trimmedPath = path.join(tmpDir, "final_trimmed.mp4");
+          await runFfmpeg([
+            "-y", "-i", finalPath,
+            "-t", keepSec.toFixed(3),
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2", "-pix_fmt", "yuv420p",
+            ...AAC_OUT,
+            trimmedPath,
+          ]);
+          fs.copyFileSync(trimmedPath, finalPath);
+        }
+      }
 
       job.result = {
         url: `${publicUrlPrefix}/${renderFilename}`,

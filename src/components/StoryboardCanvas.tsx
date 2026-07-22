@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { REACTION_EMOTIONS } from "@/lib/types";
-import type { CanvasConnection, FunnelStageKey, GeneratedScriptStage, ReactionEmotion, StoryboardClip, StoryboardNode, StoryboardState, StoryboardStyleProfile } from "@/lib/types";
+import type { CanvasConnection, FunnelStageKey, GeneratedScriptStage, ReactionEmotion, StoryboardClip, StoryboardNode, StoryboardState } from "@/lib/types";
 import { resolveStoryboardOrder, resolveChainTails, resolveConnectedChain, resolveChainNodeIds, MIN_CHAIN_LENGTH_FOR_GENERATE, REQUIRED_STAGE_SEQUENCE, STAGE_TAG_LABELS } from "@/lib/storyboard";
 import ManualEditModal, { type ManualEditSourceClip } from "@/components/ManualEditModal";
 import StoryboardLibraryPicker, { type LibraryClipChoice } from "./StoryboardLibraryPicker";
@@ -54,8 +54,6 @@ const NOTES_BOX_H = 80;
 const CLIP_VIDEO_H = Math.round(NODE_W * (16 / 9));
 const NODE_H = HEADER_H + SCRIPT_BOX_H + SHOOTING_GUIDE_BOX_H + NOTES_BOX_H + CLIP_VIDEO_H;
 const GAP_X = 70;
-const STYLE_WIDGET_H = 34; // compact reference-style control shown above each chain-tail's Generate button
-const STYLE_WIDGET_GAP = 8;
 const GENERATE_BUTTON_H = 36;
 const SCRIPT_BUTTON_W = 76; // "⬇ Script" button that sits beside Generate/CTA, per chain
 const SCRIPT_BUTTON_GAP = 8;
@@ -613,14 +611,6 @@ export default function StoryboardCanvas({
   } | null>(null);
   const renderPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ---- "Learn from a reference video" — analyzes an example clip's cut
-  // pacing/transition/caption style and applies it to this storyboard's
-  // render instead of the fixed defaults. Profile itself lives on
-  // board.styleProfile (part of the normal autosaved state); these two are
-  // just local UI status for the upload/analyze call.
-  const [analyzingStyle, setAnalyzingStyle] = useState(false);
-  const [styleError, setStyleError] = useState<string | null>(null);
-
   // ---- daily journal chat ("write like a diary, AI replies like a friend").
   // Per-USER, not per-project — always talks to the fixed /api/journal
   // route, never `${apiBase}/...`. Always docked between the header and the
@@ -677,13 +667,12 @@ export default function StoryboardCanvas({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadNodeIdRef = useRef<string | null>(null);
-  const styleFileInputRef = useRef<HTMLInputElement | null>(null);
   const refFileInputRef = useRef<HTMLInputElement | null>(null);
   const refUploadNodeIdRef = useRef<string | null>(null);
 
   // Marks an async action as "busy" for wait-time-estimate purposes — call
   // right before starting the fetch, alongside whichever specific busy flag
-  // (busyNodeId/rendering/analyzingStyle/journalSending) that action already
+  // (busyNodeId/rendering/journalSending) that action already
   // sets. `kind` must be a key of ACTION_ESTIMATE_SEC.
   function beginBusy(kind: string) {
     busyStartedAtRef.current = Date.now();
@@ -1847,66 +1836,6 @@ export default function StoryboardCanvas({
     return step || `Shot ${completedShots}/${totalShots}...`;
   }
 
-  function startStyleUpload() {
-    styleFileInputRef.current?.click();
-  }
-
-  async function handleStyleFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setAnalyzingStyle(true);
-    beginBusy("styleAnalyze");
-    setStyleError(null);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(`${apiBase}/style/analyze`, {
-        method: "POST",
-        body: form,
-      });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error(data.error || "Style analysis failed");
-      setBoard((b) => ({ ...b, styleProfile: data.profile as StoryboardStyleProfile }));
-    } catch (err: any) {
-      setStyleError(err.message || "Style analysis failed");
-    } finally {
-      setAnalyzingStyle(false);
-      setBusyKind(null);
-    }
-  }
-
-  function clearStyleProfile() {
-    setBoard((b) => ({ ...b, styleProfile: null }));
-    setStyleError(null);
-  }
-
-  async function analyzeStyleFromUrl(url: string) {
-    setAnalyzingStyle(true);
-    beginBusy("styleAnalyze");
-    setStyleError(null);
-    try {
-      const res = await fetch(`${apiBase}/style/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      const data = await safeJson(res);
-      if (!res.ok) throw new Error(data.error || "Style analysis failed");
-      setBoard((b) => ({ ...b, styleProfile: data.profile as StoryboardStyleProfile }));
-    } catch (err: any) {
-      setStyleError(err.message || "Style analysis failed");
-    } finally {
-      setAnalyzingStyle(false);
-      setBusyKind(null);
-    }
-  }
-
-  function promptForStyleUrl() {
-    const url = window.prompt("Paste a TikTok video link to use as the editing-style reference:");
-    if (url && url.trim()) analyzeStyleFromUrl(url.trim());
-  }
-
   const nodeById = new Map(board.nodes.map((n) => [n.id, n] as const));
   const order = resolveStoryboardOrder(board.nodes, board.connections);
   const orderNumber = new Map(order.map((n, i) => [n.id, i + 1] as const));
@@ -2018,7 +1947,6 @@ export default function StoryboardCanvas({
     // their own fixed inset-0 z-50 containers inside and are unaffected.
     <div className="fixed left-0 right-0 bottom-0 bg-panel2 z-10 flex flex-col" style={{ top: headerOffset }}>
       <input ref={fileInputRef} type="file" accept="video/*,image/*" className="hidden" onChange={handleFileChosen} />
-      <input ref={styleFileInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" onChange={handleStyleFileChosen} />
       <input ref={refFileInputRef} type="file" accept="video/*" className="hidden" onChange={handleRefFileChosen} />
 
       {/* Single compact row — this used to be a two-line title+instructions
@@ -2674,67 +2602,17 @@ export default function StoryboardCanvas({
               could in principle be a not-yet-broken-down TikTok import card
               (taller than a normal card). */}
           {chainTails.map(({ node: n }) => {
-            const styleWidgetTop = n.y + cardHeight(n) + 16;
-            const generateButtonTop = styleWidgetTop + STYLE_WIDGET_H + STYLE_WIDGET_GAP;
+            const generateButtonTop = n.y + cardHeight(n) + 16;
             const manualEditButtonTop = generateButtonTop + GENERATE_BUTTON_H + MANUAL_EDIT_GAP;
             return (
               <Fragment key={`generate-group-${n.id}`}>
-                <div
-                  onMouseDown={(e) => e.stopPropagation()}
-                  className="absolute rounded-lg border border-dashed border-edge2 bg-panel px-2 flex items-center gap-1.5 text-[10px] overflow-hidden"
-                  style={{ left: n.x, top: styleWidgetTop, width: nodeWidth(n), height: STYLE_WIDGET_H }}
-                >
-                  {analyzingStyle ? (
-                    <span className="text-yellow-600 animate-pulse">{estimateLabel("Analyzing reference video...", tick)}</span>
-                  ) : board.styleProfile ? (
-                    <>
-                      <span
-                        className="text-zinc-700 truncate flex-1"
-                        title={`${board.styleProfile.pacing} pacing · ${board.styleProfile.transition === "hard_cut" ? "hard cuts" : `${board.styleProfile.transition} transitions`} · ${board.styleProfile.captionStyle} captions · ~${board.styleProfile.avgShotSec.toFixed(1)}s/shot · ${board.styleProfile.notes}`}
-                      >
-                        🎨 {board.styleProfile.pacing} · {board.styleProfile.sourceLabel}
-                      </span>
-                      <button onClick={startStyleUpload} title="Replace reference video" className="text-zinc-500 hover:text-zinc-900 shrink-0">
-                        ↺
-                      </button>
-                      <button onClick={clearStyleProfile} title="Clear reference video" className="text-zinc-500 hover:text-red-400 shrink-0">
-                        ✕
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-zinc-500 shrink-0">🎨 Reference (optional):</span>
-                      <button onClick={startStyleUpload} className="text-zinc-600 hover:text-zinc-900 shrink-0">
-                        📎 Upload
-                      </button>
-                      <button onClick={promptForStyleUrl} className="text-zinc-600 hover:text-zinc-900 shrink-0">
-                        🔗 Link
-                      </button>
-                    </>
-                  )}
-                </div>
-                {styleError && (
-                  <p
-                    className="absolute text-[9px] text-red-400 leading-tight"
-                    style={{ left: n.x, top: styleWidgetTop + STYLE_WIDGET_H + 2, width: nodeWidth(n) }}
-                  >
-                    {styleError}
-                  </p>
-                )}
                 <button
                   onClick={() => requestRender(n.id)}
-                  // Also locked while a reference video is still being
-                  // analyzed — generating mid-analysis would render with
-                  // the OLD (or no) style profile, then look like the
-                  // reference was ignored. Button re-enabling is the
-                  // signal that the reference's editing style has been
-                  // fully absorbed and will be applied.
-                  disabled={rendering || analyzingStyle}
+                  disabled={rendering}
                   className="absolute flex items-center justify-center px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
                   style={{ left: n.x, top: generateButtonTop, width: nodeWidth(n) - SCRIPT_BUTTON_W - SCRIPT_BUTTON_GAP, height: GENERATE_BUTTON_H }}
-                  title={analyzingStyle ? "Learning the reference video's editing style — Generate unlocks when it's absorbed" : undefined}
                 >
-                  {analyzingStyle ? "🎨 Learning reference…" : renderButtonLabel()}
+                  {renderButtonLabel()}
                 </button>
                 {/* "⬇ Script" sits right next to Generate/CTA, not up in the
                     global toolbar — a board can hold several independent
@@ -2850,14 +2728,8 @@ export default function StoryboardCanvas({
 
                           <div className="flex items-center gap-2 flex-wrap">
                             <button
-                              onClick={startStyleUpload}
-                              className="h-8 px-2.5 rounded border border-dashed border-edge2 text-[10px] text-zinc-600 hover:text-zinc-900 hover:border-brand-500 shrink-0"
-                            >
-                              📎 {board.styleProfile ? `Ref: ${board.styleProfile.sourceLabel}` : "Import reference video"}
-                            </button>
-                            <button
                               onClick={() => requestRender(n.id)}
-                              disabled={rendering || analyzingStyle}
+                              disabled={rendering}
                               className="h-8 px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-[11px] font-medium shrink-0"
                             >
                               {rendering && renderChainTailId === n.id ? "Regenerating..." : "🔁 Regenerate"}
