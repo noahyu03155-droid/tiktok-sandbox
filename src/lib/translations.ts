@@ -304,6 +304,7 @@ export const translations = {
     onboardingSkip: "Skip for now",
 
     navUserData: "User Data",
+    navCodes: "Codes",
     userDataHeading: "User Data",
     userDataHeadingHint: "A quick visual snapshot of each member, built from what they've shared so far.",
     userDataSearchPlaceholder: "Search by username...",
@@ -732,6 +733,7 @@ export const translations = {
     onboardingSkip: "暂时跳过",
 
     navUserData: "用户画像",
+    navCodes: "推广码",
     userDataHeading: "用户画像",
     userDataHeadingHint: "根据每个人已经填写的信息，快速看懂他们是谁。",
     userDataSearchPlaceholder: "按用户名搜索...",

@@ -74,6 +74,40 @@ export default function PricingPageContent({
   const [purchasingPlan, setPurchasingPlan] = useState<PlanId | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Promo / affiliate code — validated server-side (/api/promo-codes/
+  // validate, plan-gate-exempt) before it's shown as applied; the ACTUAL
+  // discount is recomputed server-side again at purchase, so nothing here
+  // is trusted for money math. Applied code discounts every displayed
+  // price via `discounted()` below so the buyer sees real numbers.
+  const [promoInput, setPromoInput] = useState("");
+  const [promo, setPromo] = useState<{ code: string; percentOff: number; kind: string } | null>(null);
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [promoChecking, setPromoChecking] = useState(false);
+
+  async function applyPromo() {
+    const code = promoInput.trim();
+    if (!code) return;
+    setPromoChecking(true);
+    setPromoError(null);
+    try {
+      const res = await fetch("/api/promo-codes/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.valid) throw new Error(data.error || (zh ? "无效的优惠码" : "Invalid code"));
+      setPromo({ code: data.code, percentOff: data.percentOff, kind: data.kind });
+    } catch (e: any) {
+      setPromo(null);
+      setPromoError(e.message || (zh ? "无效的优惠码" : "Invalid code"));
+    } finally {
+      setPromoChecking(false);
+    }
+  }
+
+  const discounted = (v: number) => (promo ? Math.round(v * (1 - promo.percentOff / 100)) : v);
+
   // Self-heal a stale paywall: if an admin granted this account a plan from
   // the User Data page (DB active, but this browser's cookie still says
   // planActive=false), refresh-session re-signs the cookie and we leave the
@@ -113,7 +147,7 @@ export default function PricingPageContent({
       const res = await fetch("/api/billing/select-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: planId, billingCycle: cycleId, seats: seatsByPlan[planId] || 0 }),
+        body: JSON.stringify({ plan: planId, billingCycle: cycleId, seats: seatsByPlan[planId] || 0, promoCode: promo?.code || undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -164,6 +198,31 @@ export default function PricingPageContent({
           </div>
         </div>
 
+        {/* Promo / affiliate code entry — one code applies page-wide. */}
+        <div className="flex justify-center items-center gap-2 mb-6 flex-wrap">
+          <input
+            value={promoInput}
+            onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
+            onKeyDown={(e) => e.key === "Enter" && applyPromo()}
+            placeholder={zh ? "优惠码 / 达人推广码" : "Discount / creator code"}
+            className="px-3 py-2 rounded-lg bg-panel border border-edge text-sm text-zinc-900 outline-none focus:border-brand-500 font-mono w-56"
+          />
+          <button
+            onClick={applyPromo}
+            disabled={promoChecking || !promoInput.trim()}
+            className="px-4 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-700 disabled:opacity-40 text-white text-sm"
+          >
+            {promoChecking ? (zh ? "验证中…" : "Checking…") : zh ? "应用" : "Apply"}
+          </button>
+          {promo && (
+            <span className="text-sm text-emerald-600 font-medium">
+              ✓ {promo.code} −{promo.percentOff}%{" "}
+              <button onClick={() => { setPromo(null); setPromoInput(""); }} className="text-zinc-400 hover:text-red-500 ml-1">✕</button>
+            </span>
+          )}
+          {promoError && <span className="text-sm text-red-500">{promoError}</span>}
+        </div>
+
         {error && <p className="text-center text-sm text-red-500 mb-4">{error}</p>}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5 items-start">
@@ -192,14 +251,15 @@ export default function PricingPageContent({
 
                 <div className="px-5 pt-4">
                   <div className="flex items-baseline gap-1">
-                    <span className="text-3xl font-bold text-zinc-900">${price.perMonth}</span>
+                    {promo && <span className="text-lg text-zinc-400 line-through">${price.perMonth}</span>}
+                    <span className="text-3xl font-bold text-zinc-900">${discounted(price.perMonth)}</span>
                     <span className="text-sm text-zinc-500">{copy.perMonth}</span>
                   </div>
                   {cycle.discount > 0 ? (
                     <p className="text-xs text-zinc-400 mt-1">
                       <span className="line-through">${plan.monthlyUsd * cycle.months}</span>
                       <span className="ml-1.5 font-medium" style={{ color: plan.accent }}>
-                        {copy.billedTotal(zh ? cycle.labelZh : cycle.labelEn, price.total)}
+                        {copy.billedTotal(zh ? cycle.labelZh : cycle.labelEn, discounted(price.total))}
                       </span>
                     </p>
                   ) : (

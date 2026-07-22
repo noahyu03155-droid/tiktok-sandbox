@@ -786,3 +786,37 @@ export interface TrackedCreator {
   // scan above, populated (and refreshed) independently. Null until scraped.
   affiliate: CreatorAffiliateStats | null;
 }
+
+// ---- Promo codes (admin "Code Generator" page, src/app/codes) ----
+// Two kinds, one shared shape:
+//   "discount"  — plain marketing code: buyer gets percentOff at checkout.
+//   "affiliate" — a creator's personal code: buyer STILL gets percentOff,
+//                 and every purchase made with it is logged with a
+//                 commission amount for that creator, so payouts can be
+//                 tallied per code on the admin page.
+export interface PromoCodeUse {
+  userId: string;
+  username: string;
+  plan: PlanId;
+  billingCycle: BillingCycle;
+  seats: number;
+  // Whole order value AFTER the discount (what the buyer actually pays).
+  totalUsd: number;
+  // How much the buyer saved via the code.
+  discountUsd: number;
+  // The affiliate's cut of totalUsd (0 for plain discount codes).
+  commissionUsd: number;
+  at: string; // ISO timestamp
+}
+
+export interface PromoCode {
+  id: string;
+  code: string; // stored uppercase, unique across all codes
+  kind: "discount" | "affiliate";
+  percentOff: number; // buyer-facing discount, 1-90
+  commissionPercent: number; // affiliate's % of the PAID total (0 for discount kind)
+  affiliateName: string | null; // creator name/handle, affiliate kind only
+  active: boolean;
+  createdAt: string;
+  uses: PromoCodeUse[];
+}

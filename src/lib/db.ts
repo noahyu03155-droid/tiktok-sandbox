@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
-import type { VideoRecord, TrendBatch, CreatorInfo, TrackedCreator, User, UserRole, CreationProject, JournalEntry, ReactionEmotion } from "./types";
+import type { VideoRecord, TrendBatch, CreatorInfo, TrackedCreator, User, UserRole, CreationProject, JournalEntry, ReactionEmotion, PromoCode, PromoCodeUse } from "./types";
 import { hashPassword } from "./password";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -62,6 +62,9 @@ interface Store {
   // Per-user daily journal chat log ("write like a diary, AI replies like a
   // friend" — see src/lib/journal.ts and /api/journal), keyed by userId.
   journalEntries: Record<string, JournalEntry[]>;
+  // Admin-generated discount/affiliate codes (src/app/codes) — keyed by id.
+  // Optional so an existing db.json from before this feature parses fine.
+  promoCodes?: Record<string, PromoCode>;
   shopifyAccessToken?: string | null;
   // Cached result of the last full FastMoss category-tree scan (see
   // src/lib/fastmossCategoryScan.ts) — which category ids actually returned
@@ -658,5 +661,63 @@ export function updateCreationProject(id: string, patch: Partial<CreationProject
 export function deleteCreationProject(id: string) {
   const store = load();
   delete store.creationProjects[id];
+  persist();
+}
+
+// ---- Promo codes (admin "Code Generator", src/app/codes) ----
+
+function promoStore(store: ReturnType<typeof load>): Record<string, PromoCode> {
+  if (!store.promoCodes) store.promoCodes = {};
+  return store.promoCodes;
+}
+
+export function listPromoCodes(): PromoCode[] {
+  const store = load();
+  return Object.values(promoStore(store)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function getPromoCodeByCode(code: string): PromoCode | null {
+  const store = load();
+  const want = code.trim().toUpperCase();
+  return Object.values(promoStore(store)).find((c) => c.code === want) || null;
+}
+
+export function createPromoCode(input: Omit<PromoCode, "id" | "createdAt" | "uses">): PromoCode {
+  const store = load();
+  const codes = promoStore(store);
+  const promo: PromoCode = {
+    ...input,
+    code: input.code.trim().toUpperCase(),
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    uses: [],
+  };
+  codes[promo.id] = promo;
+  persist();
+  return promo;
+}
+
+export function updatePromoCode(id: string, patch: Partial<Pick<PromoCode, "active" | "percentOff" | "commissionPercent" | "affiliateName">>) {
+  const store = load();
+  const codes = promoStore(store);
+  const existing = codes[id];
+  if (!existing) return;
+  codes[id] = { ...existing, ...patch };
+  persist();
+}
+
+export function deletePromoCode(id: string) {
+  const store = load();
+  const codes = promoStore(store);
+  delete codes[id];
+  persist();
+}
+
+export function recordPromoCodeUse(id: string, use: PromoCodeUse) {
+  const store = load();
+  const codes = promoStore(store);
+  const existing = codes[id];
+  if (!existing) return;
+  existing.uses.push(use);
   persist();
 }

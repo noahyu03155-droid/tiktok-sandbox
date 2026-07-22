@@ -36,6 +36,8 @@ export default function HeaderBar({
   // signed-in member, unlike the tabs above which are gated by canSeeTab.
   navItems.push({ href: "/favorites", label: t("navFavorites") });
   if (isSuperAdmin) navItems.push({ href: "/user-data", label: t("navUserData") });
+  // Admin-only "Code Generator" — discount + affiliate codes (src/app/codes).
+  if (isSuperAdmin) navItems.push({ href: "/codes", label: t("navCodes") });
 
   return (
     // Phase 41: reverted Phase 39's thick black border/outlined nav pill —
