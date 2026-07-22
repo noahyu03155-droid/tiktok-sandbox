@@ -805,19 +805,47 @@ export default function StoryboardCanvas({
     // was a plain click (clear the selection), not a pan (leave the
     // selection alone; the user was just navigating).
     let maxTravel = 0;
+    // rAF-coalesced like handleWheel below — mousemove also fires much
+    // faster than the full-canvas re-render each setBoard costs, so
+    // per-event updates made panning feel like it was fighting the mouse.
+    let panRaf = 0;
+    let lastMove: { x: number; y: number } | null = null;
     function onMove(ev: MouseEvent) {
       maxTravel = Math.max(maxTravel, Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY));
-      setBoard((b) => ({ ...b, pan: { x: originPan.x + (ev.clientX - startX), y: originPan.y + (ev.clientY - startY) } }));
+      lastMove = { x: ev.clientX, y: ev.clientY };
+      if (panRaf) return;
+      panRaf = requestAnimationFrame(() => {
+        panRaf = 0;
+        if (!lastMove) return;
+        const { x, y } = lastMove;
+        setBoard((b) => ({ ...b, pan: { x: originPan.x + (x - startX), y: originPan.y + (y - startY) } }));
+      });
     }
     function onUp() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      if (panRaf) cancelAnimationFrame(panRaf);
+      // Apply the final position so releasing mid-frame never loses the
+      // last few pixels of travel.
+      if (lastMove) {
+        const { x, y } = lastMove;
+        setBoard((b) => ({ ...b, pan: { x: originPan.x + (x - startX), y: originPan.y + (y - startY) } }));
+      }
       if (maxTravel < 4) setSelectedIds(new Set());
     }
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }
 
+  // Wheel-zoom events arrive far faster than the canvas can re-render (a
+  // single flick can fire 10+ events, and each setBoard re-renders every
+  // card + the connection SVG) — so raw per-event updates queued up into
+  // the "zoom is laggy/unresponsive" feel. Coalesced via rAF instead: each
+  // event only ACCUMULATES a zoom factor (and the latest cursor position),
+  // and at most one setBoard runs per animation frame, applying the whole
+  // accumulated step at once. Same pattern as Manual Edit's row-resize
+  // handle (see ManualEditModal's beginRowResizeDrag rAF note).
+  const pendingWheelZoom = useRef<{ factor: number; mouseX: number; mouseY: number } | null>(null);
   function handleWheel(e: WheelEvent) {
     // Let a scrollable textarea (the Script / "your editing notes" boxes)
     // handle its own wheel scroll natively instead of always zooming the
@@ -829,11 +857,25 @@ export default function StoryboardCanvas({
     const rect = viewportRef.current?.getBoundingClientRect();
     const mouseX = e.clientX - (rect?.left ?? 0);
     const mouseY = e.clientY - (rect?.top ?? 0);
-    setBoard((b) => {
-      const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, b.zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
-      const worldX = (mouseX - b.pan.x) / b.zoom;
-      const worldY = (mouseY - b.pan.y) / b.zoom;
-      return { ...b, zoom: nextZoom, pan: { x: mouseX - worldX * nextZoom, y: mouseY - worldY * nextZoom } };
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    if (pendingWheelZoom.current) {
+      // A frame is already scheduled — fold this event into it.
+      pendingWheelZoom.current.factor *= factor;
+      pendingWheelZoom.current.mouseX = mouseX;
+      pendingWheelZoom.current.mouseY = mouseY;
+      return;
+    }
+    pendingWheelZoom.current = { factor, mouseX, mouseY };
+    requestAnimationFrame(() => {
+      const p = pendingWheelZoom.current;
+      pendingWheelZoom.current = null;
+      if (!p) return;
+      setBoard((b) => {
+        const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, b.zoom * p.factor));
+        const worldX = (p.mouseX - b.pan.x) / b.zoom;
+        const worldY = (p.mouseY - b.pan.y) / b.zoom;
+        return { ...b, zoom: nextZoom, pan: { x: p.mouseX - worldX * nextZoom, y: p.mouseY - worldY * nextZoom } };
+      });
     });
   }
 

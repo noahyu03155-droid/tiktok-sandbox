@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useLocale } from "@/lib/i18n";
 import { formatCompactNumber, STATUS_KEY } from "@/lib/format";
@@ -197,7 +197,7 @@ function SaturationBar({ count }: { count: number }) {
   );
 }
 
-function TrendCard({
+function TrendCardInner({
   item,
   metric,
   selectMode,
@@ -587,6 +587,20 @@ function TrendCard({
   );
 }
 
+// Memoized with a comparator that deliberately IGNORES the onToggleSelect
+// callback prop (recreated on every parent render, but semantically stable
+// — it's always "toggle this same batch/metric/rank key"). Without this,
+// EVERY state change anywhere in TrendsPageContent (a tab click, opening a
+// dropdown, a favorite toggle) re-rendered all several-hundred cards on
+// the page at once, which is exactly the "every click on the Trend page
+// lags badly" report this fixes.
+const TrendCard = memo(TrendCardInner, (prev, next) =>
+  prev.item === next.item &&
+  prev.metric === next.metric &&
+  prev.selectMode === next.selectMode &&
+  prev.selected === next.selected
+);
+
 // A real PRODUCT card (image + name + price + GMV/units-sold), for the "Top
 // 20 Viral Products" section — deliberately NOT the video-card layout
 // TrendCard above renders (thumbnail/caption/creator), since this section
@@ -594,7 +608,9 @@ function TrendCard({
 // same on-demand "AI Analysis" panel (SalesTrendChart/SaturationBar), just
 // with its own copy of the open/loading/error state rather than sharing
 // TrendCard's, to keep the two card types independent and simple.
-function ProductCard({ item }: { item: EnrichedItem }) {
+// Memoized for the same reason as TrendCard above — its only prop is the
+// (referentially stable between unrelated renders) item object.
+function ProductCardInner({ item }: { item: EnrichedItem }) {
   const { t } = useLocale();
   const favorites = useContext(FavoritesContext);
 
@@ -865,6 +881,8 @@ function ProductCard({ item }: { item: EnrichedItem }) {
     </div>
   );
 }
+
+const ProductCard = memo(ProductCardInner);
 
 function TrendSection({
   title,
