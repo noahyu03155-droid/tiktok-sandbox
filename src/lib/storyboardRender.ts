@@ -765,7 +765,7 @@ export function startRenderJob(
             hasAudio && clipDurationSec > targetSec
               ? await transcribeShotAudio(srcPath, 0, clipDurationSec, clipDurationSec, tmpDir, i)
               : null;
-          const startSec =
+          const pick =
             clipDurationSec > targetSec
               ? await pickBestSegment({
                   srcPath,
@@ -776,14 +776,30 @@ export function startRenderJob(
                   apiKey: openaiApiKey,
                   timedTranscript: fullTranscript,
                 })
-              : 0;
+              : { startSec: 0, cleanEndSec: null };
+          const startSec = pick.startSec;
+          // HARD boundary against off-camera speech: when the picker
+          // reports the clean stretch ends before the full target length
+          // (clean_end_sec), the shot is CUT SHORT to end before it — a
+          // shorter clean shot always beats shipping an unrelated
+          // background voice in the final video. Absolute by design,
+          // unless the creator's own shot text / note explicitly asked to
+          // keep that audio (the picker omits the boundary in that case).
+          const cleanBound =
+            pick.cleanEndSec != null ? Math.min(clipDurationSec, pick.cleanEndSec) : clipDurationSec;
+          if (cleanBound < startSec + targetSec) {
+            targetSec = Math.max(1, cleanBound - startSec);
+          }
           if (hasAudio) {
             // Don't hard-cut exactly at the script-text estimate if that
             // lands mid-word or mid-expression right before the transition
             // to the next shot — nudge forward (bounded) to wherever the
             // audio actually has a natural pause, so the sentence/reaction
-            // finishes playing out before the cut.
-            targetSec = await extendToNaturalPause(srcPath, startSec, targetSec, clipDurationSec);
+            // finishes playing out before the cut. `cleanBound` (not the
+            // clip's real end) is the ceiling here, so the pause-hunting
+            // extension can never stretch the cut back INTO off-camera
+            // speech that the boundary above just excluded.
+            targetSec = await extendToNaturalPause(srcPath, startSec, targetSec, cleanBound);
           }
           intendedSec = targetSec;
           if (captionsMode === "auto" && hasAudio) {

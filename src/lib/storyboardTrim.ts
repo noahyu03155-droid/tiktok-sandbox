@@ -99,10 +99,14 @@ export async function pickBestSegment(opts: {
   // model is told to treat their time ranges as off-limits when choosing
   // the window.
   timedTranscript?: { start: number; end: number; text: string }[] | null;
-}): Promise<number> {
+}): Promise<{ startSec: number; cleanEndSec: number | null }> {
+  // cleanEndSec: when off-camera direction speech makes a full-length clean
+  // window impossible, this is the boundary (absolute source seconds) the
+  // caller must cut BEFORE — shortening the shot is always preferred over
+  // shipping a stranger's voice. null = no such constraint.
   const { srcPath, text, targetSec, clipDurationSec, tmpDir, apiKey, timedTranscript } = opts;
   const latestStart = Math.max(0, clipDurationSec - targetSec);
-  if (!apiKey || latestStart <= 0.1 || !text.trim()) return 0;
+  if (!apiKey || latestStart <= 0.1 || !text.trim()) return { startSec: 0, cleanEndSec: null };
 
   // Raised from 8 — the user reported the payoff moment (a pet owner's
   // laugh/reaction near the END of a take) kept getting missed in favor of
@@ -129,7 +133,7 @@ export async function pickBestSegment(opts: {
       })
     );
     const frames = extracted.filter((f): f is { t: number; file: string } => f !== null);
-    if (frames.length < 2) return 0;
+    if (frames.length < 2) return { startSec: 0, cleanEndSec: null };
 
     const openai = new OpenAI({ apiKey });
     const content: any[] = [
@@ -165,15 +169,19 @@ export async function pickBestSegment(opts: {
           (timedTranscript && timedTranscript.length
             ? `\n\nHere is a timed transcript of EVERYTHING audible in the clip (same seconds clock as the frames):\n` +
               timedTranscript.map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`).join("\n") +
-              `\n\nCRITICAL audio rule: this is a raw take, so some lines may be an OFF-CAMERA person giving ` +
-              `filming directions ("okay now hold it up", "look at the camera", counting in, crew chatter) or the ` +
-              `creator breaking character to ask/respond — anything that is clearly NOT the creator delivering the ` +
-              `shot content described above. The final video keeps the clip's real audio, so a window that overlaps ` +
-              `those moments ships with a stranger's voice in the background. Treat every such line's time range as ` +
-              `OFF-LIMITS: pick a window that avoids them entirely, even if that means choosing a visually ` +
-              `second-best moment. If every possible window overlaps direction-chatter, pick the one where it ` +
-              `overlaps the least. ` +
-              `\n\nRespond with ONLY a JSON object: {"start_sec": <number>}`
+              `\n\nABSOLUTE audio rule: this is a raw take, so some lines may be an OFF-CAMERA person saying ` +
+              `something unrelated — filming directions ("okay now hold it up", "look at the camera", counting in), ` +
+              `crew chatter, background conversation — anything that is clearly NOT the creator delivering the shot ` +
+              `content described above. The final video keeps the clip's real audio, so any overlap ships a ` +
+              `stranger's irrelevant voice inside the finished video. The chosen window must contain ZERO overlap ` +
+              `with such speech — this is a hard requirement, not a preference. A visually weaker but clean moment ` +
+              `ALWAYS beats a visually perfect moment with off-camera speech in it. ` +
+              `If no clean window of the full ${targetSec.toFixed(1)}s exists, pick the start of the LONGEST clean ` +
+              `stretch and report where it stops being clean via "clean_end_sec" (absolute seconds) — the edit will ` +
+              `be shortened to end before the off-camera speech rather than include any of it. ` +
+              `THE ONLY exception: if the shot text / creator note above EXPLICITLY asks to keep background or ` +
+              `off-camera audio, treat that instruction as permission and ignore this rule. ` +
+              `\n\nRespond with ONLY a JSON object: {"start_sec": <number>, "clean_end_sec": <number or null>}`
             : `Respond with ONLY a JSON object: {"start_sec": <number>}`),
       },
       ...frames.map((f) => ({
@@ -200,12 +208,20 @@ export async function pickBestSegment(opts: {
     const raw = res.choices[0]?.message?.content || "{}";
     const parsed = JSON.parse(raw);
     const startSec = Number(parsed?.start_sec);
-    if (!Number.isFinite(startSec)) return 0;
-    return Math.min(latestStart, Math.max(0, startSec));
+    if (!Number.isFinite(startSec)) return { startSec: 0, cleanEndSec: null };
+    const clampedStart = Math.min(latestStart, Math.max(0, startSec));
+    const cleanRaw = Number(parsed?.clean_end_sec);
+    // Only honored when it's a sane boundary AFTER the chosen start —
+    // anything else (null, NaN, before/at the start) means "no constraint".
+    const cleanEndSec =
+      Number.isFinite(cleanRaw) && cleanRaw > clampedStart + 0.5 && cleanRaw <= clipDurationSec
+        ? cleanRaw
+        : null;
+    return { startSec: clampedStart, cleanEndSec };
   } catch {
     // Vision call failed for any reason — smart trim is a nice-to-have, not
     // worth failing the whole render over.
-    return 0;
+    return { startSec: 0, cleanEndSec: null };
   } finally {
     fs.rmSync(path.join(tmpDir, "frames"), { recursive: true, force: true });
   }
