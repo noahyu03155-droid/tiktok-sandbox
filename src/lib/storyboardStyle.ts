@@ -129,7 +129,16 @@ export async function analyzeReferenceStyle(opts: {
           `"durationMultiplier": number (0.5 to 1.8, how much to scale a normal shot length to match this video's rhythm — ` +
           `under 1 for fast/punchy cutting, over 1 for slower/lingering cutting), ` +
           `"captionStyle": one of ${JSON.stringify(CAPTION_STYLES)}, ` +
+          `"captionPosition": one of ["top","center","bottom"] (where on-screen captions sit in these frames), ` +
+          `"captionBold": boolean (do the captions use a heavy/bold weight?), ` +
+          `"captionUppercase": boolean (are captions in ALL CAPS?), ` +
+          `"captionColor": "#rrggbb" hex of the dominant caption TEXT color (e.g. "#ffffff", "#ffe135"), ` +
+          `"captionBoxed": boolean (true if captions sit on a solid/semi-opaque background box, false if plain/outlined text floating over the footage), ` +
           `"notes": a one-sentence plain-English description of the editing style for a human to sanity-check}\n\n` +
+          `For the caption* fields, read them off the ACTUAL on-screen text visible in these frames — this is the ` +
+          `subtitle DESIGN the user wants copied into their own generated video. If no on-screen captions are ` +
+          `visible in any frame, return captionPosition "bottom", captionBold false, captionUppercase false, ` +
+          `captionColor "#ffffff", captionBoxed true. ` +
           `Use "hard_cut" for transition if the cuts look like straight hard cuts with no crossfade/wipe/slide effect visible between shots.`,
       },
       ...frameFiles.map((f) => ({
@@ -156,7 +165,25 @@ export async function analyzeReferenceStyle(opts: {
       : fallback.durationMultiplier;
     const notes = typeof parsed?.notes === "string" && parsed.notes.trim() ? parsed.notes.trim() : fallback.notes;
 
-    return { sourceLabel, shotCount, avgShotSec, pacing, transition, transitionSec, durationMultiplier, captionStyle, notes };
+    // Caption visual design — all clamped to safe values; anything the
+    // model didn't answer sensibly just falls back to the renderer's
+    // original defaults (bottom / regular / white / boxed).
+    const captionPosition = ["top", "center", "bottom"].includes(parsed?.captionPosition)
+      ? (parsed.captionPosition as "top" | "center" | "bottom")
+      : "bottom";
+    const captionBold = parsed?.captionBold === true;
+    const captionUppercase = parsed?.captionUppercase === true;
+    const colorRaw = typeof parsed?.captionColor === "string" ? parsed.captionColor.trim() : "";
+    const captionColor = /^#?[0-9a-fA-F]{6}$/.test(colorRaw)
+      ? (colorRaw.startsWith("#") ? colorRaw : `#${colorRaw}`).toLowerCase()
+      : null;
+    const captionBoxed = parsed?.captionBoxed !== false; // default true
+
+    return {
+      sourceLabel, shotCount, avgShotSec, pacing, transition, transitionSec, durationMultiplier, captionStyle,
+      captionPosition, captionBold, captionUppercase, captionColor, captionBoxed,
+      notes,
+    };
   } catch {
     return fallback;
   } finally {

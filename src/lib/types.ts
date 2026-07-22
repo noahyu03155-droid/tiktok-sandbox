@@ -601,6 +601,18 @@ export interface StoryboardStyleProfile {
   // <1 tightens cuts to match a faster reference, >1 loosens them.
   durationMultiplier: number;
   captionStyle: StoryboardCaptionStyle;
+  // ---- Caption VISUAL design, read off the reference video's own burned-in
+  // captions by the vision model (all optional — older profiles and the
+  // rule-based fallback don't set them, and the renderer keeps its original
+  // defaults in that case: white, boxed, bottom, regular weight). ----
+  captionPosition?: "top" | "center" | "bottom";
+  captionBold?: boolean;
+  captionUppercase?: boolean;
+  // "#rrggbb" — the dominant caption text color seen in the reference.
+  captionColor?: string | null;
+  // Whether the reference's captions sit on a solid/semi-opaque box vs.
+  // floating plain text (usually with an outline) over the footage.
+  captionBoxed?: boolean;
   // Short human-readable description from the vision model, shown in the
   // UI so the user can sanity-check what was actually detected.
   notes: string;

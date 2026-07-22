@@ -153,7 +153,11 @@ const AAC_OUT = ["-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k"];
 // kept landing at the same unsafe spot (reported repeatedly as "cuts off
 // right at 'I need'" — the render was chopping the line before the speaker
 // finished it). Widened to give real speech room to actually finish.
-const NATURAL_PAUSE_EXTEND_MAX_SEC = 5;
+// Was 5s (and 1.5s before that) — 5s let shots drag several beats past
+// their intended cut ("空窗期" per the user's feedback on pacing), so the
+// pause-hunting window is now a middle-ground 3s: enough room to let a
+// sentence finish, not enough to leave dead air hanging.
+const NATURAL_PAUSE_EXTEND_MAX_SEC = 3;
 
 // Runs ffmpeg's silencedetect filter over [fromSec, toSec) of srcPath and
 // returns every silence_start timestamp found (as absolute seconds into
@@ -427,15 +431,44 @@ const CAPTION_SCALE = H / 1280;
 // shot-relative (0 = startSec, per transcribeShotAudio's own doc comment),
 // so this just re-expresses that shot-relative time in the absolute source
 // timeline drawtext's `enable=between(t,...)` actually evaluates against.
-function timedCaptionFilter(tmpDir: string, shotIndex: number, segments: TranscriptSegment[], style: CaptionStylePreset, clipStartSec: number): string | null {
+// Visual design of the burned-in captions — populated from the reference
+// video's style profile when one exists (the "learn the reference's
+// subtitle design" half of the style-fusion feature), otherwise the
+// original defaults.
+export interface CaptionDesign {
+  position: "top" | "center" | "bottom";
+  bold: boolean;
+  uppercase: boolean;
+  color: string | null; // "#rrggbb", null = white
+  boxed: boolean;
+}
+const DEFAULT_CAPTION_DESIGN: CaptionDesign = { position: "bottom", bold: false, uppercase: false, color: null, boxed: true };
+
+function timedCaptionFilter(
+  tmpDir: string,
+  shotIndex: number,
+  segments: TranscriptSegment[],
+  style: CaptionStylePreset,
+  clipStartSec: number,
+  design: CaptionDesign = DEFAULT_CAPTION_DESIGN
+): string | null {
   const fontsize = Math.round(32 * CAPTION_SCALE);
   const lineSpacing = Math.round(8 * CAPTION_SCALE);
   const boxBorder = Math.round(14 * CAPTION_SCALE);
-  const bottomMargin = Math.round(90 * CAPTION_SCALE);
+  const margin = Math.round(90 * CAPTION_SCALE);
+  const fontFile = design.bold ? CAPTION_FONT_FILE_BOLD : CAPTION_FONT_FILE;
+  const fontColor = design.color ? `0x${design.color.slice(1)}` : "white";
+  const yExpr = design.position === "top" ? `${margin}` : design.position === "center" ? `(h-th)/2` : `h-th-${margin}`;
+  // Boxed = the original semi-opaque black band. Unboxed = plain text
+  // floating over the footage, given a border (outline) so it stays
+  // readable on bright frames — matches how most un-boxed TikTok caption
+  // styles are done.
+  const boxOrBorder = design.boxed ? `box=1:boxcolor=black@0.5:boxborderw=${boxBorder}` : `borderw=${Math.max(2, Math.round(3 * CAPTION_SCALE))}:bordercolor=black`;
   const parts: string[] = [];
   segments.forEach((seg, i) => {
-    const wrapped = wrapCaption(seg.text, style);
+    let wrapped = wrapCaption(seg.text, style);
     if (!wrapped) return;
+    if (design.uppercase) wrapped = wrapped.toUpperCase();
     const capPath = path.join(tmpDir, `cap${shotIndex}_${i}.txt`);
     fs.writeFileSync(capPath, wrapped);
     const start = Math.max(0, clipStartSec + seg.start).toFixed(2);
@@ -444,7 +477,7 @@ function timedCaptionFilter(tmpDir: string, shotIndex: number, segments: Transcr
     // ffmpeg's filtergraph parser otherwise reads them as filter-chain
     // separators, same reason the outer filters are joined with plain ','.
     parts.push(
-      `drawtext=fontfile=${CAPTION_FONT_FILE}:textfile=${capPath}:reload=0:fontcolor=white:fontsize=${fontsize}:line_spacing=${lineSpacing}:box=1:boxcolor=black@0.5:boxborderw=${boxBorder}:x=(w-text_w)/2:y=h-th-${bottomMargin}:enable='between(t\\,${start}\\,${end})'`
+      `drawtext=fontfile=${fontFile}:textfile=${capPath}:reload=0:fontcolor=${fontColor}:fontsize=${fontsize}:line_spacing=${lineSpacing}:${boxOrBorder}:x=(w-text_w)/2:y=${yExpr}:enable='between(t\\,${start}\\,${end})'`
     );
   });
   return parts.length ? parts.join(",") : null;
@@ -698,6 +731,17 @@ export function startRenderJob(
   const openaiApiKey = process.env.OPENAI_API_KEY;
   const styleProfile = board.styleProfile || null;
   let captionStyle: CaptionStylePreset = styleProfile?.captionStyle || "descriptive";
+  // Caption VISUAL design learned from the reference video (position /
+  // weight / case / color / boxed-vs-outline) — the "copy the reference's
+  // subtitle design" half of style fusion. Missing fields (older profiles,
+  // rule-based fallback) keep the original defaults.
+  const captionDesign: CaptionDesign = {
+    position: styleProfile?.captionPosition ?? "bottom",
+    bold: styleProfile?.captionBold ?? false,
+    uppercase: styleProfile?.captionUppercase ?? false,
+    color: styleProfile?.captionColor ?? null,
+    boxed: styleProfile?.captionBoxed ?? true,
+  };
   let durationMultiplier = styleProfile?.durationMultiplier ?? 1;
   let effectiveTransition: StoryboardTransitionPreset = styleProfile && styleProfile.transition !== "hard_cut" ? styleProfile.transition : "fade";
   let effectiveTransitionSec = styleProfile?.transition === "hard_cut" ? 0.05 : styleProfile?.transitionSec ?? TRANSITION_SEC;
@@ -817,7 +861,7 @@ export function startRenderJob(
             // this, any shot where the AI picked a non-zero start point
             // (i.e. most shots on a source video longer than the target
             // speech length) would burn captions in at the wrong moment.
-            if (segments) caption = timedCaptionFilter(tmpDir, i, segments, captionStyle, startSec);
+            if (segments) caption = timedCaptionFilter(tmpDir, i, segments, captionStyle, startSec, captionDesign);
           }
           if (hasAudio) {
             await runFfmpeg([

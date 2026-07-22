@@ -166,6 +166,13 @@ export async function pickBestSegment(opts: {
           `marked with 🎬, e.g. "show a close-up reaction after trying it" or "demonstrate the product working") ` +
           `treat that as a literal, high-priority instruction for which visual moment to find — it's telling you ` +
           `exactly what should be on screen. ` +
+          `STAGE-MATCH requirement: the window's ON-SCREEN ACTION must match what this shot's stage is FOR, not ` +
+          `just be near it in time. Product-usage/application shots must show the product actively being used — ` +
+          `scooping, pouring, applying, feeding, demonstrating — with the product visible in frame for most of the ` +
+          `window. Desired-outcome shots must show the visible RESULT plus the happy reaction to it (person or pet ` +
+          `clearly pleased with what just happened). Hooks show the attention-grab moment; CTAs show direct-to-` +
+          `camera address. A window that merely happens to be adjacent to the right action but shows something ` +
+          `else (setup, idle, transition walking) is a WRONG pick even if it looks good. ` +
           (timedTranscript && timedTranscript.length
             ? `\n\nHere is a timed transcript of EVERYTHING audible in the clip (same seconds clock as the frames):\n` +
               timedTranscript.map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`).join("\n") +

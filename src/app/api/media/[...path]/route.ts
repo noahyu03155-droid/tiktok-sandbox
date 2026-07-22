@@ -23,7 +23,7 @@ const MIME: Record<string, string> = {
   ".image": "image/jpeg",
 };
 
-export async function GET(_req: NextRequest, { params }: { params: { path: string[] } }) {
+export async function GET(req: NextRequest, { params }: { params: { path: string[] } }) {
   const mediaDir = getMediaDir();
   const filePath = path.join(mediaDir, ...params.path);
 
@@ -37,7 +37,6 @@ export async function GET(_req: NextRequest, { params }: { params: { path: strin
 
   const ext = path.extname(filePath).toLowerCase();
   const contentType = MIME[ext] || "application/octet-stream";
-  const data = fs.readFileSync(filePath);
 
   // Almost every file under mediaDir gets a unique, never-reused filename
   // (timestamped uploads, generated stills, etc.) — genuinely safe to tell
@@ -55,7 +54,53 @@ export async function GET(_req: NextRequest, { params }: { params: { path: strin
   const isRenderOutput = ["render.mp4", "manual-render.mp4"].includes(path.basename(filePath));
   const cacheControl = isRenderOutput ? "no-cache" : "public, max-age=31536000, immutable";
 
-  return new Response(data, {
-    headers: { "Content-Type": contentType, "Cache-Control": cacheControl },
+  // HTTP Range support — without it (the previous behavior: whole file,
+  // no Accept-Ranges header) browsers can't seek in <video> playback at
+  // all; dragging the progress bar backwards simply did nothing, which is
+  // exactly what the user reported on rendered videos. Serving 206 partial
+  // responses lets the <video> element fetch whatever byte range the seek
+  // target needs.
+  const stat = fs.statSync(filePath);
+  const rangeHeader = req.headers.get("range");
+  if (rangeHeader) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+    let start = m && m[1] ? parseInt(m[1], 10) : 0;
+    let end = m && m[2] ? parseInt(m[2], 10) : stat.size - 1;
+    if (!Number.isFinite(start) || start < 0) start = 0;
+    if (!Number.isFinite(end) || end >= stat.size) end = stat.size - 1;
+    if (!m || start > end || start >= stat.size) {
+      return new Response(null, {
+        status: 416,
+        headers: { "Content-Range": `bytes */${stat.size}` },
+      });
+    }
+    const length = end - start + 1;
+    const chunk = Buffer.alloc(length);
+    const fd = fs.openSync(filePath, "r");
+    try {
+      fs.readSync(fd, chunk, 0, length, start);
+    } finally {
+      fs.closeSync(fd);
+    }
+    return new Response(new Uint8Array(chunk), {
+      status: 206,
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": cacheControl,
+        "Accept-Ranges": "bytes",
+        "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+        "Content-Length": String(length),
+      },
+    });
+  }
+
+  const data = fs.readFileSync(filePath);
+  return new Response(new Uint8Array(data), {
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": cacheControl,
+      "Accept-Ranges": "bytes",
+      "Content-Length": String(stat.size),
+    },
   });
 }
