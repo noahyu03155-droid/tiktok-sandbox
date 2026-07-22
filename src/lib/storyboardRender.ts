@@ -603,7 +603,18 @@ async function assembleFinalVideo(
       }
       const a = level[i];
       const b = level[i + 1];
-      const t = Math.max(0.05, Math.min(transitionSec, a.dur / 2, b.dur / 2));
+      // "hard_cut" is OUR OWN preset name, not an ffmpeg xfade transition —
+      // fed raw it crashes the whole render ("Unable to parse option value
+      // 'hard_cut' ... Invalid argument", reported live). The style-profile
+      // path upstream already mapped it to fade, but the editing-feedback
+      // adjustment path could still set it directly, so it's translated
+      // HERE, at the last stop before ffmpeg: an imperceptibly short fade
+      // (0.05s), which is visually a hard cut. Same convention
+      // mergeSequentialWithTransitions already uses.
+      const isHardCut = (transition as string) === "hard_cut";
+      const xfadePreset = isHardCut ? "fade" : transition;
+      const effTransitionSec = isHardCut ? 0.05 : transitionSec;
+      const t = Math.max(0.05, Math.min(effTransitionSec, a.dur / 2, b.dur / 2));
       const offset = Math.max(0, a.dur - t);
       const mergedPath = path.join(tmpDir, `merged${mergeCounter++}.mp4`);
       await runFfmpeg([
@@ -611,7 +622,7 @@ async function assembleFinalVideo(
         "-i", a.path,
         "-i", b.path,
         "-filter_complex",
-        `[0:v][1:v]xfade=transition=${transition}:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[v];[0:a][1:a]acrossfade=d=${t.toFixed(3)}[a]`,
+        `[0:v][1:v]xfade=transition=${xfadePreset}:duration=${t.toFixed(3)}:offset=${offset.toFixed(3)}[v];[0:a][1:a]acrossfade=d=${t.toFixed(3)}[a]`,
         "-map", "[v]", "-map", "[a]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-threads", "2", "-pix_fmt", "yuv420p",
         ...AAC_OUT,

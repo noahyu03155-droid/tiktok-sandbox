@@ -2723,11 +2723,18 @@ export default function StoryboardCanvas({
                 )}
                 <button
                   onClick={() => requestRender(n.id)}
-                  disabled={rendering}
+                  // Also locked while a reference video is still being
+                  // analyzed — generating mid-analysis would render with
+                  // the OLD (or no) style profile, then look like the
+                  // reference was ignored. Button re-enabling is the
+                  // signal that the reference's editing style has been
+                  // fully absorbed and will be applied.
+                  disabled={rendering || analyzingStyle}
                   className="absolute flex items-center justify-center px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium shadow-xl"
                   style={{ left: n.x, top: generateButtonTop, width: nodeWidth(n) - SCRIPT_BUTTON_W - SCRIPT_BUTTON_GAP, height: GENERATE_BUTTON_H }}
+                  title={analyzingStyle ? "Learning the reference video's editing style — Generate unlocks when it's absorbed" : undefined}
                 >
-                  {renderButtonLabel()}
+                  {analyzingStyle ? "🎨 Learning reference…" : renderButtonLabel()}
                 </button>
                 {/* "⬇ Script" sits right next to Generate/CTA, not up in the
                     global toolbar — a board can hold several independent
@@ -2850,7 +2857,7 @@ export default function StoryboardCanvas({
                             </button>
                             <button
                               onClick={() => requestRender(n.id)}
-                              disabled={rendering}
+                              disabled={rendering || analyzingStyle}
                               className="h-8 px-3 rounded-lg bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white text-[11px] font-medium shrink-0"
                             >
                               {rendering && renderChainTailId === n.id ? "Regenerating..." : "🔁 Regenerate"}

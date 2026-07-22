@@ -178,8 +178,11 @@ export async function pickBestSegment(opts: {
               timedTranscript.map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`).join("\n") +
               `\n\nABSOLUTE audio rule: this is a raw take, so some lines may be an OFF-CAMERA person saying ` +
               `something unrelated — filming directions ("okay now hold it up", "look at the camera", counting in), ` +
-              `crew chatter, background conversation — anything that is clearly NOT the creator delivering the shot ` +
-              `content described above. The final video keeps the clip's real audio, so any overlap ships a ` +
+              `crew chatter, background conversation — OR the creator themself breaking character AFTER the take ` +
+              `ends: reviewing/debriefing how it went ("that was good", "let's do one more", "did you get that?"), ` +
+              `discussing the footage, or planning the next shot. Raw clips very often keep rolling past the real ` +
+              `ending and capture exactly this kind of post-take talk — anything that is clearly NOT the creator ` +
+              `delivering the shot content described above. The final video keeps the clip's real audio, so any overlap ships a ` +
               `stranger's irrelevant voice inside the finished video. The chosen window must contain ZERO overlap ` +
               `with such speech — this is a hard requirement, not a preference. A visually weaker but clean moment ` +
               `ALWAYS beats a visually perfect moment with off-camera speech in it. ` +
