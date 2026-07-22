@@ -22,5 +22,11 @@ export async function POST(req: NextRequest) {
   if (!promo || !promo.active) {
     return NextResponse.json({ valid: false, error: "This code isn't valid." }, { status: 404 });
   }
-  return NextResponse.json({ valid: true, code: promo.code, kind: promo.kind, percentOff: promo.percentOff });
+  return NextResponse.json({
+    valid: true,
+    code: promo.code,
+    kind: promo.kind,
+    percentOff: promo.percentOff,
+    trialDays: promo.kind === "trial" ? promo.trialDays ?? 7 : undefined,
+  });
 }

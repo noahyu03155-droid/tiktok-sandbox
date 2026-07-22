@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { getUserById } from "@/lib/db";
 import { createSessionToken, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SEC } from "@/lib/auth";
+import { planActiveAfterExpiryCheck } from "@/lib/planExpiry";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export async function POST() {
   if (!sessionUser) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const dbUser = getUserById(sessionUser.userId);
-  const active = sessionUser.role === "admin" || dbUser?.planStatus === "active";
+  const active = dbUser ? planActiveAfterExpiryCheck(dbUser) : sessionUser.role === "admin";
 
   const res = NextResponse.json({ active });
   // Only re-sign when this actually UPGRADES the cookie — never downgrade

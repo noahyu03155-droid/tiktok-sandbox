@@ -80,7 +80,7 @@ export default function PricingPageContent({
   // is trusted for money math. Applied code discounts every displayed
   // price via `discounted()` below so the buyer sees real numbers.
   const [promoInput, setPromoInput] = useState("");
-  const [promo, setPromo] = useState<{ code: string; percentOff: number; kind: string } | null>(null);
+  const [promo, setPromo] = useState<{ code: string; percentOff: number; kind: string; trialDays?: number } | null>(null);
   const [promoError, setPromoError] = useState<string | null>(null);
   const [promoChecking, setPromoChecking] = useState(false);
 
@@ -97,7 +97,7 @@ export default function PricingPageContent({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.valid) throw new Error(data.error || (zh ? "无效的优惠码" : "Invalid code"));
-      setPromo({ code: data.code, percentOff: data.percentOff, kind: data.kind });
+      setPromo({ code: data.code, percentOff: data.percentOff, kind: data.kind, trialDays: data.trialDays });
     } catch (e: any) {
       setPromo(null);
       setPromoError(e.message || (zh ? "无效的优惠码" : "Invalid code"));
@@ -216,7 +216,12 @@ export default function PricingPageContent({
           </button>
           {promo && (
             <span className="text-sm text-emerald-600 font-medium">
-              ✓ {promo.code} −{promo.percentOff}%{" "}
+              ✓ {promo.code}{" "}
+              {promo.kind === "trial"
+                ? zh
+                  ? `免费试用 ${promo.trialDays ?? 7} 天`
+                  : `${promo.trialDays ?? 7}-day free trial`
+                : `−${promo.percentOff}%`}
               <button onClick={() => { setPromo(null); setPromoInput(""); }} className="text-zinc-400 hover:text-red-500 ml-1">✕</button>
             </span>
           )}

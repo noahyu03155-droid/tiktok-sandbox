@@ -200,6 +200,11 @@ export interface User {
   seats?: number; // EXTRA sub-accounts purchased beyond the plan's included seat count, not the total
   planStatus?: "active" | "none" | null;
   planSelectedAt?: string | null;
+  // Set ONLY when the plan was activated by a free-trial code — ISO
+  // timestamp after which the plan lapses. Checked lazily at login and by
+  // /api/billing/refresh-session (both flip planStatus back to "none" once
+  // past it); normal purchases leave this null.
+  planExpiresAt?: string | null;
 }
 
 // ---- Daily journal chat ("write like a diary, AI replies like a friend") ----
@@ -812,8 +817,11 @@ export interface PromoCodeUse {
 export interface PromoCode {
   id: string;
   code: string; // stored uppercase, unique across all codes
-  kind: "discount" | "affiliate";
-  percentOff: number; // buyer-facing discount, 1-90
+  kind: "discount" | "affiliate" | "trial";
+  percentOff: number; // buyer-facing discount, 1-90 (100 for trial codes — the whole order is free)
+  // "trial" kind only: how many days of free access redeeming this code
+  // grants. The plan auto-expires afterwards (see User.planExpiresAt).
+  trialDays?: number;
   commissionPercent: number; // affiliate's % of the PAID total (0 for discount kind)
   affiliateName: string | null; // creator name/handle, affiliate kind only
   active: boolean;

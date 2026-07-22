@@ -28,10 +28,16 @@ export async function POST(req: NextRequest) {
   if (!user || user.role !== "admin") return NextResponse.json({ error: "Admins only" }, { status: 403 });
 
   const body = await req.json().catch(() => ({}));
-  const kind = body?.kind === "affiliate" ? "affiliate" : "discount";
+  const kind = body?.kind === "affiliate" ? "affiliate" : body?.kind === "trial" ? "trial" : "discount";
+
+  // Trial codes: N days of free access (one redemption per user, enforced
+  // at checkout). percentOff is pinned to 100 — the whole order is free.
+  const trialDaysRaw = Number(body?.trialDays);
+  const trialDays = kind === "trial" ? (Number.isFinite(trialDaysRaw) ? Math.max(1, Math.min(90, Math.round(trialDaysRaw))) : 7) : undefined;
 
   const percentOffRaw = Number(body?.percentOff);
-  const percentOff = Number.isFinite(percentOffRaw) ? Math.max(1, Math.min(90, Math.round(percentOffRaw))) : 10;
+  const percentOff =
+    kind === "trial" ? 100 : Number.isFinite(percentOffRaw) ? Math.max(1, Math.min(90, Math.round(percentOffRaw))) : 10;
 
   const commissionRaw = Number(body?.commissionPercent);
   const commissionPercent =
@@ -61,6 +67,6 @@ export async function POST(req: NextRequest) {
     } while (getPromoCodeByCode(code));
   }
 
-  const promo = createPromoCode({ code, kind, percentOff, commissionPercent, affiliateName, active: true });
+  const promo = createPromoCode({ code, kind, percentOff, commissionPercent, affiliateName, active: true, trialDays });
   return NextResponse.json({ code: promo });
 }

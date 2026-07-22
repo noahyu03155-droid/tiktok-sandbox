@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { planActiveAfterExpiryCheck } from "@/lib/planExpiry";
 import { createSessionToken, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SEC } from "@/lib/auth";
 import { getUserByUsername } from "@/lib/db";
 import { verifyPassword } from "@/lib/password";
@@ -21,7 +22,7 @@ export async function POST(req: NextRequest) {
   // register, where a brand-new account can never already have a plan) —
   // admin bypasses the gate regardless (see middleware.ts), so this only
   // really matters for "member" accounts.
-  const planActive = user.role === "admin" || user.planStatus === "active";
+  const planActive = planActiveAfterExpiryCheck(user); // trial codes lapse here — see planExpiry.ts
   const token = await createSessionToken({ userId: user.id, username: user.username, role: user.role, planActive });
   const res = NextResponse.json({ ok: true });
   res.cookies.set(SESSION_COOKIE_NAME, token, {

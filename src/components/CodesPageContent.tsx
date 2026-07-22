@@ -13,7 +13,8 @@ export default function CodesPageContent() {
   const [error, setError] = useState<string | null>(null);
 
   // Create form state.
-  const [kind, setKind] = useState<"discount" | "affiliate">("discount");
+  const [kind, setKind] = useState<"discount" | "affiliate" | "trial">("discount");
+  const [trialDays, setTrialDays] = useState(7);
   const [customCode, setCustomCode] = useState("");
   const [percentOff, setPercentOff] = useState(10);
   const [commissionPercent, setCommissionPercent] = useState(20);
@@ -49,6 +50,7 @@ export default function CodesPageContent() {
           percentOff,
           commissionPercent: kind === "affiliate" ? commissionPercent : 0,
           affiliateName: kind === "affiliate" ? affiliateName : undefined,
+          trialDays: kind === "trial" ? trialDays : undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -99,7 +101,7 @@ export default function CodesPageContent() {
       {/* ---- create form ---- */}
       <div className="rounded-xl border border-edge bg-panel p-4 mb-8">
         <div className="flex items-center gap-2 mb-3">
-          {(["discount", "affiliate"] as const).map((k) => (
+          {(["discount", "affiliate", "trial"] as const).map((k) => (
             <button
               key={k}
               onClick={() => setKind(k)}
@@ -107,7 +109,7 @@ export default function CodesPageContent() {
                 kind === k ? "bg-zinc-900 text-white border-zinc-900" : "bg-panel text-zinc-600 border-edge hover:border-zinc-400"
               }`}
             >
-              {k === "discount" ? "💸 Discount code" : "🤝 Affiliate code"}
+              {k === "discount" ? "💸 Discount code" : k === "affiliate" ? "🤝 Affiliate code" : "🎁 Free trial code"}
             </button>
           ))}
         </div>
@@ -122,17 +124,45 @@ export default function CodesPageContent() {
               className="px-3 py-2 rounded-lg bg-panel2 border border-edge text-sm text-zinc-900 outline-none focus:border-brand-500 font-mono w-40"
             />
           </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-zinc-500">Buyer discount %</span>
-            <input
-              type="number"
-              min={1}
-              max={90}
-              value={percentOff}
-              onChange={(e) => setPercentOff(Math.max(1, Math.min(90, Number(e.target.value) || 1)))}
-              className="px-3 py-2 rounded-lg bg-panel2 border border-edge text-sm text-zinc-900 outline-none focus:border-brand-500 w-24"
-            />
-          </label>
+          {kind !== "trial" && (
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-zinc-500">Buyer discount %</span>
+              <input
+                type="number"
+                min={1}
+                max={90}
+                value={percentOff}
+                onChange={(e) => setPercentOff(Math.max(1, Math.min(90, Number(e.target.value) || 1)))}
+                className="px-3 py-2 rounded-lg bg-panel2 border border-edge text-sm text-zinc-900 outline-none focus:border-brand-500 w-24"
+              />
+            </label>
+          )}
+          {kind === "trial" && (
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-zinc-500">Free days</span>
+              <div className="flex items-center gap-1.5">
+                {[7, 14].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setTrialDays(d)}
+                    className={`text-xs px-2.5 py-2 rounded-lg border ${
+                      trialDays === d ? "bg-zinc-900 text-white border-zinc-900" : "bg-panel2 text-zinc-600 border-edge"
+                    }`}
+                  >
+                    {d}d
+                  </button>
+                ))}
+                <input
+                  type="number"
+                  min={1}
+                  max={90}
+                  value={trialDays}
+                  onChange={(e) => setTrialDays(Math.max(1, Math.min(90, Number(e.target.value) || 7)))}
+                  className="px-3 py-2 rounded-lg bg-panel2 border border-edge text-sm text-zinc-900 outline-none focus:border-brand-500 w-20"
+                />
+              </div>
+            </label>
+          )}
           {kind === "affiliate" && (
             <>
               <label className="flex flex-col gap-1">
@@ -197,8 +227,10 @@ export default function CodesPageContent() {
                       {c.code} {copiedId === c.id ? "✓" : "⧉"}
                     </button>
                   </td>
-                  <td className="px-3 py-2.5">{c.kind === "affiliate" ? "🤝 Affiliate" : "💸 Discount"}</td>
-                  <td className="px-3 py-2.5">-{c.percentOff}%</td>
+                  <td className="px-3 py-2.5">
+                    {c.kind === "affiliate" ? "🤝 Affiliate" : c.kind === "trial" ? "🎁 Trial" : "💸 Discount"}
+                  </td>
+                  <td className="px-3 py-2.5">{c.kind === "trial" ? `Free ${c.trialDays ?? 7} days` : `-${c.percentOff}%`}</td>
                   <td className="px-3 py-2.5 text-zinc-600">{c.affiliateName || "—"}</td>
                   <td className="px-3 py-2.5">{c.kind === "affiliate" ? `${c.commissionPercent}%` : "—"}</td>
                   <td className="px-3 py-2.5">{c.uses.length}</td>

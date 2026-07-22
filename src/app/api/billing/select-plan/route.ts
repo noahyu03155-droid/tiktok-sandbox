@@ -48,10 +48,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "That promo code isn't valid." }, { status: 400 });
   }
 
+  // Trial codes are one-per-user (checked against the code's own usage
+  // log) — otherwise the same account could chain free periods forever.
+  const isTrial = promo?.kind === "trial";
+  if (promo && isTrial && promo.uses.some((u) => u.userId === sessionUser.userId)) {
+    return NextResponse.json({ error: "You've already used this trial code." }, { status: 400 });
+  }
+  const trialDays = isTrial ? Math.max(1, Math.round(promo!.trialDays || 7)) : 0;
+
   const planPrice = planCyclePrice(plan, cycle);
   const seatPrice = seatCyclePrice(plan, cycle);
   const orderTotal = planPrice.total + seatPrice.total * seats;
-  const discountUsd = promo ? Math.round(orderTotal * (promo.percentOff / 100) * 100) / 100 : 0;
+  const discountUsd = isTrial
+    ? orderTotal
+    : promo
+    ? Math.round(orderTotal * (promo.percentOff / 100) * 100) / 100
+    : 0;
   const paidTotal = Math.round((orderTotal - discountUsd) * 100) / 100;
   const commissionUsd =
     promo && promo.kind === "affiliate" ? Math.round(paidTotal * (promo.commissionPercent / 100) * 100) / 100 : 0;
@@ -62,6 +74,9 @@ export async function POST(req: NextRequest) {
     seats,
     planStatus: "active",
     planSelectedAt: new Date().toISOString(),
+    // Trial redemptions expire; real purchases clear any leftover trial
+    // expiry (upgrading from a trial to a paid plan must not lapse).
+    planExpiresAt: isTrial ? new Date(Date.now() + trialDays * 86400 * 1000).toISOString() : null,
   });
 
   if (promo) {
