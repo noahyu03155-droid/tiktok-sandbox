@@ -2655,7 +2655,25 @@ export default function ManualEditModal({
                     <div className="text-[11px] text-slate-400 font-mono rounded-lg p-2" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
                       {selected.trimStart.toFixed(1)}s – {selected.trimEnd.toFixed(1)}s
                       <span className="text-slate-600"> / {selected.duration > 0 ? selected.duration.toFixed(1) : "…"}s</span>
-                      <p className="font-sans text-slate-600 mt-1">Drag the block's edges on the timeline to trim.</p>
+                      {/* Trimming is NON-destructive: trimStart/trimEnd are just a
+                          viewing window over the untouched source file, so the
+                          hidden footage is always recoverable — by dragging the
+                          edges back out, or in one click here. */}
+                      <p className="font-sans text-slate-600 mt-1">
+                        Drag the block&apos;s edges on the timeline to trim — trimming only hides footage, it never deletes it. Drag the edges back out anytime to restore.
+                      </p>
+                      {selected.duration > 0 && (selected.trimStart > 0.05 || selected.trimEnd < selected.duration - 0.05) && (
+                        <button
+                          onClick={() => {
+                            pushHistory();
+                            updateItem(selected.id, { trimStart: 0, trimEnd: selected.duration });
+                          }}
+                          className="font-sans mt-2 text-[11px] px-3 py-1.5 rounded-lg text-cyan-300 hover:text-cyan-200 transition-colors"
+                          style={{ background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)" }}
+                        >
+                          ↺ Restore full clip ({selected.duration.toFixed(1)}s)
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
